@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --test tests/amap-utils.test.cjs"
+    "test": "node --test tests/amap-utils.test.cjs",
+    "export": "NEXT_EXPORT=true next build"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
