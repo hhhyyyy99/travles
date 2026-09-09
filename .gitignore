@@ -1,20 +1,41 @@
-# Next.js
+# Next.js & Build
 .next/
 out/
+build/
+dist/
+.turbo/
+.vercel/
+*.tsbuildinfo
 
 # Dependencies
 node_modules/
+.pnpm-store/
+.npm/
+
+# Environment files & Secrets
+.env
+.env.local
+.env.*.local
+.env*.local
+amap-config.js
+*.pem
+*.key
+
+# Logs
+logs/
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+.pnpm-debug.log*
 
-# Environment files
-.env*.local
-.env
-amap-config.js
+# Testing & Coverage
+coverage/
+.nyc_output/
+test-results/
 
-# OS files
+# OS & System files
 .DS_Store
 .DS_Store?
 ._*
@@ -22,13 +43,23 @@ amap-config.js
 .Trashes
 ehthumbs.db
 Thumbs.db
+Icon?
 
 # IDE & Editor configs
 .idea/
 .vscode/
 *.sublime-workspace
 *.sublime-project
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*~
 
-# Temporary files
+# Temporary & Cache files
+.cache/
+.temp/
+.tmp/
 *.tmp
 *.temp
