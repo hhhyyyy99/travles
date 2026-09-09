@@ -1,0 +1,27 @@
+# API keys & sensitive local configs
+amap-config.js
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE & Editor configs
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
+
+# Node dependencies & logs (if used)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
+*.tmp
+*.temp
