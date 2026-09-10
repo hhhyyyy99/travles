@@ -25,3 +25,9 @@ yarn-error.log*
 # Temporary files
 *.tmp
 *.temp
+
+# Generated build and test artifacts
+.next/
+out/
+*.tsbuildinfo
+test-results/
