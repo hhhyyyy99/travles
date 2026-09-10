@@ -323,6 +323,32 @@
     setStatus('已选择住宿基地，请选择应用的晚次。');
   }
 
+  function prepareNewBase(input = {}) {
+    editing = true;
+    selectedBaseId = null;
+    resetEditor();
+    $('accommodation-editor')?.removeAttribute('hidden');
+    renderNightChoices([currentDay]);
+    $('accommodation-new-name').value = String(input.name || '').trim().slice(0, 120);
+    $('accommodation-new-type').value = input.type === 'area' ? 'area' : 'hotel';
+    $('accommodation-new-address').value = String(input.address || '').trim().slice(0, 240);
+    $('accommodation-new-notes').value = String(input.notes || '').trim().slice(0, 600);
+    const latValue = String(input.lat ?? '').trim();
+    const lngValue = String(input.lng ?? '').trim();
+    const lat = latValue === '' ? NaN : Number(latValue);
+    const lng = lngValue === '' ? NaN : Number(lngValue);
+    if (validCoordinate(lat, lng)) {
+      $('accommodation-new-lat').value = lat.toFixed(6);
+      $('accommodation-new-lng').value = lng.toFixed(6);
+      $('accommodation-location-summary').textContent = input.locationLabel || `已确认 ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      setStatus('位置已确认，核对名称后保存。');
+    } else {
+      setStatus('填写名称并在地图上确认位置。');
+    }
+    window.lucide?.createIcons();
+    return {ok: true};
+  }
+
   function assign(id, dayIndices) {
     const base = getBase(id);
     const indices = [...new Set(dayIndices.map(Number))].filter(index => overnightDays.includes(index));
@@ -456,6 +482,13 @@
     getUsedBaseIds,
     getBaseCount,
     assign,
+    selectBase: id => {
+      const base = getBase(id);
+      if (!base) return {ok: false, error: '住宿基地不存在'};
+      selectBase(id);
+      return {ok: true, base: copy(base)};
+    },
+    prepareNewBase,
     saveBase: input => {
       const base = normalizeBase(input);
       if (!base) return {ok: false, error: '请填写基地名称和有效位置'};

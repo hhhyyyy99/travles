@@ -241,7 +241,7 @@
       }
       window[callback] = () => window.AMap?.Driving ? finish() : finish(new Error('高德插件未就绪，请检查 Key 与安全密钥后刷新页面。'));
       script.onerror = () => finish(new Error('无法加载高德地图，请检查网络与域名白名单。'));
-      script.src = `https://webapi.amap.com/maps?${new URLSearchParams({v:'2.0',key:config.key,plugin:'AMap.Driving,AMap.ToolBar,AMap.Scale,AMap.AutoComplete',callback})}`;
+      script.src = `https://webapi.amap.com/maps?${new URLSearchParams({v:'2.0',key:config.key,plugin:'AMap.Driving,AMap.ToolBar,AMap.Scale,AMap.AutoComplete,AMap.PlaceSearch',callback})}`;
       document.head.append(script);
     });
   }
