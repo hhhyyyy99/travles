@@ -33,7 +33,7 @@ function navigationPanel(dayIndex) {
   const route = accommodation?.getDayRoute(dayIndex);
   const routeState = accommodation?.getRouteState(dayIndex) || {status:'reference'};
   const stale = routeState.status === 'stale' || routeState.status === 'pending' || routeState.status === 'unupdated';
-  const leg = stale ? null : window.roadRoutes.legs[legByDay[dayIndex]];
+  const leg = route?.hasChangedEndpoint || stale ? null : window.roadRoutes.legs[legByDay[dayIndex]];
   const localDay = d.points.length < 2;
   const roads = leg ? leg.roads.filter(r=>/^[GS]\d/.test(r)).join(' → ') : '';
   const fromName = route?.from?.name || d.nav[0];
@@ -68,9 +68,17 @@ const roadLines = window.roadRoutes.legs.map(leg=>leg.coordinates.map(([lng,lat]
 const fullRouteLayer=L.layerGroup().addTo(map);
 const timeLabelLayer=L.layerGroup().addTo(map);
 const routeEstimates=window.tripPlan.estimates;
+function routeGeometry(index){
+  const route=accommodation?.getDayRoute(index);
+  const state=accommodation?.getRouteState(index) || {status:'reference'};
+  if(route?.hasChangedEndpoint){
+    return state.status==='updated' && Array.isArray(state.coordinates) && state.coordinates.length>1 ? state.coordinates : null;
+  }
+  return state.status==='stale'||state.status==='pending'||state.status==='unupdated' ? null : roadLines[legByDay[index]];
+}
 function routeIsStale(index){
   const status=accommodation?.getRouteState(index)?.status;
-  return status==='stale'||status==='pending'||status==='unupdated';
+  return !routeGeometry(index) || status==='stale'||status==='pending'||status==='unupdated';
 }
 function routeMidpoint(coords) {
   const lengths=coords.slice(1).map((point,i)=>L.latLng(coords[i]).distanceTo(point));
@@ -85,18 +93,25 @@ function routeMidpoint(coords) {
 function showTimeLabels(indices) {
   timeLabelLayer.clearLayers();
   indices.forEach(index=>{
-    if(routeIsStale(index))return;
+    const geometry=routeGeometry(index);
+    if(!geometry)return;
     const estimate=routeEstimates[index];
-    L.marker(routeMidpoint(roadLines[index]),{
-      icon:L.divIcon({className:`route-time-marker route-time-${index}`,html:`<small>${estimate.title}</small><strong>${estimate.time}</strong><span>行程预估</span>`,iconSize:[116,57],iconAnchor:[58,index===0||index===3?-12:70]}),
+    const route=accommodation?.getDayRoute(index);
+    const state=accommodation?.getRouteState(index) || {};
+    const changed=Boolean(route?.hasChangedEndpoint);
+    const title=changed ? `${escapeHtml(route.from.name)} → ${escapeHtml(route.to.name)}` : estimate.title;
+    const time=changed ? (state.durationText || '已更新') : estimate.time;
+    L.marker(routeMidpoint(geometry),{
+      icon:L.divIcon({className:`route-time-marker route-time-${index}`,html:`<small>${title}</small><strong>${time}</strong><span>${changed?'高德路线':'行程预估'}</span>`,iconSize:[116,57],iconAnchor:[58,index===0||index===3?-12:70]}),
       keyboard:false,interactive:false,zIndexOffset:800
     }).addTo(timeLabelLayer);
   });
 }
 function renderFullRoute(){
   fullRouteLayer.clearLayers();
-  roadLines.forEach((coords,index)=>{
-    if(routeIsStale(index))return;
+  days.forEach((_,index)=>{
+    const coords=routeGeometry(index);
+    if(!coords)return;
     L.polyline(coords,{color:'#fff',weight:8,opacity:1}).addTo(fullRouteLayer);
     L.polyline(coords,{color:'#2474db',weight:5,opacity:.85}).addTo(fullRouteLayer);
   });
@@ -107,7 +122,7 @@ allKeys.forEach((k,i)=>{const p=points[k];markers[k]=L.circleMarker(p.xy,{radius
 function fit(){
   renderFullRoute();
   if(!map.hasLayer(fullRouteLayer))fullRouteLayer.addTo(map);
-  const visible=roadLines.filter((_,index)=>!routeIsStale(index)).flat();
+  const visible=days.flatMap((_,index)=>routeGeometry(index)||[]);
   const fallback=days.flatMap((_,index)=>{
     const route=accommodation?.getDayRoute(index);
     return route ? [route.from,...route.via,route.to].filter(Boolean).map(point=>[point.lat,point.lng]) : [];
@@ -119,7 +134,15 @@ function fit(){
 function showOverviewTimes(){
   document.getElementById('overview-times')?.remove();
   const element=document.createElement('div');element.id='overview-times';
-  element.innerHTML=routeEstimates.map(e=>`<button data-route-day="${e.day}"><span>${routeIsStale(e.day)?'路线未更新':e.title}</span><strong>${routeIsStale(e.day)?'待查询':e.time}</strong></button>`).join('')+'<small>行程预估 · 点击查看路段</small>';
+  element.innerHTML=routeEstimates.map(e=>{
+    const route=accommodation?.getDayRoute(e.day);
+    const state=accommodation?.getRouteState(e.day) || {};
+    const changed=Boolean(route?.hasChangedEndpoint);
+    const stale=routeIsStale(e.day);
+    const title=changed ? stale ? '路线未更新' : `${escapeHtml(route.from.name)} → ${escapeHtml(route.to.name)}` : e.title;
+    const time=changed ? stale ? '待查询' : (state.durationText || '已更新') : e.time;
+    return `<button data-route-day="${e.day}"><span>${title}</span><strong>${time}</strong></button>`;
+  }).join('')+'<small>行程预估 · 点击查看路段</small>';
   element.querySelectorAll('button').forEach(b=>b.onclick=()=>choose(Number(b.dataset.routeDay)));
   document.querySelector('.map-wrap').append(element);
 }
@@ -133,7 +156,7 @@ function choose(i,focus=true,options={}){
   selectedLayer.clearLayers();
   const route=accommodation?.getDayRoute(i);
   const coords=route?[route.from,...route.via,route.to].filter(Boolean).map(point=>[point.lat,point.lng]):d.points.map(k=>points[k].xy);
-  const road=routeIsStale(i)?null:roadLines[legByDay[i]];
+  const road=routeGeometry(i);
   if(focus)map.removeLayer(fullRouteLayer);
   if(road){
     L.polyline(road,{color:'#fff',weight:9}).addTo(selectedLayer);
@@ -144,7 +167,7 @@ function choose(i,focus=true,options={}){
     if(coords.length===1)map.setView(coords[0],12,{animate:false});
     else map.fitBounds(L.latLngBounds(road||coords),{padding:[60,65],maxZoom:11,animate:false});
   }
-  document.querySelector('.map-legend').innerHTML=road?'<span class="line-sample"></span>行程连线示意 · 非道路导航':route?.hasCustomEndpoint?'<span class="line-sample"></span>住宿已更换 · 路线未更新':'市区目的地 · 高德实时规划路线';
+  document.querySelector('.map-legend').innerHTML=road?route?.hasChangedEndpoint?'<span class="line-sample"></span>高德路线已更新':'<span class="line-sample"></span>行程连线示意 · 非道路导航':route?.hasChangedEndpoint?'<span class="line-sample"></span>住宿已更换 · 路线未更新':'市区目的地 · 高德实时规划路线';
   showTimeLabels(road?[legByDay[i]]:[]);
   lucide.createIcons();
   if(!options.skipAmap)window.tibetAMap?.select(i);
@@ -156,6 +179,20 @@ function updateAccommodationSummary(){
   if(!accommodation)return;
   const count=document.getElementById('accommodation-count');
   if(count)count.textContent=String(accommodation.getBaseCount());
+  const distance=document.getElementById('distance-summary');
+  if(distance){
+    let changed=false, complete=true, total=0;
+    days.forEach((_,index)=>{
+      const route=accommodation.getDayRoute(index);
+      const state=accommodation.getRouteState(index);
+      if(route?.hasChangedEndpoint){
+        changed=true;
+        if(state.status==='updated' && Number.isFinite(state.distance)) total+=state.distance;
+        else complete=false;
+      }else if(window.roadRoutes?.legs[index]) total+=Number(window.roadRoutes.legs[index].distance)||0;
+    });
+    distance.textContent=changed ? complete ? `约 ${Math.round(total/1000)} km` : '路线未更新' : '约 1,000–1,100 km';
+  }
   const summary=document.getElementById('stay-note-text');
   if(!summary)return;
   const groups=[];
