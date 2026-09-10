@@ -7,7 +7,7 @@ function installAMapStub() {
     getLat() { return this.lat; }
   }
   const requests = [];
-  window.routeProvider = {requests, mode: 'success', delay: 40, errors: []};
+  window.routeProvider = {requests, mode: 'success', delay: 40, distance: 43210, errors: []};
   class Driving {
     search(...args) {
       const callback = args.at(-1);
@@ -24,8 +24,8 @@ function installAMapStub() {
       requests.push(request);
       const origin = coordinate ? args[0] : new LngLat(119.82,49.22);
       const destination = coordinate ? args[1] : new LngLat(119.78,49.21);
-      const route = {distance: 43210, time: 5678, steps: [{path:[origin, destination],road:'测试道路',instruction:'继续行驶'}]};
-      setTimeout(() => callback(request.mode === 'failure' ? 'error' : 'complete', {routes: request.mode === 'failure' ? [] : [route]}), window.routeProvider.delay);
+      const route = {distance: window.routeProvider.distance, time: 5678, steps: [{path:[origin, destination],road:'测试道路',instruction:'继续行驶'}]};
+      setTimeout(() => { request.completed = true; callback(request.mode === 'failure' ? 'error' : 'complete', {routes: request.mode === 'failure' ? [] : [route]}); }, window.routeProvider.delay);
     }
   }
   class Map {

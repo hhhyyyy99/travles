@@ -41,3 +41,23 @@ test('route failure retains accommodation and marks estimates unavailable', asyn
     assert.match(await page.locator('#day-detail .route-estimate').innerText(), /未更新/);
   } finally {await guide.close();}
 });
+
+test('late responses cannot replace a newer accommodation route or change the selected day', async () => {
+  const guide=await openGuide({init:installAMapStub});
+  try {
+    const {page}=guide;
+    await page.waitForFunction(() => document.getElementById('live-status').textContent.includes('成功'));
+    await page.evaluate(()=>{window.routeProvider.delay=1500;window.routeProvider.distance=11111;});
+    await createBase(page,'旧请求住宿',{nights:[0]});
+    await page.evaluate(()=>{window.routeProvider.delay=10;window.routeProvider.distance=22222;});
+    await createBase(page,'最新请求住宿',{nights:[0]});
+    await page.waitForFunction(() => document.querySelector('#day-detail .route-estimate').textContent.includes('22.2'));
+    await page.locator('[data-day="5"]').click();
+    await page.waitForFunction(() => window.routeProvider.requests.every(r=>r.completed));
+    assert.equal(await page.locator('[data-day="5"]').getAttribute('aria-pressed'), 'true');
+    await page.locator('[data-day="0"]').click();
+    await page.waitForFunction(() => document.querySelector('#day-detail .route-estimate').textContent.includes('22.2'));
+    assert.match(await page.locator('#day-detail .stay-card').innerText(), /最新请求住宿/);
+    assert.doesNotMatch(await page.locator('#day-detail .route-estimate').innerText(), /11.1/);
+  } finally {await guide.close();}
+});
