@@ -57,8 +57,11 @@
     if (!value || typeof value !== 'object') return null;
     const name = String(value.name || '').trim();
     const type = value.type === 'area' ? 'area' : 'hotel';
-    const lat = Number(value.lat);
-    const lng = Number(value.lng);
+    const latText = String(value.lat ?? '').trim();
+    const lngText = String(value.lng ?? '').trim();
+    if (!latText || !lngText) return null;
+    const lat = Number(latText);
+    const lng = Number(lngText);
     if (!name || !validCoordinate(lat, lng)) return null;
     return {
       id: String(value.id || idForBase()),
@@ -195,6 +198,16 @@
       });
     });
     return [...affected].sort((a, b) => a - b);
+  }
+
+  function usedDaysForBase(id) {
+    return overnightDays.filter(index => getDayStay(index)?.id === id);
+  }
+
+  function invalidateRoutes(dayIndices) {
+    const routes = affectedRoutes(dayIndices);
+    routes.forEach(routeIndex => markRouteStatus([routeIndex], 'stale'));
+    return routes;
   }
 
   function markRouteStatus(dayIndices, status, details = {}) {
@@ -344,6 +357,61 @@
     return result;
   }
 
+  function updateBase(id, input) {
+    const previous = getBase(id);
+    if (!previous) return {ok: false, error: '住宿基地不存在'};
+    if (previous.isDefault) return {ok: false, error: '默认住宿不可编辑'};
+    if (!input || typeof input !== 'object') return {ok: false, error: '请输入住宿基地信息'};
+    const updated = normalizeBase({...previous, ...input, id: previous.id, createdAt: previous.createdAt});
+    if (!updated) return {ok: false, error: '请填写基地名称和有效位置'};
+    const previousIndex = state.bases.findIndex(base => base.id === previous.id);
+    if (previousIndex < 0) return {ok: false, error: '住宿基地不存在'};
+    const nextBases = copy(state.bases);
+    nextBases[previousIndex] = updated;
+    const usedDays = usedDaysForBase(previous.id);
+    const locationChanged = previous.lat !== updated.lat || previous.lng !== updated.lng;
+    const routeDays = locationChanged ? affectedRoutes(usedDays) : [];
+    const result = commit(
+      {version: VERSION, bases: nextBases, stays: {...state.stays}},
+      {type: 'update', base: updated, previousBase: copy(previous), dayIndices: usedDays, routeDays}
+    );
+    if (!result.ok) return result;
+    if (routeDays.length) invalidateRoutes(usedDays);
+    return {...result, base: copy(updated), dayIndices: usedDays, routeDays};
+  }
+
+  function deleteBase(id) {
+    const base = getBase(id);
+    if (!base) return {ok: false, error: '住宿基地不存在'};
+    if (base.isDefault) return {ok: false, error: '默认住宿不可删除'};
+    const usedDays = usedDaysForBase(id);
+    if (usedDays.length) {
+      return {ok: false, error: `该基地正在使用，请先替换第 ${usedDays.map(index => index + 1).join('、')} 晚住宿`};
+    }
+    const next = {
+      version: VERSION,
+      bases: state.bases.filter(item => item.id !== id),
+      stays: {...state.stays}
+    };
+    const result = commit(next, {type: 'delete', base: copy(base), dayIndices: [], routeDays: []});
+    return result.ok ? {...result, base: copy(base)} : result;
+  }
+
+  function restoreDay(dayIndex) {
+    const index = Number(dayIndex);
+    if (!overnightDays.includes(index)) return {ok: false, error: '该日没有住宿安排'};
+    const current = getDayStay(index);
+    const defaultId = defaultStayByDay[index];
+    if (!current || current.id === defaultId) return {ok: true, changed: [], dayIndices: [], routeDays: []};
+    const next = {version: VERSION, bases: copy(state.bases), stays: {...state.stays}};
+    delete next.stays[index];
+    const routeDays = affectedRoutes([index]);
+    const result = commit(next, {type: 'restore', dayIndices: [index], routeDays});
+    if (!result.ok) return result;
+    invalidateRoutes([index]);
+    return {...result, changed: [index], dayIndices: [index], routeDays};
+  }
+
   function saveNew(applyToNights) {
     const base = normalizeBase({
       id: idForBase(),
@@ -405,7 +473,7 @@
   }
 
   function buildDialog() {
-    document.body.insertAdjacentHTML('beforeend', `<dialog id="accommodation-dialog" aria-labelledby="accommodation-dialog-title"><form id="accommodation-form"><div class="dialog-heading"><h2 id="accommodation-dialog-title">更换住宿</h2><button type="button" id="accommodation-close" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div><p class="accommodation-dialog-intro">自定义基地只保存在当前浏览器。必须确认地图位置后才能保存。</p><section class="accommodation-existing"><div class="accommodation-section-heading"><h3>已有住宿基地</h3><span id="accommodation-selected-label"></span></div><div id="accommodation-base-list"></div><button type="button" id="accommodation-apply-selected" class="accommodation-apply" disabled>应用到所选晚次</button></section><section class="accommodation-nights"><fieldset><legend>应用到住宿晚次</legend><div id="accommodation-night-choices"></div></fieldset></section><section class="accommodation-editor" id="accommodation-editor" hidden><div class="accommodation-section-heading"><h3>新增住宿基地</h3><button type="button" id="accommodation-cancel-new">取消</button></div><label>基地名称<input id="accommodation-new-name" maxlength="120" autocomplete="off" required></label><label>类型<select id="accommodation-new-type"><option value="hotel">酒店 / 民宿</option><option value="area">住宿区域</option></select></label><label>详细地址（选填）<input id="accommodation-new-address" maxlength="240" autocomplete="street-address"></label><label>备注（选填）<textarea id="accommodation-new-notes" maxlength="600" rows="3"></textarea></label><div class="accommodation-location"><div><strong>地图位置</strong><span id="accommodation-location-summary">尚未在地图上选择位置</span></div><button type="button" id="accommodation-pick-map"><i data-lucide="crosshair"></i>在地图上选点</button></div><div class="accommodation-coordinates"><label>纬度<input id="accommodation-new-lat" inputmode="decimal" readonly required></label><label>经度<input id="accommodation-new-lng" inputmode="decimal" readonly required></label></div><div class="accommodation-editor-actions"><button type="button" id="accommodation-save-option">仅保存为备选</button><button type="button" id="accommodation-save-apply">保存并应用</button></div></section><p id="accommodation-dialog-status" role="status" aria-live="polite"></p></form></dialog><div id="accommodation-map-picker" tabindex="-1" role="status" hidden>请在地图上点击住宿代表位置 <button type="button" id="accommodation-cancel-pick">取消选点</button></div>`);
+    document.body.insertAdjacentHTML('beforeend', `<dialog id="accommodation-dialog" aria-labelledby="accommodation-dialog-title"><form id="accommodation-form"><div class="dialog-heading"><h2 id="accommodation-dialog-title">更换住宿</h2><button type="button" id="accommodation-close" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div><p class="accommodation-dialog-intro">自定义基地只保存在当前浏览器。必须确认地图位置后才能保存。</p><section class="accommodation-existing"><div class="accommodation-section-heading"><h3>已有住宿基地</h3><span id="accommodation-selected-label"></span></div><div id="accommodation-base-list"></div><button type="button" id="accommodation-apply-selected" class="accommodation-apply" disabled>应用到所选晚次</button></section><section class="accommodation-nights"><fieldset><legend>应用到住宿晚次</legend><div id="accommodation-night-choices"></div></fieldset><button type="button" id="accommodation-restore-night" class="accommodation-restore">恢复本晚默认住宿</button></section><section class="accommodation-editor" id="accommodation-editor" hidden><div class="accommodation-section-heading"><h3>新增住宿基地</h3><button type="button" id="accommodation-cancel-new">取消</button></div><label>基地名称<input id="accommodation-new-name" maxlength="120" autocomplete="off" required></label><label>类型<select id="accommodation-new-type"><option value="hotel">酒店 / 民宿</option><option value="area">住宿区域</option></select></label><label>详细地址（选填）<input id="accommodation-new-address" maxlength="240" autocomplete="street-address"></label><label>备注（选填）<textarea id="accommodation-new-notes" maxlength="600" rows="3"></textarea></label><div class="accommodation-location"><div><strong>地图位置</strong><span id="accommodation-location-summary">尚未在地图上选择位置</span></div><button type="button" id="accommodation-pick-map"><i data-lucide="crosshair"></i>在地图上选点</button></div><div class="accommodation-coordinates"><label>纬度<input id="accommodation-new-lat" inputmode="decimal" readonly required></label><label>经度<input id="accommodation-new-lng" inputmode="decimal" readonly required></label></div><div class="accommodation-editor-actions"><button type="button" id="accommodation-save-option">仅保存为备选</button><button type="button" id="accommodation-save-apply">保存并应用</button></div></section><p id="accommodation-dialog-status" role="status" aria-live="polite"></p></form></dialog><div id="accommodation-map-picker" tabindex="-1" role="status" hidden>请在地图上点击住宿代表位置 <button type="button" id="accommodation-cancel-pick">取消选点</button></div>`);
     $('accommodation-close').onclick = closeDialog;
     $('accommodation-cancel-new').onclick = () => { resetEditor(); renderBaseList(); };
     $('accommodation-pick-map').onclick = startMapPick;
@@ -413,6 +481,14 @@
     $('accommodation-save-option').onclick = () => saveNew(false);
     $('accommodation-save-apply').onclick = () => saveNew(true);
     $('accommodation-apply-selected').onclick = applySelected;
+    $('accommodation-restore-night').onclick = () => {
+      const result = restoreDay(currentDay);
+      if (!result.ok) {
+        setStatus(result.error);
+        return;
+      }
+      closeDialog();
+    };
     $('accommodation-base-list').addEventListener('click', event => {
       const button = event.target.closest('[data-accommodation-select]');
       if (!button) return;
@@ -456,10 +532,15 @@
     getUsedBaseIds,
     getBaseCount,
     assign,
+    updateBase,
+    deleteBase,
+    restoreDay,
     saveBase: input => {
       const base = normalizeBase(input);
+      if (input?.id && defaultById.has(String(input.id))) return {ok: false, error: '默认住宿不可覆盖'};
       if (!base) return {ok: false, error: '请填写基地名称和有效位置'};
       const persistedBase = {...base, id: input.id || base.id};
+      if (state.bases.some(item => item.id === persistedBase.id)) return {ok: false, error: '住宿基地标识已存在'};
       const next = {version: VERSION, bases: [...state.bases, persistedBase], stays: {...state.stays}};
       const result = commit(next, {type: 'create', base: persistedBase, dayIndices: [], routeDays: []});
       return result.ok ? {...result, base: next.bases.at(-1)} : result;
