@@ -4,12 +4,18 @@
 
 **Blocked by:** 01：手动添加住宿基地并用于行程
 
-Status: ready-for-agent
+Status: resolved
 
-- [ ] 导出带格式版本的数据文件，完整包含自定义基地及每晚住宿选择，支持引用默认住宿；不包含地图服务密钥等无关配置。
-- [ ] 导入先校验文件格式、支持的版本、必填字段、有效位置、标识及晚次引用完整性；错误信息可理解。
-- [ ] 有效文件显示预览及明确的整份替换提示，只有确认后才生效，不自动合并当前数据。
-- [ ] 取消、无效文件、未知版本或悬空引用均不修改当前基地和住宿选择。
-- [ ] 确认后整体恢复，刷新仍保留；存储失败不报告成功或留下部分恢复的安排。
-- [ ] 恢复后每日住宿、地图、摘要和计数一致，按恢复后的端点获取路线，失败显示未更新而非错误沿用旧估算。
-- [ ] 浏览器流程验证导出再导入往返、替换而非合并、取消、格式与引用错误、刷新和存储失败。
+- [x] 导出带格式版本的数据文件，完整包含自定义基地及每晚住宿选择，支持引用默认住宿；不包含地图服务密钥等无关配置。
+- [x] 导入先校验文件格式、支持的版本、必填字段、有效位置、标识及晚次引用完整性；错误信息可理解。
+- [x] 有效文件显示预览及明确的整份替换提示，只有确认后才生效，不自动合并当前数据。
+- [x] 取消、无效文件、未知版本或悬空引用均不修改当前基地和住宿选择。
+- [x] 确认后整体恢复，刷新仍保留；存储失败不报告成功或留下部分恢复的安排。
+- [x] 恢复后每日住宿、地图、摘要和计数一致，按恢复后的端点获取路线，失败显示未更新而非错误沿用旧估算。
+- [x] 浏览器流程验证导出再导入往返、替换而非合并、取消、格式与引用错误、刷新和存储失败。
+
+## Answer
+
+Implemented on branch `codex/accommodation-04`. Added strict v1 backup validation and atomic `getBackup`/`validateBackup`/`replaceState` APIs, plus an independent export/import dialog with preview and explicit whole-state replacement. The backup contains only custom bases and all overnight base references, including defaults; app configuration and map credentials are excluded. Invalid files, dangling references, cancellation, and local-storage write failures preserve the current state. Restored endpoint changes mark only affected route legs stale so the existing route integration can recalculate them.
+
+Evidence: `node --check accommodation.js`; `node --check accommodation-backup.js`; `node --test tests/amap-utils.test.cjs` (3 passed); `NODE_PATH=... PLAYWRIGHT_CHROMIUM_EXECUTABLE=... node --test tests/accommodation-backup.browser.cjs` (1 passed). The browser flow covered export, preview, whole replacement, reload persistence, unknown version, dangling reference, cancellation, strict coordinate rejection, and storage failure.
