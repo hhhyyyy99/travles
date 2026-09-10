@@ -1,7 +1,15 @@
 import { ArrowUpRight, BedDouble, CarFront, LocateFixed, MapPin, Mountain, Navigation } from 'lucide-react'
-import type { ItineraryDay } from '../domain/types'
+import type { ItineraryDay, ScheduleRow } from '../domain/types'
 import { legByDay, roadRoutes } from '../data/roadRoutes'
 import { navigationUrl, searchUrl } from '../services/navigationUrl'
+import { useRouteStates } from '../hooks/useRouteStates'
+import {
+  describeDriveText,
+  describeRouteEstimate,
+  describeRouteNote,
+  isStaleStatus,
+  rewriteScheduleRow,
+} from '../domain/routeStates'
 
 interface DayDetailProps {
   day: ItineraryDay
@@ -11,27 +19,28 @@ interface DayDetailProps {
 const STALE_STATUSES = new Set(['stale', 'pending', 'unupdated'])
 
 /**
- * 驾车路线 panel — faithful port of trip.js `navigationPanel` (46–65) with the
- * accommodation-absent fallbacks: route undefined → static leg, status
- * `reference`, endpoint names from `d.nav`, note = the static reference note.
+ * 驾车路线 panel — faithful port of trip.js `navigationPanel` (46–65) driven by
+ * the route-state store. Ticket 03 has no accommodation, so endpoints stay at
+ * `d.nav` and the static leg stays visible until a live query failure; the
+ * label precedence (updated → stale → static leg → urban) is the legacy one.
  */
 function NavigationPanel({ day, index }: DayDetailProps) {
-  // Ticket 02: no accommodation → legacy resolves route=undefined,
-  // routeState={status:'reference'}, stale=false and leg=static leg.
+  const { get } = useRouteStates()
+  const state = get(index)
+  const stale = isStaleStatus(state.status)
   const legIndex = legByDay[index]
-  const leg = legIndex != null ? roadRoutes.legs[legIndex] : undefined
-  const stale = false
+  const leg = legIndex != null && !stale ? roadRoutes.legs[legIndex] : undefined
   const localDay = day.points.length < 2
   const roads = leg ? leg.roads.filter((r) => /^[GS]\d/.test(r)).join(' → ') : ''
   const fromName = day.nav[0]
   const toName = day.nav[1]
-  const routeDescription =
-    stale ? '路线未更新'
-      : leg ? `参考里程约 ${(leg.distance / 1000).toFixed(0)} km${roads ? ` · ${roads}` : ''}`
-      : '市内目的地 · 以高德实时规划为准'
-  const routeNote = localDay
-    ? '当天不安排长途驾驶，景区内交通以观光车及酒店接驳为准。'
-    : '起终点为区域参考位置，请在高德中确认酒店、景区入口或航站楼。手机可调起高德；当前位置导航需要手机定位。'
+  const routeDescription = describeRouteEstimate(
+    state,
+    leg ? { distance: leg.distance, roads: leg.roads } : null,
+  )
+  const routeNote = describeRouteNote(state, localDay)
+  const primaryHref = state.navigation?.primary ?? navigationUrl(day)
+  const currentHref = state.navigation?.current ?? navigationUrl(day, true)
 
   return (
     <div className="navigation-panel">
@@ -43,12 +52,12 @@ function NavigationPanel({ day, index }: DayDetailProps) {
         <p className={`route-estimate ${stale ? 'is-stale' : ''}`}>{routeDescription}</p>
       </div>
       <div className="navigation-actions">
-        <a className="navigation-primary" href={navigationUrl(day)} target="_blank" rel="noopener">
+        <a className="navigation-primary" href={primaryHref} target="_blank" rel="noopener">
           {localDay ? <MapPin aria-hidden="true" /> : <Navigation aria-hidden="true" />}
           {localDay ? '查看当天住处' : '高德路线规划'}
         </a>
         {!localDay && (
-          <a className="navigation-current" href={navigationUrl(day, true)} target="_blank" rel="noopener">
+          <a className="navigation-current" href={currentHref} target="_blank" rel="noopener">
             <LocateFixed aria-hidden="true" />
             从当前位置导航
           </a>
@@ -60,13 +69,18 @@ function NavigationPanel({ day, index }: DayDetailProps) {
 }
 
 /**
- * 每日详情卡片 — faithful port of trip.js `detail` (66–76) with accommodation
- * fallbacks: stay = `d.stay` (no stay-card, no 更换住宿 button), drive text =
- * `d.drive`, schedule untouched, links from `searchUrl`.
+ * 每日详情卡片 — faithful port of trip.js `detail` (66–76); the drive text and
+ * the schedule rows follow the route state (路线未更新 while stale/pending).
  */
 function DetailCard({ day, index }: DayDetailProps) {
+  const { get } = useRouteStates()
+  const state = get(index)
+  const routeChanged = isStaleStatus(state.status)
   const stayName = day.stay
-  const driveText = day.drive
+  const driveText = describeDriveText(state, day.drive)
+  const schedule = routeChanged
+    ? day.schedule.map((row) => [row[0], row[1], rewriteScheduleRow(row[2], true)] as ScheduleRow)
+    : day.schedule
 
   return (
     <>
@@ -95,7 +109,7 @@ function DetailCard({ day, index }: DayDetailProps) {
         </span>
       </div>
       <div className="timeline">
-        {day.schedule.map((row, rowIndex) => (
+        {schedule.map((row, rowIndex) => (
           <div className="time-row" key={rowIndex}>
             <time>{row[0]}</time>
             <div>

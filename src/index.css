@@ -316,7 +316,9 @@
   .map-wrap:has(#overview-times) .map-title {
     display: none;
   }
-  .route-time-marker {
+  .route-time-marker,
+  .amap-route-time,
+  .map-time-badge {
     background: #fff;
     color: #234336;
     border: 1px solid #6f9d85;
@@ -327,22 +329,250 @@
     line-height: 1.35;
     white-space: nowrap;
   }
-  .route-time-marker small {
+  .route-time-marker small,
+  .amap-route-time small,
+  .map-time-badge small {
     display: block;
     font-size: 10px;
   }
-  .route-time-marker strong {
+  .route-time-marker strong,
+  .amap-route-time strong,
+  .map-time-badge strong {
     display: block;
     font-size: 15px;
     font-weight: 650;
   }
-  .route-time-marker span {
+  .route-time-marker span,
+  .amap-route-time span,
+  .map-time-badge span {
     display: block;
     font-size: 9px;
     color: #64716b;
   }
   .map-wrap:has(.route-time-marker) .map-title {
     display: none;
+  }
+
+  /* --- AMap live layer (trip.css L8/L14–L16, note C §7, ticket 03) --- */
+  .amap-route-time {
+    min-width: 116px;
+  }
+  .map-time-badge {
+    position: absolute;
+    left: 12px;
+    top: 12px;
+    z-index: 410;
+    min-width: 140px;
+    text-align: left;
+    pointer-events: none;
+  }
+  #amap-canvas {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+  }
+  #amap-canvas svg {
+    width: initial;
+    height: initial;
+    stroke-width: initial;
+  }
+  .amap-active #route-map,
+  .amap-active .map-title,
+  .amap-active .map-legend,
+  .amap-active #map-error {
+    display: none;
+  }
+  .amap-active .fit-map {
+    top: 12px;
+  }
+  .trip-map-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 0 0 12px;
+    font-size: 11px;
+    color: var(--color-muted);
+  }
+  .trip-map-toolbar > div {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .trip-map-toolbar label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+  }
+  .trip-map-toolbar input {
+    accent-color: var(--color-green);
+  }
+  .trip-map-toolbar button {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--color-line);
+    border-radius: 4px;
+  }
+  .amap-live {
+    padding: 20px 0;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .live-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+  }
+  .live-header h2 {
+    font-size: 16px;
+  }
+  .live-header button,
+  #route-endpoints button {
+    border-radius: 5px;
+    background: var(--color-green);
+    color: #fff;
+    padding: 8px 13px;
+    font-size: 12px;
+  }
+  #live-status {
+    font-size: 12px;
+    color: var(--color-muted);
+    margin: 10px 0;
+  }
+  .traffic-disclaimer {
+    font-size: 11px;
+    color: var(--color-muted);
+    margin-top: 12px;
+  }
+  #route-endpoints:not([hidden]) {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 10px;
+    align-items: end;
+    margin: 15px 0;
+  }
+  #route-endpoints label {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 12px;
+    color: var(--color-muted);
+    position: relative;
+  }
+  #route-endpoints input {
+    width: 100%;
+    min-width: 0;
+    background: white;
+    border: 1px solid #bdccc3;
+    border-radius: 4px;
+    padding: 9px;
+    font: inherit;
+    color: var(--color-ink);
+  }
+  .live-metrics {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr 1fr;
+    gap: 16px;
+    padding: 13px 0;
+  }
+  .live-metrics span {
+    display: block;
+    color: var(--color-muted);
+    font-size: 11px;
+  }
+  .live-metrics strong {
+    display: block;
+    font-size: 21px;
+    font-weight: 550;
+    margin-top: 4px;
+  }
+  .traffic-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    font-size: 11px;
+  }
+  .traffic-summary span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .traffic-summary b {
+    height: 9px;
+    width: 16px;
+    border-radius: 2px;
+  }
+  .resolved-endpoints {
+    font-size: 11px;
+    color: var(--color-muted);
+    margin-top: 12px;
+  }
+  .road-details {
+    margin-top: 12px;
+    font-size: 12px;
+  }
+  .road-details summary {
+    cursor: pointer;
+  }
+  .road-details ol {
+    max-height: 220px;
+    overflow: auto;
+    padding-left: 24px;
+  }
+  .road-details li {
+    padding: 5px;
+  }
+  .road-details li span {
+    display: block;
+    color: var(--color-muted);
+  }
+  .trip-endpoint {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: 3px solid white;
+    border-radius: 50%;
+    box-shadow: 0 2px 7px #15352755;
+    color: white;
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1;
+    box-sizing: border-box;
+  }
+  .trip-endpoint-start {
+    background: #236a51;
+  }
+  .trip-endpoint-end {
+    background: #b75342;
+  }
+  .amap-sug {
+    position: absolute;
+    z-index: 600;
+    max-width: 380px;
+    min-width: 220px;
+    background: #fff;
+    border: 1px solid #bdccc3;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px #13382926;
+    font-size: 13px;
+    overflow: hidden;
+  }
+  .amap-sug li,
+  .amap-sug .amap-sug-item {
+    padding: 8px 11px;
+    cursor: pointer;
+    color: var(--color-ink);
+    list-style: none;
+  }
+  .amap-sug li:hover,
+  .amap-sug li.active,
+  .amap-sug .amap-sug-item:hover,
+  .amap-sug .amap-sug-item.active {
+    background: #eef5f0;
   }
 
   /* --- route strip (trip.css L1/L4) --- */
@@ -613,8 +843,38 @@
     .map-wrap:has(#overview-times) {
       height: 520px;
     }
-    .map-wrap:has(.route-time-marker) {
+    .map-wrap:has(.route-time-marker),
+    .map-wrap.amap-active {
       height: 430px;
+    }
+    .trip-map-toolbar {
+      font-size: 10px;
+      gap: 6px;
+    }
+    .trip-map-toolbar > div {
+      gap: 6px;
+    }
+    .live-header h2 {
+      font-size: 14px;
+    }
+    .live-header button {
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .live-metrics {
+      gap: 10px;
+    }
+    .live-metrics strong {
+      font-size: 16px;
+    }
+    #route-endpoints:not([hidden]) {
+      grid-template-columns: 1fr 1fr;
+    }
+    #route-endpoints button {
+      grid-column: 1/-1;
+    }
+    .trip-map-toolbar > span {
+      max-width: 150px;
     }
     #overview-times {
       bottom: 30px;
@@ -716,6 +976,10 @@
       display: none;
     }
     .leaflet-control-layers {
+      display: none;
+    }
+    .trip-map-toolbar,
+    .amap-live {
       display: none;
     }
   }

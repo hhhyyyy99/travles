@@ -16,6 +16,7 @@ import {
 import { Checklist } from './components/Checklist'
 import { DaysPanel } from './components/DaysPanel'
 import { RoutePanel } from './components/RoutePanel'
+import { useAmapLive } from './hooks/useAmapLive'
 import { useRouteMap } from './hooks/useRouteMap'
 import type { RouteMapHandle } from './services/map'
 import { dayPointCoords, tripPlan } from './data/itinerary'
@@ -40,27 +41,36 @@ export default function App() {
   const [selectedDay, setSelectedDay] = useState(0)
   const [overview, setOverview] = useState(true)
   const [legend, setLegend] = useState(OVERVIEW_LEGEND)
+  const amap = useAmapLive()
 
   const mapHandleRef = useRef<RouteMapHandle | null>(null)
 
-  const choose = useCallback((day: number, focus = true) => {
-    setSelectedDay(day)
-    setOverview(false)
-    const road = staticRouteGeometry(day)
-    const coords = dayPointCoords(day)
-    setLegend(road ? '行程连线示意 · 非道路导航' : '市区目的地 · 高德实时规划路线')
-    const handle = mapHandleRef.current
-    if (!handle) return
-    drawSelectedDay(handle, road, coords)
-    if (focus) focusDay(handle, road ?? coords)
-    const estimate = tripPlan.estimates[day]
-    showTimeLabels(
-      handle,
-      road && estimate ? [{ index: day, title: estimate.title, time: estimate.time, coordinates: road }] : [],
-    )
-  }, [])
+  // `options.skipAmap` mirrors trip.js choose(..., {skipAmap}) — the boot
+  // render must not trigger a live AMap query (legacy boot order gotcha 1).
+  const choose = useCallback(
+    (day: number, focus = true, options?: { skipAmap?: boolean }) => {
+      setSelectedDay(day)
+      setOverview(false)
+      const road = staticRouteGeometry(day)
+      const coords = dayPointCoords(day)
+      setLegend(road ? '行程连线示意 · 非道路导航' : '市区目的地 · 高德实时规划路线')
+      if (!options?.skipAmap) amap.select(day)
+      const handle = mapHandleRef.current
+      if (!handle) return
+      drawSelectedDay(handle, road, coords)
+      if (focus) focusDay(handle, road ?? coords)
+      const estimate = tripPlan.estimates[day]
+      showTimeLabels(
+        handle,
+        road && estimate ? [{ index: day, title: estimate.title, time: estimate.time, coordinates: road }] : [],
+      )
+    },
+    [amap.select],
+  )
 
   const fit = useCallback(() => {
+    // AMap whole-trip view takes precedence over the Leaflet fit (trip.js:193).
+    if (amap.overview()) return
     setOverview(true)
     setLegend(OVERVIEW_LEGEND)
     const handle = mapHandleRef.current
@@ -69,12 +79,13 @@ export default function App() {
     renderFullRoute(handle, geometries)
     fitTrip(handle, geometries.flat())
     showTimeLabels(handle, [])
-  }, [])
+  }, [amap.overview])
 
   // Legacy boot order (trip.js:256): choose(0,false) then fit() → overview on,
-  // day-0 detail rendered, no day focus, 全程 legend.
+  // day-0 detail rendered, no day focus, 全程 legend. skipAmap keeps the boot
+  // AMap-free: the AMap panel connects later and runs its own day-0 query.
   const handleMapReady = useCallback(() => {
-    choose(0, false)
+    choose(0, false, { skipAmap: true })
     fit()
   }, [choose, fit])
 
