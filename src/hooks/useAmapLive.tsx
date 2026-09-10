@@ -31,7 +31,11 @@ import {
   ROUTE_REFRESH_INTERVAL_MS,
   type RouteStateDetails,
 } from '../domain/routeStates'
-import { wgs84ToGcj02LngLat } from '../domain/geo'
+import { getDayRoute as accommodationGetDayRoute, type AccommodationDayRoute } from '../domain/accommodation'
+import type { AccommodationState } from '../domain/types'
+import type { AccommodationChangePayload } from './useAccommodation'
+import { useAccommodation } from './useAccommodation'
+import { hasCoordinates, wgs84ToGcj02LngLat } from '../domain/geo'
 import { discoverAmapConfig } from '../services/amapConfig'
 import {
   createAmapMap,
@@ -159,6 +163,17 @@ class AmapLiveController {
   private dayTokens = new Map<number, number>()
   private overrides = new Map<number, [string, string]>()
   private autoCompleteInstalled = false
+  /**
+   * Accommodation snapshot (ticket 04 part C) — the single source of truth for
+   * route endpoints. Attached by the provider on every accommodation change so
+   * `endpoints()`/`routeStops()` read the LATEST stay resolution at query time
+   * (legacy `tibetAccommodation.getDayRoute`).
+   */
+  private accommodation: { state: AccommodationState; getDayRoute(day: number): AccommodationDayRoute | null } | null = null
+  /** `accommodationGeneration` — bumped by each accommodation change (legacy :8/:365). */
+  private accommodationGeneration = 0
+  /** Per-day in-flight accommodation queries: `{token, generation}` (legacy :319–321). */
+  private accommodationRequests = new Map<number, { token: number; generation: number }>()
 
   constructor() {
     this.amap = getAMapStatic()
@@ -189,6 +204,13 @@ class AmapLiveController {
 
   detach(): void {
     this.routes = null
+  }
+
+  /** Attach the current accommodation snapshot (provider effect + change events). */
+  attachAccommodation(
+    snapshot: { state: AccommodationState; getDayRoute(day: number): AccommodationDayRoute | null },
+  ): void {
+    this.accommodation = snapshot
   }
 
   private emit(): void {
@@ -320,28 +342,56 @@ class AmapLiveController {
   private endpoints(day = this.selectedDay): [string, string] {
     if (this.overrides.has(day)) return this.overrides.get(day)!
     const d = tripPlan.days[day]
-    return d ? d.nav : ['', '']
+    if (!d) return ['', '']
+    // Single source of truth: the accommodation route (part C). The route's
+    // resolved names only displace the plan nav labels when the endpoint
+    // actually changed (locked pre-04 suites assert plan labels otherwise).
+    const route = this.accommodation?.getDayRoute(day)
+    if (!route?.hasChangedEndpoint) return d.nav
+    return [route.from?.name || d.nav[0], route.to?.name || d.nav[1]]
   }
 
+  /**
+   * Per-day AMap stops (amap-integration.js `routeStops` :82–107). Keyword
+   * stops by default; a changed-endpoint day uses the accommodation route's
+   * stops with explicit GCJ-02 `location` on endpoints and any custom/changed
+   * stop (which flips `searchRoute` to the coordinate overload; keyword stops
+   * survive inside waypoints).
+   */
   private routeStops(dayIndex: number): AmapStopInput[] {
     const d = tripPlan.days[dayIndex]
     if (!d) return []
-    let stops: AmapStopInput[]
     if (this.overrides.has(dayIndex)) {
       const names = this.overrides.get(dayIndex)!
-      stops = [
+      return [
         { keyword: names[0], city: d.cities[0] },
         ...(d.via ?? []).map((stop) => ({ ...stop })),
         { keyword: names[1], city: d.cities[1] },
       ]
-    } else {
-      stops = [
+    }
+    const route = this.accommodation?.getDayRoute(dayIndex)
+    if (!route?.hasChangedEndpoint) {
+      return [
         { keyword: d.nav[0], city: d.cities[0] },
         ...(d.via ?? []).map((stop) => ({ ...stop })),
         { keyword: d.nav[1], city: d.cities[1] },
       ]
     }
-    return stops
+    const amap = this.amap
+    return route.stops
+      .map((stop, index): AmapStopInput => {
+        const result: AmapStopInput = {
+          keyword: stop.keyword || stop.name,
+          city: d.cities[Math.min(index, d.cities.length - 1)] || d.cities[0],
+        }
+        const isEndpoint = index === 0 || index === route.stops.length - 1
+        if (amap && (isEndpoint || stop.isCustom || stop.isChanged) && stop.lat != null && stop.lng != null) {
+          const [lng, lat] = wgs84ToGcj02LngLat(stop.lat, stop.lng)
+          result.location = new amap.LngLat(lng, lat)
+        }
+        return result
+      })
+      .filter((stop) => Boolean(stop.keyword))
   }
 
   private renderForm(): void {
@@ -481,9 +531,128 @@ class AmapLiveController {
   }
 
   /* ------------------------------------------------------------ *
+   * Accommodation-changed routes (amap-integration.js :320–378)   *
+   * ------------------------------------------------------------ */
+
+  /**
+   * `tibetAMap.accommodationChanged` — fired by the accommodation change
+   * listener with the affected `routeDays`. Port of `recalculateAccommodation`
+   * (:357–377): bumps `requestId` (invalidates in-flight normal/whole-trip
+   * queries) and `accommodationGeneration` (invalidates in-flight
+   * accommodation queries), marks the changed-endpoint days `pending` and
+   * re-queries exactly those days with their NEW endpoints.
+   */
+  accommodationChanged(dayIndices: number[]): boolean {
+    this.requestId++
+    window.clearTimeout(this.queryTimer)
+    if (!this.map) return false
+    const days = [...new Set(dayIndices.map(Number))]
+      .filter((index) => index >= 0 && index < tripPlan.days.length)
+      .filter((index) => this.accommodation?.getDayRoute(index)?.hasChangedEndpoint)
+    if (!days.length) {
+      this.clearRoute()
+      if (this.wholeTrip) {
+        this.patch({ overviewTimesVisible: true })
+      } else {
+        this.renderForm()
+        this.setLiveStatus('当前住宿使用默认路线，可按需刷新高德路况。')
+      }
+      return true
+    }
+    const generation = ++this.accommodationGeneration
+    this.routes?.markRouteStatus(days, 'pending')
+    days.forEach((index) => this.queryAccommodationRoute(index, generation))
+    return true
+  }
+
+  /**
+   * One lodging leg (amap-integration.js `queryAccommodationRoute` :320–355).
+   * Per-day `{token, generation}` in the requests map gate every callback —
+   * a newer query for the day (new token) or a newer accommodation change
+   * (new generation) discards late responses BEFORE any state write.
+   */
+  private queryAccommodationRoute(dayIndex: number, generation: number): boolean {
+    const map = this.map
+    const amap = this.amap
+    if (!map || !amap) return false
+    const token = (this.accommodationRequests.get(dayIndex)?.token ?? 0) + 1
+    this.accommodationRequests.set(dayIndex, { token, generation })
+    const current = (): boolean => {
+      const entry = this.accommodationRequests.get(dayIndex)
+      return entry?.token === token && this.accommodationGeneration === generation
+    }
+    const driving = new amap.Driving({ extensions: 'all', policy: amap.DrivingPolicy.REAL_TRAFFIC })
+    const stops = this.routeStops(dayIndex)
+    if (dayIndex === this.selectedDay && !this.wholeTrip) {
+      this.clearRoute()
+      this.renderForm()
+      this.setLiveStatus('正在获取高德路线、预计驾驶时间与路况…')
+    }
+    const timer = window.setTimeout(() => {
+      if (!current()) return
+      this.accommodationRequests.delete(dayIndex)
+      if (dayIndex === this.selectedDay && !this.wholeTrip) {
+        this.setLiveStatus('路线查询超时，请刷新重试；暂不显示时间与路况。')
+      }
+      this.recordAccommodationResult(dayIndex, 'unupdated')
+    }, ROUTE_QUERY_TIMEOUT_MS)
+    const onResult = (state: string, result?: AmapRouteResult | null): void => {
+      if (!current()) return
+      window.clearTimeout(timer)
+      this.accommodationRequests.delete(dayIndex)
+      if (state !== 'complete' || !result?.routes?.length) {
+        if (dayIndex === this.selectedDay && !this.wholeTrip) {
+          this.setLiveStatus('未取得路线。请检查地点名称、Key 服务权限与配额，然后刷新重试。')
+        }
+        this.recordAccommodationResult(dayIndex, 'unupdated')
+        return
+      }
+      const route = result.routes[0]!
+      if (dayIndex === this.selectedDay && !this.wholeTrip) {
+        // Selected day: full live rendering + patched navigation hrefs. No
+        // day-token gate — the accommodation `current()` gate (:current above)
+        // is the legacy rejection mechanism for this family.
+        this.showRoute(route, result, dayIndex, undefined)
+        return
+      }
+      this.recordAccommodationResult(dayIndex, 'updated', {
+        distance: Number(route.distance),
+        duration: Number(route.time),
+        durationText: duration(route.time),
+        coordinates: routePathWgs84(route),
+      })
+    }
+    try {
+      searchRoute(driving, stops, onResult)
+    } catch {
+      onResult('error', null)
+    }
+    return true
+  }
+
+  /**
+   * Accommodation-leg route-state write. No `expectedToken`: the per-day
+   * `current()` gate above is the legacy rejection mechanism (token identity +
+   * generation), so stale responses never reach the writer. `navigation` is
+   * cleared so a failed leg cannot keep a stale patched href.
+   */
+  private recordAccommodationResult(
+    day: number,
+    status: 'updated' | 'unupdated',
+    details: RouteStateDetails = {},
+  ): void {
+    this.routes?.markRouteStatus([day], status, { navigation: undefined, ...details })
+  }
+
+  /* ------------------------------------------------------------ *
    * Result rendering (amap-integration.js `showRoute` :139–178)
    * ------------------------------------------------------------ */
-  private showRoute(route: AmapRoute, result: AmapRouteResult): void {
+  private showRoute(
+    route: AmapRoute,
+    result: AmapRouteResult,
+    routeDay = this.selectedDay,
+    expectedToken: number | undefined = this.dayTokens.get(routeDay),
+  ): void {
     const path = (route.steps ?? []).flatMap((step) => step.path ?? [])
     const routeCoordinates = routePathWgs84(route)
     const amap = this.amap
@@ -544,7 +713,7 @@ class AmapLiveController {
     this.setLiveStatus(`高德路线查询成功 · ${timestamp}（本地时间）`)
     if (!whole) {
       this.routes?.markRouteStatus(
-        [this.selectedDay],
+        [routeDay],
         'updated',
         {
           distance: Number(route.distance),
@@ -553,7 +722,7 @@ class AmapLiveController {
           coordinates: routeCoordinates,
           navigation,
         },
-        this.dayTokens.get(this.selectedDay),
+        expectedToken,
       )
     }
     const rows = Object.entries(trafficResult.totals).filter(([, distance]) => distance > 0)
@@ -580,6 +749,8 @@ class AmapLiveController {
   /**
    * Patched-navigation equivalents (amap-integration.js:164–169): resolved
    * GCJ-02 path endpoints + form display names, byte-identical URL strings.
+   * A coordinated via point from the accommodation route is appended to both
+   * links (legacy reads `accommodationRoute(selectedDay).via`).
    */
   private navigationHrefs(path: AmapPathPoint[]): { primary: string; current: string } {
     const names = this.endpoints()
@@ -590,6 +761,14 @@ class AmapLiveController {
     const params = (): URLSearchParams => new URLSearchParams({ mode: 'car', policy: '1', callnative: '1', src: 'hailar-slow-trip', to })
     const currentParams = params()
     const primaryParams = params()
+    const route = this.accommodation?.getDayRoute(this.selectedDay)
+    const via = route?.via?.find((stop) => hasCoordinates(stop))
+    if (via && typeof via.lat === 'number' && typeof via.lng === 'number') {
+      const [viaLng, viaLat] = wgs84ToGcj02LngLat(via.lat, via.lng)
+      const viaValue = `${viaLng},${viaLat},${via.name}`
+      currentParams.set('via', viaValue)
+      primaryParams.set('via', viaValue)
+    }
     primaryParams.set('from', from)
     return {
       current: `https://uri.amap.com/navigation?${currentParams}`,
@@ -613,9 +792,71 @@ export function AmapLiveProvider({ children }: { children: ReactNode }) {
   if (controllerRef.current === null) controllerRef.current = getAmapLiveController()
   const controller = controllerRef.current
   const routeStates = useRouteStates()
+  const { markRouteStatus } = routeStates
+  const { state: accommodationState, subscribe } = useAccommodation()
+
+  // Single source of truth for route endpoints: keep the controller's
+  // accommodation snapshot current so `endpoints()`/`routeStops()` read the
+  // latest stay resolution at query time (legacy `tibetAccommodation.getDayRoute`).
+  useEffect(() => {
+    controller.attachAccommodation({
+      state: accommodationState,
+      getDayRoute: (day) => accommodationGetDayRoute(accommodationState, day),
+    })
+  }, [accommodationState, controller])
+
+  /**
+   * Accommodation change listener — the port of trip.js `refreshAccommodationView`
+   * (choose + renderFullRoute are React effects on state; the AMap part here):
+   * `accommodationChanged(routeDays)` marks the changed-endpoint days `pending`
+   * and re-queries them, then the legacy status re-normalization
+   * (accommodation.js assign/restore/replace) sets them `stale`/`reference` —
+   * the final synchronous status is `stale` until a query result lands.
+   */
+  const handleAccommodationChange = useCallback(
+    (payload: AccommodationChangePayload) => {
+      controller.attachAccommodation({
+        state: payload.state,
+        getDayRoute: (day) => accommodationGetDayRoute(payload.state, day),
+      })
+      if (payload.routeDays?.length) controller.accommodationChanged(payload.routeDays)
+      const days = [...new Set(payload.routeDays.map(Number))].filter(
+        (index) => index >= 0 && index < tripPlan.days.length,
+      )
+      if (days.length) {
+        if (payload.type === 'create' || payload.type === 'update') {
+          days.forEach((day) => markRouteStatus([day], 'stale'))
+        } else {
+          days.forEach((day) =>
+            markRouteStatus([day], accommodationGetDayRoute(payload.state, day)?.hasChangedEndpoint ? 'stale' : 'reference'),
+          )
+        }
+      }
+    },
+    [controller, markRouteStatus],
+  )
+
+  useEffect(() => subscribe(handleAccommodationChange), [subscribe, handleAccommodationChange])
+
+  /**
+   * Boot seeding — route states are NOT persisted (legacy routeStates Map).
+   * The legacy `routeState()` lazily seeds a changed-endpoint day as `stale`
+   * on first read; React starts everything `reference`, so after a reload the
+   * changed days must be re-seeded (the AMap queries then re-fire on select).
+   */
+  const seededRef = useRef(false)
+  useEffect(() => {
+    if (seededRef.current) return
+    seededRef.current = true
+    tripPlan.days.forEach((_, day) => {
+      if (accommodationGetDayRoute(accommodationState, day)?.hasChangedEndpoint) {
+        markRouteStatus([day], 'stale')
+      }
+    })
+  }, [accommodationState, markRouteStatus])
 
   useEffect(() => {
-    controller.attach({ markRouteStatus: routeStates.markRouteStatus, beginRequest: routeStates.beginRequest })
+    controller.attach({ markRouteStatus, beginRequest: routeStates.beginRequest })
     void controller.connect()
     return () => controller.detach()
     // eslint-disable-next-line react-hooks/exhaustive-deps
