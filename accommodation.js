@@ -4,6 +4,8 @@
 
   const STORAGE_KEY = 'hailar-slow-trip-accommodation-v1';
   const VERSION = 1;
+  const BACKUP_FORMAT = 'hailar-slow-trip-accommodation';
+  const MAX_BASES = 100;
   const overnightDays = plan.days
     .map((day, index) => day.points.length > 1 && index < plan.days.length - 1 ? index : null)
     .filter(index => index !== null);
@@ -75,6 +77,83 @@
       createdAt: value.createdAt || new Date().toISOString(),
       isDefault: false
     };
+  }
+
+  function isPlainObject(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  }
+
+  function invalidBackup(...errors) {
+    return {ok: false, errors, error: errors[0] || '备份文件无效'};
+  }
+
+  function hasOnlyKeys(value, allowed) {
+    return Object.keys(value).every(key => allowed.includes(key));
+  }
+
+  function validBackupId(value) {
+    return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
+  }
+
+  function validateBackup(input) {
+    let source = input;
+    if (typeof source === 'string') {
+      try {
+        source = JSON.parse(source);
+      } catch {
+        return invalidBackup('备份文件不是有效的 JSON。');
+      }
+    }
+    if (!isPlainObject(source)) return invalidBackup('备份文件必须是一个 JSON 对象。');
+    if (!hasOnlyKeys(source, ['format', 'version', 'bases', 'stays'])) return invalidBackup('备份包含无法识别的字段。');
+    if (source.format !== BACKUP_FORMAT) return invalidBackup('备份格式不受支持。');
+    if (source.version !== VERSION) return invalidBackup(`备份版本不受支持，仅支持 v${VERSION}。`);
+    if (!Array.isArray(source.bases) || source.bases.length > MAX_BASES) return invalidBackup(`自定义住宿基地最多支持 ${MAX_BASES} 个。`);
+    if (!isPlainObject(source.stays)) return invalidBackup('每晚住宿选择格式无效。');
+
+    const bases = [];
+    const ids = new Set(defaultById.keys());
+    for (let index = 0; index < source.bases.length; index += 1) {
+      const value = source.bases[index];
+      if (!isPlainObject(value) || !hasOnlyKeys(value, ['id', 'name', 'type', 'lat', 'lng', 'address', 'notes', 'createdAt'])) {
+        return invalidBackup(`第 ${index + 1} 个住宿基地包含无效字段。`);
+      }
+      if (!validBackupId(value.id) || ids.has(value.id)) return invalidBackup(`第 ${index + 1} 个住宿基地的标识无效或重复。`);
+      if (typeof value.name !== 'string' || !value.name.trim() || value.name.trim().length > 120) return invalidBackup(`第 ${index + 1} 个住宿基地的名称无效。`);
+      if (value.type !== 'hotel' && value.type !== 'area') return invalidBackup(`第 ${index + 1} 个住宿基地的类型无效。`);
+      if (typeof value.lat !== 'number' || typeof value.lng !== 'number' || !validCoordinate(value.lat, value.lng)) return invalidBackup(`第 ${index + 1} 个住宿基地的位置无效。`);
+      if (value.address !== undefined && (typeof value.address !== 'string' || value.address.length > 240)) return invalidBackup(`第 ${index + 1} 个住宿基地的地址过长或无效。`);
+      if (value.notes !== undefined && (typeof value.notes !== 'string' || value.notes.length > 600)) return invalidBackup(`第 ${index + 1} 个住宿基地的备注过长或无效。`);
+      if (value.createdAt !== undefined && (typeof value.createdAt !== 'string' || value.createdAt.length > 80 || Number.isNaN(Date.parse(value.createdAt)))) return invalidBackup(`第 ${index + 1} 个住宿基地的创建时间无效。`);
+      const base = {
+        id: value.id,
+        name: value.name.trim(),
+        type: value.type,
+        lat: value.lat,
+        lng: value.lng,
+        address: (value.address || '').trim(),
+        notes: (value.notes || '').trim(),
+        createdAt: value.createdAt || new Date().toISOString()
+      };
+      ids.add(base.id);
+      bases.push(base);
+    }
+
+    const expectedDays = overnightDays.map(String);
+    const stayKeys = Object.keys(source.stays);
+    if (stayKeys.length !== expectedDays.length || expectedDays.some(day => !Object.prototype.hasOwnProperty.call(source.stays, day))) {
+      return invalidBackup('备份没有完整包含每晚住宿选择。');
+    }
+    if (stayKeys.some(day => !expectedDays.includes(day))) return invalidBackup('备份包含不存在的住宿晚次。');
+    const stays = {};
+    for (const day of expectedDays) {
+      const id = source.stays[day];
+      if (!validBackupId(id) || !ids.has(id)) return invalidBackup(`第 ${Number(day) + 1} 晚引用了不存在的住宿基地。`);
+      stays[Number(day)] = id;
+    }
+    return {ok: true, value: {format: BACKUP_FORMAT, version: VERSION, bases, stays}};
   }
 
   function loadState() {
@@ -180,6 +259,46 @@
       via.push({id: `nav-${index}`, name: day.nav[1], routeName: day.nav[1], keyword: day.nav[1], lat: point.xy[0], lng: point.xy[1], isCustom: false});
     }
     return {from, to, via, stops: [from, ...via, to].filter(Boolean), hasCustomEndpoint: Boolean(from?.isCustom || to?.isCustom), hasChangedEndpoint: Boolean(from?.isChanged || to?.isChanged || from?.isCustom || to?.isCustom)};
+  }
+
+  function getBackup() {
+    const stays = {};
+    overnightDays.forEach(index => {
+      stays[index] = getDayStay(index)?.id || defaultStayByDay[index];
+    });
+    return {
+      format: BACKUP_FORMAT,
+      version: VERSION,
+      bases: state.bases.map(({isDefault, ...base}) => copy(base)),
+      stays
+    };
+  }
+
+  function routeSignature(route) {
+    if (!route) return '';
+    return [route.from, route.to].map(point => point ? `${point.id || point.name}|${point.lat}|${point.lng}` : '').join('>');
+  }
+
+  function replaceState(input) {
+    const validation = validateBackup(input);
+    if (!validation.ok) return validation;
+    const next = {
+      version: VERSION,
+      bases: validation.value.bases.map(base => ({...base, isDefault: false})),
+      stays: {...validation.value.stays}
+    };
+    const before = plan.days.map((_, index) => routeSignature(getDayRoute(index)));
+    if (!persist(next)) {
+      setStatus('当前浏览器未允许保存，住宿安排未改变。');
+      return {ok: false, error: '保存失败', errors: ['当前浏览器未允许保存，住宿安排未改变。']};
+    }
+    state = next;
+    const routeDays = plan.days
+      .map((_, index) => index)
+      .filter(index => before[index] !== routeSignature(getDayRoute(index)));
+    routeDays.forEach(index => routeStates.set(index, {status: 'stale'}));
+    notify({type: 'restore', dayIndices: [...overnightDays], routeDays});
+    return {ok: true, state: getState(), routeDays};
   }
 
   function routeState(dayIndex) {
@@ -492,6 +611,11 @@
     listBases: () => [...defaultBases, ...state.bases].map(copy),
     getBase: id => { const base = getBase(id); return base ? copy(base) : null; },
     getState,
+    getBackup,
+    exportBackup: getBackup,
+    validateBackup,
+    replaceState,
+    importState: replaceState,
     getDayStay: index => copy(getDayStay(index)),
     getDayRoute,
     getRouteState: routeState,
