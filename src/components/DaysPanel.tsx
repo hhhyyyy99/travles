@@ -1,5 +1,7 @@
 import { BedDouble, ChevronRight } from 'lucide-react'
 import { tripPlan } from '../data/itinerary'
+import { useAccommodation } from '../hooks/useAccommodation'
+import { stayNoteText } from '../domain/accommodation'
 
 interface DaysPanelProps {
   selectedDay: number
@@ -13,6 +15,7 @@ interface DaysPanelProps {
  * short · em pace) + chevron icon.
  */
 export function DaysPanel({ selectedDay, onSelectDay }: DaysPanelProps) {
+  const { state } = useAccommodation()
   return (
     <aside className="days-panel">
       <div className="section-label">
@@ -44,9 +47,7 @@ export function DaysPanel({ selectedDay, onSelectDay }: DaysPanelProps) {
       <div className="stay-note">
         <BedDouble aria-hidden="true" />
         <p id="stay-note-text">
-          海拉尔 2 晚 → 额尔古纳 1 晚
-          <br />
-          莫尔道嘎 1 晚 → 黑山头 1 晚 → 满洲里 1 晚
+          {stayNoteText(state)}
           <small>10/2 · 10/7 · 10/3 · 10/4 · 10/5 · 10/6</small>
         </p>
       </div>

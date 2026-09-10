@@ -59,6 +59,12 @@ export interface AmapLiveSnapshot {
   connected: boolean
   wholeTrip: boolean
   overviewTimesVisible: boolean
+  /**
+   * Accommodation map-pick mode (accommodation.js `useReferenceMapForPicker`):
+   * while true the Leaflet reference map takes the `.map-wrap` and the AMap
+   * canvas is hidden — coordinates are picked on the Leaflet map (WGS-84).
+   */
+  pickMode: boolean
   /** #amap-state text. */
   amapStateText: string
   /** #connect-amap label — null hides the button. */
@@ -89,12 +95,15 @@ export interface AmapLiveContextValue extends AmapLiveSnapshot {
   setTraffic(checked: boolean): void
   submitEndpoints(from: string, to: string): void
   retry(): void
+  /** Swap AMap ↔ reference map for the accommodation map-pick (legacy `tibetAMap.useReferenceMapForPicker`). */
+  useReferenceMapForPicker(picking: boolean): boolean
 }
 
 const INITIAL_SNAPSHOT: AmapLiveSnapshot = {
   connected: false,
   wholeTrip: false,
   overviewTimesVisible: false,
+  pickMode: false,
   amapStateText: '高德未配置 · 当前为参考地图',
   connectLabel: null,
   liveTitle: '高德驾车时间与路况',
@@ -293,6 +302,12 @@ class AmapLiveController {
     this.overrides.set(this.selectedDay, [from.trim(), to.trim()])
     this.wholeTrip = false
     if (this.map) this.query()
+  }
+
+  /** accommodation.js picker swap — hides the AMap canvas, shows the Leaflet map (amap-integration.js:380–390). */
+  useReferenceMapForPicker(picking: boolean): boolean {
+    this.patch({ pickMode: picking })
+    return true
   }
 
   /* ------------------------------------------------------------ *
@@ -620,6 +635,7 @@ export function AmapLiveProvider({ children }: { children: ReactNode }) {
       setTraffic: (checked) => controller.setTraffic(checked),
       submitEndpoints: (from, to) => controller.submitEndpoints(from, to),
       retry: () => controller.retry(),
+      useReferenceMapForPicker: (picking) => controller.useReferenceMapForPicker(picking),
     }),
     [snapshot, controller],
   )

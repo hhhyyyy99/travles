@@ -120,8 +120,8 @@ export function RoutePanel({ containerRef, selectedDay, overview, legend, tileEr
           </button>
         </div>
       </div>
-      <div className={`map-wrap${amap.connected ? ' amap-active' : ''}`}>
-        <div id="amap-canvas" aria-label="高德地图与实时交通" hidden={!amap.connected} />
+      <div className={`map-wrap${amap.connected && !amap.pickMode ? ' amap-active' : ''}`}>
+        <div id="amap-canvas" aria-label="高德地图与实时交通" hidden={!amap.connected || amap.pickMode} />
         <div id="route-map" ref={containerRef} aria-label="海拉尔出发呼伦贝尔环线自驾路线地图" />
         <div className="map-title">
           <span>THE SLOW ROUTE</span>

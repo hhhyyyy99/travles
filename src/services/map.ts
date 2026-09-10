@@ -13,7 +13,8 @@
 import L from 'leaflet'
 import { tripPlan, POINT_KEYS } from '../data/itinerary'
 import { legByDay, roadLines } from '../data/roadRoutes'
-import type { LatLng } from '../domain/types'
+import { escapeHtml } from '../domain/amapUtils'
+import type { AccommodationBase, LatLng } from '../domain/types'
 
 export interface RouteMapHandle {
   map: L.Map
@@ -22,6 +23,8 @@ export interface RouteMapHandle {
   fullRouteLayer: L.LayerGroup
   timeLabelLayer: L.LayerGroup
   selectedLayer: L.LayerGroup
+  /** Custom-base markers (accommodation.js `renderMarkers` L640–647) — re-drawn by the dialog. */
+  accommodationMarkers: L.LayerGroup
   destroy(): void
 }
 
@@ -44,6 +47,27 @@ const MARKER_DAY: Record<string, number> = {
   caidaihe: 4,
   manzhouli: 4,
   hulunlake: 5,
+}
+
+/**
+ * Custom-base circle markers (accommodation.js `renderMarkers` L640–647):
+ * radius 7, white stroke, `#8b654f` fill, class `accommodation-marker`, name
+ * tooltip above — re-drawn (layer cleared) on every accommodation change.
+ */
+export function renderAccommodationMarkers(handle: RouteMapHandle, bases: AccommodationBase[]): void {
+  handle.accommodationMarkers.clearLayers()
+  bases.forEach((base) => {
+    L.circleMarker([base.lat, base.lng], {
+      radius: 7,
+      color: '#fff',
+      weight: 2,
+      fillColor: '#8b654f',
+      fillOpacity: 0.95,
+      className: 'accommodation-marker',
+    })
+      .bindTooltip(escapeHtml(base.name), { direction: 'top' })
+      .addTo(handle.accommodationMarkers)
+  })
 }
 
 export function createRouteMap(container: HTMLElement, options: RouteMapOptions): RouteMapHandle {
@@ -71,6 +95,7 @@ export function createRouteMap(container: HTMLElement, options: RouteMapOptions)
   const fullRouteLayer = L.layerGroup().addTo(map)
   const timeLabelLayer = L.layerGroup().addTo(map)
   const selectedLayer = L.layerGroup().addTo(map)
+  const accommodationMarkers = L.layerGroup().addTo(map)
 
   // Static reference markers, one per point key (trip.js:137–138).
   for (const key of POINT_KEYS) {
@@ -108,6 +133,7 @@ export function createRouteMap(container: HTMLElement, options: RouteMapOptions)
     fullRouteLayer,
     timeLabelLayer,
     selectedLayer,
+    accommodationMarkers,
     destroy() {
       if (destroyed) return
       destroyed = true

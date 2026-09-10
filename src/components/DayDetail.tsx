@@ -1,8 +1,10 @@
-import { ArrowUpRight, BedDouble, CarFront, LocateFixed, MapPin, Mountain, Navigation } from 'lucide-react'
+import { ArrowUpRight, BedDouble, CarFront, LocateFixed, MapPin, Mountain, Navigation, Replace } from 'lucide-react'
 import type { ItineraryDay, ScheduleRow } from '../domain/types'
 import { legByDay, roadRoutes } from '../data/roadRoutes'
 import { navigationUrl, searchUrl } from '../services/navigationUrl'
 import { useRouteStates } from '../hooks/useRouteStates'
+import { useAccommodation } from '../hooks/useAccommodation'
+import { getDayStay } from '../domain/accommodation'
 import {
   describeDriveText,
   describeRouteEstimate,
@@ -74,9 +76,18 @@ function NavigationPanel({ day, index }: DayDetailProps) {
  */
 function DetailCard({ day, index }: DayDetailProps) {
   const { get } = useRouteStates()
+  const { state: accommodationState } = useAccommodation()
   const state = get(index)
   const routeChanged = isStaleStatus(state.status)
-  const stayName = day.stay
+  // trip.js:67–75 — stay card surfaces the accommodation stay with the
+  // `data-accommodation-open` button (opened by the dialog's document click
+  // delegation); the meta line is `住宿区域 · ` prefix + address, else
+  // `已确认地图位置`.
+  const stay = getDayStay(accommodationState, index)
+  const stayName = stay?.name || day.stay
+  const stayMeta = stay
+    ? `${stay.type === 'area' ? '住宿区域 · ' : ''}${stay.address ? stay.address : '已确认地图位置'}`
+    : ''
   const driveText = describeDriveText(state, day.drive)
   const schedule = routeChanged
     ? day.schedule.map((row) => [row[0], row[1], rewriteScheduleRow(row[2], true)] as ScheduleRow)
@@ -108,6 +119,20 @@ function DetailCard({ day, index }: DayDetailProps) {
           {day.alt}
         </span>
       </div>
+      {stay && (
+        <div className="stay-card">
+          <div>
+            <span className="eyebrow">本晚住宿</span>
+            <strong>{stayName}</strong>
+            <small>{stayMeta}</small>
+            {stay.notes ? <p>{stay.notes}</p> : null}
+          </div>
+          <button type="button" data-accommodation-open={index}>
+            <Replace aria-hidden="true" />
+            更换住宿
+          </button>
+        </div>
+      )}
       <div className="timeline">
         {schedule.map((row, rowIndex) => (
           <div className="time-row" key={rowIndex}>
@@ -121,12 +146,12 @@ function DetailCard({ day, index }: DayDetailProps) {
       </div>
       <p className="day-tip">{day.tip}</p>
       <div className="day-links">
-        <a href={searchUrl(day.nav[1])} target="_blank" rel="noopener">
+        <a href={searchUrl(stay?.name || day.nav[1])} target="_blank" rel="noopener">
           <MapPin aria-hidden="true" />
           高德查看目的地
           <ArrowUpRight aria-hidden="true" />
         </a>
-        <a href={searchUrl(day.nav[0])} target="_blank" rel="noopener">
+        <a href={searchUrl(stay?.name || day.nav[0])} target="_blank" rel="noopener">
           查看出发地
           <ArrowUpRight aria-hidden="true" />
         </a>

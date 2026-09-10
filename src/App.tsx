@@ -16,7 +16,10 @@ import {
 import { Checklist } from './components/Checklist'
 import { DaysPanel } from './components/DaysPanel'
 import { RoutePanel } from './components/RoutePanel'
+import { AccommodationDialog } from './components/AccommodationDialog'
 import { useAmapLive } from './hooks/useAmapLive'
+import { useAccommodation } from './hooks/useAccommodation'
+import { inUseBaseCount } from './domain/accommodation'
 import { useRouteMap } from './hooks/useRouteMap'
 import type { RouteMapHandle } from './services/map'
 import { dayPointCoords, tripPlan } from './data/itinerary'
@@ -41,7 +44,10 @@ export default function App() {
   const [selectedDay, setSelectedDay] = useState(0)
   const [overview, setOverview] = useState(true)
   const [legend, setLegend] = useState(OVERVIEW_LEGEND)
+  const [mapHandle, setMapHandle] = useState<RouteMapHandle | null>(null)
   const amap = useAmapLive()
+  const { state: accommodationState } = useAccommodation()
+  const accommodationCount = inUseBaseCount(accommodationState)
 
   const mapHandleRef = useRef<RouteMapHandle | null>(null)
 
@@ -85,6 +91,7 @@ export default function App() {
   // day-0 detail rendered, no day focus, 全程 legend. skipAmap keeps the boot
   // AMap-free: the AMap panel connects later and runs its own day-0 query.
   const handleMapReady = useCallback(() => {
+    setMapHandle(mapHandleRef.current)
     choose(0, false, { skipAmap: true })
     fit()
   }, [choose, fit])
@@ -156,7 +163,7 @@ export default function App() {
           </span>
           <span className="flex items-center gap-[7px]">
             <BedDouble aria-hidden="true" className="w-[17px] text-muted" />
-            <b id="accommodation-count">5</b> 处住宿基地
+            <b id="accommodation-count">{accommodationCount}</b> 处住宿基地
           </span>
           <span className="pace flex items-center gap-[7px] text-green ml-auto max-[720px]:m-0 max-[720px]:text-[10px]">
             <Coffee aria-hidden="true" className="w-[17px] text-muted max-[720px]:hidden" />
@@ -309,6 +316,7 @@ export default function App() {
           <ArrowUpRight aria-hidden="true" />
         </a>
       </footer>
+      <AccommodationDialog mapHandle={mapHandle} />
     </>
   )
 }
