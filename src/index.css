@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
 
 /*
  * Design tokens from the legacy trip.css :root + one-off palette (note E §2),
@@ -96,5 +97,626 @@
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+}
+
+/*
+ * Itinerary component styles — ported from trip.css (note E §3–4, ticket 02).
+ *
+ * The map-overlay stack keeps the legacy absolute positions/z-indexes
+ * (map-title/fit-map/map-legend 400, #map-error 410, #overview-times 420) and
+ * the `:has()` state rules (overview / route-time-marker visibility + mobile
+ * heights 310/430/520px). Leaflet control/tooltip overrides are unchanged.
+ */
+@layer components {
+  /* --- intro / shared micro-type (trip.css L1) --- */
+  .eyebrow {
+    font-size: 11px;
+    color: var(--color-green);
+    margin-bottom: 10px;
+    font-weight: 650;
+  }
+  .section-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 22px;
+    gap: 12px;
+  }
+  .section-label > span {
+    font-size: 10px;
+    color: var(--color-muted);
+  }
+  .days-panel .section-label {
+    margin-bottom: 14px;
+  }
+  .flight svg {
+    color: var(--color-green);
+    width: 24px;
+    height: 24px;
+  }
+
+  /* --- days panel / day buttons (trip.js:165–166 CSS) --- */
+  .day-button {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    text-align: left;
+    border-bottom: 1px solid var(--color-line);
+    padding: 17px 12px;
+    min-height: 89px;
+    border-radius: 0;
+  }
+  .day-button[aria-pressed="true"] {
+    background: #e9f0eb;
+    border-radius: 6px;
+    border-bottom-color: transparent;
+  }
+  .day-button[aria-pressed="true"]::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    height: 35px;
+    width: 3px;
+    background: var(--color-green);
+  }
+  .day-num {
+    font-size: 22px;
+    font-weight: 350;
+    color: #82968c;
+    width: 31px;
+    flex-shrink: 0;
+  }
+  .day-button[aria-pressed="true"] .day-num {
+    color: var(--color-green);
+  }
+  .day-copy {
+    flex: 1;
+    min-width: 0;
+  }
+  .day-copy > small {
+    font-size: 10px;
+    color: var(--color-muted);
+  }
+  .day-copy strong {
+    display: block;
+    font-size: 14px;
+    font-weight: 550;
+  }
+  .day-copy em {
+    display: block;
+    font-size: 11px;
+    color: var(--color-muted);
+    font-style: normal;
+  }
+  .day-button > svg {
+    width: 16px;
+    color: var(--color-muted);
+  }
+  .stay-note {
+    display: flex;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--color-muted);
+    padding-top: 22px;
+  }
+  .stay-note small {
+    display: block;
+    font-size: 10px;
+    margin-top: 5px;
+  }
+  .stay-note svg {
+    width: 17px;
+    color: var(--color-muted);
+  }
+
+  /* --- map container + overlay stack (trip.css L1/L5–L7/L9/L10/L16) --- */
+  .map-wrap {
+    height: 375px;
+    position: relative;
+    border-radius: 7px;
+    overflow: hidden;
+    background: #d7e0d9;
+  }
+  #route-map {
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+  }
+  .map-title {
+    position: absolute;
+    z-index: 400;
+    top: 20px;
+    left: 24px;
+    color: white;
+    text-shadow: 0 1px 8px #142721;
+    pointer-events: none;
+  }
+  .map-title span {
+    display: block;
+    font-size: 10px;
+  }
+  .map-title strong {
+    font-size: 22px;
+    font-weight: 500;
+  }
+  .fit-map {
+    position: absolute;
+    z-index: 400;
+    right: 14px;
+    top: 14px;
+    background: white;
+    width: 36px;
+    height: 36px;
+    border-radius: 5px;
+    display: grid;
+    place-items: center;
+    box-shadow: 0 2px 8px #0002;
+  }
+  .map-legend {
+    position: absolute;
+    bottom: 25px;
+    left: 12px;
+    z-index: 400;
+    background: #ffffffed;
+    border-radius: 3px;
+    padding: 5px 8px;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .line-sample {
+    width: 20px;
+    border-top: 2px dashed var(--color-red);
+  }
+  #map-error {
+    position: absolute;
+    z-index: 410;
+    top: 90px;
+    left: 15px;
+    right: 15px;
+    padding: 8px;
+    background: white;
+    font-size: 12px;
+  }
+  #overview-times {
+    position: absolute;
+    z-index: 420;
+    left: 12px;
+    bottom: 32px;
+    width: 215px;
+    padding: 8px 10px;
+    background: #fffffff5;
+    border: 1px solid #b6c9bc;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px #16332120;
+  }
+  #overview-times button {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 5px 0;
+    border-bottom: 1px solid #e4eae5;
+    text-align: left;
+    font-size: 10px;
+  }
+  #overview-times button strong {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  #overview-times small {
+    font-size: 9px;
+    color: var(--color-muted);
+  }
+  .map-wrap:has(#overview-times) .map-title {
+    display: none;
+  }
+  .route-time-marker {
+    background: #fff;
+    color: #234336;
+    border: 1px solid #6f9d85;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px #13382924;
+    padding: 6px 9px;
+    text-align: center;
+    line-height: 1.35;
+    white-space: nowrap;
+  }
+  .route-time-marker small {
+    display: block;
+    font-size: 10px;
+  }
+  .route-time-marker strong {
+    display: block;
+    font-size: 15px;
+    font-weight: 650;
+  }
+  .route-time-marker span {
+    display: block;
+    font-size: 9px;
+    color: #64716b;
+  }
+  .map-wrap:has(.route-time-marker) .map-title {
+    display: none;
+  }
+
+  /* --- route strip (trip.css L1/L4) --- */
+  .route-strip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--color-line);
+    font-size: 11px;
+    color: var(--color-muted);
+  }
+  .route-strip svg {
+    width: 13px;
+    height: 13px;
+    color: #9eada5;
+  }
+
+  /* --- day detail (trip.css L1/L9–L14/L19) --- */
+  #day-detail {
+    padding-top: 23px;
+  }
+  .navigation-panel {
+    padding: 0 0 22px;
+    margin-bottom: 22px;
+    border-bottom: 1px solid var(--color-line);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 14px;
+  }
+  .navigation-panel strong {
+    display: block;
+    font-size: 17px;
+    font-weight: 550;
+  }
+  .navigation-panel .eyebrow {
+    display: block;
+    margin-bottom: 4px;
+  }
+  .navigation-panel p {
+    font-size: 12px;
+    color: var(--color-muted);
+    margin-top: 4px;
+  }
+  .navigation-panel .navigation-note {
+    flex-basis: 100%;
+    font-size: 11px;
+    margin: 0;
+  }
+  .navigation-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    justify-content: center;
+  }
+  .navigation-actions a {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    font-size: 12px;
+    padding: 9px 13px;
+    border-radius: 5px;
+  }
+  .navigation-primary {
+    background: #236a51;
+    color: white;
+  }
+  .navigation-current {
+    border: 1px solid #b8c8be;
+    color: var(--color-green);
+  }
+  .detail-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: start;
+  }
+  .detail-heading .eyebrow {
+    margin-bottom: 5px;
+  }
+  .detail-heading h2 {
+    font-size: 24px;
+    font-weight: 550;
+  }
+  .tag {
+    color: var(--color-green);
+    background: #e9f0eb;
+    font-size: 11px;
+    padding: 4px 10px;
+    white-space: nowrap;
+    border-radius: 3px;
+  }
+  .day-desc {
+    color: var(--color-muted);
+    margin: 10px 0 18px;
+    font-size: 13px;
+  }
+  .day-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 22px;
+    font-size: 12px;
+    padding-bottom: 17px;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .day-stats span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .day-stats svg {
+    width: 15px;
+    color: var(--color-green);
+  }
+  .timeline {
+    margin-top: 20px;
+  }
+  .time-row {
+    display: grid;
+    grid-template-columns: 58px 1fr;
+    gap: 13px;
+    padding-bottom: 15px;
+  }
+  .time-row time {
+    font-size: 12px;
+    color: var(--color-green);
+    font-variant-numeric: tabular-nums;
+  }
+  .time-row strong {
+    font-size: 13px;
+    font-weight: 550;
+    display: block;
+  }
+  .time-row p {
+    font-size: 12px;
+    color: var(--color-muted);
+    margin-top: 2px;
+  }
+  .day-tip {
+    border-left: 2px solid #bc8970;
+    padding: 9px 12px;
+    background: #f2f0ed;
+    font-size: 12px;
+    line-height: 1.8;
+  }
+  .day-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    margin-top: 15px;
+  }
+  .day-links a {
+    font-size: 12px;
+    color: var(--color-green);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    border-bottom: 1px solid #b1c7b9;
+    padding: 4px 0;
+  }
+  .day-links svg {
+    width: 14px;
+  }
+  .route-estimate.is-stale {
+    color: var(--color-red);
+    font-weight: 600;
+  }
+
+  /* --- prepare / notes-grid (trip.css L1) --- */
+  .notes-grid details {
+    border-bottom: 1px solid var(--color-line);
+    padding: 0 0 18px;
+    margin-bottom: 20px;
+  }
+  .notes-grid summary {
+    font-size: 16px;
+    font-weight: 550;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    list-style: none;
+  }
+  .notes-grid summary::-webkit-details-marker {
+    display: none;
+  }
+  .notes-grid summary::after {
+    content: "+";
+    margin-left: auto;
+    font-size: 19px;
+    font-weight: 400;
+  }
+  .notes-grid details[open] summary::after {
+    content: "−";
+  }
+  .notes-grid summary svg {
+    color: var(--color-green);
+  }
+  .notes-grid details > div {
+    padding-top: 12px;
+  }
+  .notes-grid p {
+    font-size: 13px;
+    color: var(--color-muted);
+    line-height: 1.9;
+  }
+  .notes-grid p + p {
+    margin-top: 9px;
+  }
+  .notes-grid b {
+    color: var(--color-ink);
+    font-weight: 550;
+  }
+
+  /* --- leaflet / map-container overrides (trip.css L1/L2/L9) --- */
+  .leaflet-overlay-pane svg {
+    width: initial;
+    height: initial;
+    stroke-width: initial;
+  }
+  .leaflet-tooltip {
+    border: 0;
+    border-radius: 3px;
+    box-shadow: 0 2px 10px #0002;
+    color: var(--color-ink);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 550;
+    padding: 4px 7px;
+  }
+  .leaflet-control-attribution {
+    font-size: 9px !important;
+  }
+  .leaflet-control-zoom {
+    border: 0 !important;
+  }
+  .leaflet-control-zoom a {
+    width: 32px !important;
+    height: 32px !important;
+    font-weight: 400 !important;
+  }
+  .leaflet-control-layers {
+    font-family: inherit;
+    font-size: 12px;
+  }
+  .leaflet-control-layers-toggle {
+    width: 36px !important;
+    height: 36px !important;
+    background-image: none !important;
+  }
+  .leaflet-control-layers-toggle::after {
+    content: "图层";
+    display: grid;
+    place-items: center;
+    height: 100%;
+    font-size: 11px;
+    color: var(--color-ink);
+  }
+
+  /* --- responsive (trip.css L4–L6, L10, L16–L17) --- */
+  @media (max-width: 720px) {
+    .map-wrap {
+      height: 310px;
+    }
+    .map-wrap:has(#overview-times) {
+      height: 520px;
+    }
+    .map-wrap:has(.route-time-marker) {
+      height: 430px;
+    }
+    #overview-times {
+      bottom: 30px;
+      width: 206px;
+    }
+    .map-title {
+      top: 15px;
+      left: 15px;
+    }
+    .map-title strong {
+      font-size: 18px;
+    }
+    .map-legend {
+      font-size: 9px;
+      max-width: calc(100% - 58px);
+    }
+    .route-strip {
+      flex-wrap: wrap;
+      justify-content: flex-start;
+      font-size: 9px;
+      gap: 3px;
+    }
+    .route-strip svg {
+      width: 10px;
+    }
+    .navigation-panel strong {
+      font-size: 15px;
+    }
+    .navigation-actions {
+      flex-direction: row;
+      flex-wrap: wrap;
+      width: 100%;
+      justify-content: flex-start;
+    }
+    .detail-heading h2 {
+      font-size: 22px;
+    }
+    .day-stats {
+      gap: 8px 15px;
+      font-size: 11px;
+    }
+    #days {
+      display: flex;
+      overflow: auto;
+      gap: 8px;
+      padding-bottom: 7px;
+      scroll-snap-type: x mandatory;
+    }
+    .day-button {
+      min-width: 142px;
+      max-width: 142px;
+      padding: 10px;
+      gap: 8px;
+      min-height: 84px;
+      border: 1px solid var(--color-line);
+      border-radius: 5px;
+      scroll-snap-align: start;
+    }
+    .day-num {
+      font-size: 17px;
+      width: 21px;
+    }
+    .day-copy strong {
+      font-size: 12px;
+    }
+    .day-copy em {
+      font-size: 10px;
+    }
+    .day-button > svg {
+      display: none;
+    }
+    .stay-note {
+      display: none;
+    }
+    .days-panel {
+      width: 100%;
+    }
+    .route-panel {
+      width: 100%;
+    }
+  }
+  @media (min-width: 1500px) {
+    .map-wrap {
+      height: 420px;
+    }
+  }
+  @media (max-width: 1050px) {
+    .day-button {
+      padding-inline: 10px;
+    }
+    .map-title strong {
+      font-size: 19px;
+    }
+  }
+
+  /* --- print (trip.css L18 screen-hiding subset relevant to ticket 02) --- */
+  @media print {
+    .navigation-actions {
+      display: none;
+    }
+    .leaflet-control-layers {
+      display: none;
+    }
   }
 }
