@@ -60,3 +60,4 @@
   .print-time-row p{color:#64716b;font-size:8.5pt;margin-top:1px;overflow-wrap:anywhere}
   .print-day-tip{margin-top:8px;padding:6px 8px;border-left:2px solid #bc8970;background:#f2f0ed;font-size:8.5pt;overflow-wrap:anywhere;break-inside:avoid}
 }
+.trip-map-toolbar button[hidden]{display:none}

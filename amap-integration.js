@@ -1,6 +1,8 @@
 (() => {
   const $ = id => document.getElementById(id);
   const utils = window.TibetAMapUtils;
+  const defaultConfig = window.TIBET_AMAP_CONFIG;
+  const hasDefaultConfig = Boolean(defaultConfig?.key && defaultConfig?.securityJsCode);
   let map, trafficLayer, overlays = [], selectedDay = 0, wholeTrip = false;
   let requestId = 0, queryTimer, refreshTimer, loading = false;
   let accommodationGeneration = 0;
@@ -263,6 +265,11 @@
   async function connect(config) {
     if(loading)return;
     loading=true;
+    if (hasDefaultConfig) {
+      $('connect-amap').hidden=true;
+      $('amap-state').textContent='正在加载高德地图…';
+      status('正在使用默认配置加载地图与路线…');
+    }
     $('amap-connect').disabled=true;
     $('amap-form-status').textContent='正在连接高德地图…';
     try {
@@ -289,7 +296,11 @@
       query();
     } catch(error) {
       $('amap-form-status').textContent=error.message;
-      $('amap-state').textContent='高德连接失败 · 当前为参考地图';
+      $('amap-state').textContent='高德加载失败 · 当前为参考地图';
+      if (hasDefaultConfig) {
+        $('connect-amap').textContent='重试加载地图';
+        $('connect-amap').hidden=false;
+      }
       status(error.message);
     } finally {
       loading=false;
@@ -387,7 +398,10 @@
     useReferenceMapForPicker
   };
   window.addEventListener('beforeunload',()=>{clearInterval(refreshTimer);clearTimeout(queryTimer);map?.destroy();});
-  const config=window.TIBET_AMAP_CONFIG;
-  if(config?.key&&config?.securityJsCode)connect(config);
+  if (hasDefaultConfig) {
+    $('amap-settings').hidden=true;
+    $('connect-amap').onclick=()=>connect(defaultConfig);
+    connect(defaultConfig);
+  }
   lucide.createIcons();
 })();
