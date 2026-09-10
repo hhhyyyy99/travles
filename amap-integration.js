@@ -10,6 +10,41 @@
   document.querySelector('.map-wrap').insertAdjacentHTML('afterbegin', '<div id="amap-canvas" aria-label="高德地图与实时交通" hidden></div>');
   document.querySelector('.route-strip').insertAdjacentHTML('afterend', `<section class="amap-live" aria-label="高德路线与路况"><div class="live-header"><h2 id="live-title">高德驾车时间与路况</h2><button id="connect-amap">连接高德地图</button></div><p id="live-status" role="status">尚未连接，暂无法获取实时驾驶时间与路况。</p><form id="route-endpoints" hidden><label>出发地<input id="route-from" required maxlength="120" autocomplete="off"></label><label>目的地<input id="route-to" required maxlength="120" autocomplete="off"></label><button type="submit">规划路线</button></form><div id="live-results"></div><p class="traffic-disclaimer">当前路况不代表 10 月出发当天；无覆盖路段标为未知。驾驶时间不含游览、休息、停车与景区排队。</p></section>`);
   document.body.insertAdjacentHTML('beforeend', `<dialog id="amap-dialog" aria-labelledby="amap-dialog-title"><form id="amap-form"><div class="dialog-heading"><h2 id="amap-dialog-title">连接高德地图</h2><button type="button" id="amap-close" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div><p>填写高德开放平台「Web端（JS API）」凭据。本页输入仅在当前标签页生效，不保存到浏览器。</p><label>JS API Key<input id="amap-key" type="password" autocomplete="off" required spellcheck="false"></label><label>安全密钥 securityJsCode<input id="amap-security" type="password" autocomplete="off" required spellcheck="false"></label><p id="amap-form-status" role="status"></p><div class="dialog-actions"><a href="https://console.amap.com/dev/key/app" target="_blank" rel="noopener">申请 Key</a><button type="submit" id="amap-connect">连接地图</button></div></form></dialog>`);
+  // 本地候选（未连接高德时的兜底）：输入时提供呼伦贝尔常见地点建议。
+  const suggestionList = (() => {
+    const seen = new Set();
+    const items = [];
+    (window.tripPlan?.overviewStops || []).forEach(s => {
+      if (s?.keyword && !seen.has(s.keyword)) { seen.add(s.keyword); items.push(s.keyword); }
+    });
+    ['海拉尔站','海拉尔东山机场','呼伦贝尔大草原','呼和诺尔草原','额尔古纳湿地景区','额尔古纳市','莫尔道嘎国家森林公园','室韦口岸','黑山头镇','186彩带河景区','满洲里国门景区','满洲里套娃广场','呼伦湖旅游景区'].forEach(k => {
+      if (!seen.has(k)) { seen.add(k); items.push(k); }
+    });
+    return items;
+  })();
+  function enableLocalSuggestions() {
+    let dl = document.getElementById('place-suggestions');
+    if (!dl) {
+      dl = document.createElement('datalist');
+      dl.id = 'place-suggestions';
+      dl.innerHTML = suggestionList.map(s => `<option value="${s}"></option>`).join('');
+      document.body.append(dl);
+    }
+    $('route-from').setAttribute('list','place-suggestions');
+    $('route-to').setAttribute('list','place-suggestions');
+  }
+  function initAutocomplete() {
+    $('route-from').removeAttribute('list');
+    $('route-to').removeAttribute('list');
+    [['route-from'],['route-to']].forEach(([id]) => {
+      const auto = new AMap.AutoComplete({ input: id, city: '全国' });
+      auto.on('select', e => {
+        const name = e.poi?.name || e.tip?.name;
+        if (name) $(id).value = name;
+      });
+    });
+  }
+  enableLocalSuggestions();
   const openSettings = () => {
     $('amap-dialog').showModal();
     if(map) {
@@ -41,7 +76,7 @@
   }
   function endpoints() {
     const d = window.tibetTrip.days[selectedDay];
-    return overrides.get(selectedDay) || d.nav.map(n => n.replace('巴松措景区游客中心','巴松措景区'));
+    return overrides.get(selectedDay) || d.nav;
   }
   function renderForm() {
     const names = endpoints();
@@ -75,7 +110,7 @@
       overlays.push(new AMap.Marker({position:path.at(-1),anchor:'center',content:'<div class="trip-endpoint trip-endpoint-end" role="img" aria-label="终点" title="终点">终</div>',zIndex:210}));
       if(!wholeTrip) {
         const position=(point,name)=>`${point.getLng?.() ?? point.lng ?? point[0]},${point.getLat?.() ?? point.lat ?? point[1]},${name}`;
-        const params=new URLSearchParams({mode:'car',policy:'1',callnative:'1',src:'tibet-slow-trip',to:position(path.at(-1),$('route-to').value)});
+        const params=new URLSearchParams({mode:'car',policy:'1',callnative:'1',src:'hailar-slow-trip',to:position(path.at(-1),$('route-to').value)});
         const day=window.tibetTrip.days[selectedDay];
         if(day.points.length>2){const via=window.tibetTrip.points[day.points[1]];const xy=coordtransform.wgs84togcj02(via.xy[1],via.xy[0]);params.set('via',`${xy[0]},${xy[1]},${via.name}`);}
         const currentLink=document.querySelector('.navigation-current');
@@ -100,10 +135,10 @@
     $('amap-refresh').disabled = true;
     const day = window.tibetTrip.days[selectedDay];
     if (!wholeTrip && day.points.length < 2 && !overrides.has(selectedDay)) {
-      status('今天留在结巴村与巴松措休息，不安排长途驾驶；景区内按接驳安排出行。');
+      status('今天不安排长途驾驶，以当天实地安排为准。');
       const p=window.tibetTrip.points[day.points[0]].xy;
       map.setZoomAndCenter(12, coordtransform.wgs84togcj02(p[1],p[0]));
-      const badge=document.createElement('div');badge.id='amap-time-badge';badge.className='map-time-badge';badge.innerHTML='<small>10/5 · 结巴村与巴松措</small><strong>无长途驾驶</strong><span>湖边休息日</span>';document.querySelector('.map-wrap').append(badge);
+      const badge=document.createElement('div');badge.id='amap-time-badge';badge.className='map-time-badge';badge.innerHTML='<small>当地休整日</small><strong>无长途驾驶</strong><span>休息日</span>';document.querySelector('.map-wrap').append(badge);
       $('amap-refresh').disabled = false;
       return;
     }
@@ -135,7 +170,7 @@
         if(version!==requestId)return;
         if(index===planned.length){
           const combined=collected.reduce((total,r)=>({distance:total.distance+r.distance,time:total.time+r.time,steps:[...total.steps,...r.steps]}),{distance:0,time:0,steps:[]});
-          onResult('complete',{routes:[combined],start:{name:'林芝米林机场'},end:{name:'拉萨贡嘎国际机场'}});
+          onResult('complete',{routes:[combined],start:{name:'海拉尔东山机场'},end:{name:'海拉尔东山机场'}});
           return;
         }
         status(`正在查询第 ${index+1}/${planned.length} 段高德路线…`);
@@ -168,7 +203,7 @@
       }
       window[callback] = () => window.AMap?.Driving ? finish() : finish(new Error('高德插件未就绪，请检查 Key 与安全密钥后刷新页面。'));
       script.onerror = () => finish(new Error('无法加载高德地图，请检查网络与域名白名单。'));
-      script.src = `https://webapi.amap.com/maps?${new URLSearchParams({v:'2.0',key:config.key,plugin:'AMap.Driving,AMap.ToolBar,AMap.Scale',callback})}`;
+      script.src = `https://webapi.amap.com/maps?${new URLSearchParams({v:'2.0',key:config.key,plugin:'AMap.Driving,AMap.ToolBar,AMap.Scale,AMap.AutoComplete',callback})}`;
       document.head.append(script);
     });
   }
@@ -181,7 +216,7 @@
       await loadSDK(config);
       if(!map) {
         $('amap-canvas').hidden=false;
-        map = new AMap.Map('amap-canvas',{viewMode:'2D',center:[92.5,29.7],zoom:7,resizeEnable:true});
+        map = new AMap.Map('amap-canvas',{viewMode:'2D',center:[119.5,49.5],zoom:7,resizeEnable:true});
         map.addControl(new AMap.ToolBar({position:'RB'}));
         map.addControl(new AMap.Scale());
         trafficLayer = new AMap.TileLayer.Traffic({autoRefresh:true,interval:180});
@@ -190,6 +225,7 @@
         $('traffic-toggle').disabled=false;
         $('traffic-toggle').checked=true;
         refreshTimer=setInterval(()=>{if(!document.hidden)query();},180000);
+        initAutocomplete();
       }
       $('amap-state').textContent='高德地图 · 当前路况';
       $('connect-amap').hidden=true;

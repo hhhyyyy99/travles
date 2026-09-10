@@ -1,7 +1,7 @@
 const {days,points}=window.tripPlan;
 const icon=name=>`<i data-lucide="${name}"></i>`;
 const searchUrl=name=>`https://uri.amap.com/search?keyword=${encodeURIComponent(name)}&callnative=0`;
-const legByDay = {0:0,1:1,2:2,4:3,5:4,6:5};
+const legByDay = {0:0,1:1,2:2,3:3,4:4,5:5,6:6};
 function navigationUrl(dayIndex, currentLocation = false) {
   const d = days[dayIndex];
   if (d.points.length < 2) return searchUrl(d.nav[1]);
@@ -12,7 +12,7 @@ function navigationUrl(dayIndex, currentLocation = false) {
   };
   const params = new URLSearchParams({
     to: endpoint(d.points.at(-1), d.nav[1]),
-    mode: 'car', policy: '1', src: 'tibet-slow-trip', callnative: '1'
+    mode: 'car', policy: '1', src: 'hailar-slow-trip', callnative: '1'
   });
   if (!currentLocation) params.set('from', endpoint(d.points[0], d.nav[0]));
   if(d.points.length>2)params.set('via',endpoint(d.points[1],points[d.points[1]].name));
@@ -22,15 +22,16 @@ function navigationPanel(dayIndex) {
   const d = days[dayIndex];
   const leg = window.roadRoutes.legs[legByDay[dayIndex]];
   const localDay = d.points.length < 2;
-  return `<div class="navigation-panel"><div><span class="eyebrow">${localDay ? '湖边休息日' : '驾车路线'}</span><strong>${d.nav[0]} → ${d.nav[1]}</strong><p>${leg ? `道路里程约 ${(leg.distance/1000).toFixed(0)} km · ${leg.roads.filter(r=>/^[GS]\d/.test(r)).join(' → ')}` : '市内目的地 · 以高德实时规划为准'}</p></div><div class="navigation-actions"><a class="navigation-primary" href="${navigationUrl(dayIndex)}" target="_blank" rel="noopener">${icon(localDay?'map-pin':'navigation')}${localDay?'查看结巴村':'高德路线规划'}</a>${localDay?'':`<a class="navigation-current" href="${navigationUrl(dayIndex,true)}" target="_blank" rel="noopener">${icon('locate-fixed')}从当前位置导航</a>`}</div><p class="navigation-note">${localDay?'当天不安排长途驾驶，景区内交通以观光车及酒店接驳为准。':'起终点为区域参考位置，请在高德中确认酒店、景区入口或航站楼。手机可调起高德；当前位置导航需要手机定位。'}</p></div>`;
+  const roads = leg ? leg.roads.filter(r=>/^[GS]\d/.test(r)).join(' → ') : '';
+  return `<div class="navigation-panel"><div><span class="eyebrow">${localDay ? '当地休整日' : '驾车路线'}</span><strong>${d.nav[0]} → ${d.nav[1]}</strong><p>${leg ? `参考里程约 ${(leg.distance/1000).toFixed(0)} km${roads?' · '+roads:''}` : '市内目的地 · 以高德实时规划为准'}</p></div><div class="navigation-actions"><a class="navigation-primary" href="${navigationUrl(dayIndex)}" target="_blank" rel="noopener">${icon(localDay?'map-pin':'navigation')}${localDay?'查看当天住处':'高德路线规划'}</a>${localDay?'':`<a class="navigation-current" href="${navigationUrl(dayIndex,true)}" target="_blank" rel="noopener">${icon('locate-fixed')}从当前位置导航</a>`}</div><p class="navigation-note">${localDay?'当天不安排长途驾驶，景区内交通以观光车及酒店接驳为准。':'起终点为区域参考位置，请在高德中确认酒店、景区入口或航站楼。手机可调起高德；当前位置导航需要手机定位。'}</p></div>`;
 }
 function detail(d,index){return `<div class="detail-heading"><div><p class="eyebrow">DAY ${String(index+1).padStart(2,'0')} / ${d.date} ${d.weekday}</p><h2>${d.title}</h2></div><span class="tag">${d.pace}</span></div><p class="day-desc">${d.desc}</p><div class="day-stats"><span>${icon('car-front')}${d.drive}</span><span>${icon('bed-double')}${d.stay}</span><span>${icon('mountain')}${d.alt}</span></div><div class="timeline">${d.schedule.map(s=>`<div class="time-row"><time>${s[0]}</time><div><strong>${s[1]}</strong><p>${s[2]}</p></div></div>`).join('')}</div><p class="day-tip">${d.tip}</p><div class="day-links"><a href="${searchUrl(d.nav[1])}" target="_blank" rel="noopener">${icon('map-pin')}高德查看目的地${icon('arrow-up-right')}</a><a href="${searchUrl(d.nav[0])}" target="_blank" rel="noopener">查看出发地${icon('arrow-up-right')}</a></div>`;}
-const map=L.map('route-map',{zoomControl:false,scrollWheelZoom:false,minZoom:5,maxZoom:16}).setView([29.7,92.5],7);
+const map=L.map('route-map',{zoomControl:false,scrollWheelZoom:false,minZoom:5,maxZoom:16}).setView([49.5,119.5],7);
 const tiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · Routing: OSRM',maxZoom:19}).addTo(map);
 const satellite=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{attribution:'Imagery © Esri, Maxar, Earthstar Geographics',maxNativeZoom:17});
 L.control.layers({'道路地图':tiles,'卫星地图':satellite},null,{position:'topright'}).addTo(map);
 L.control.zoom({position:'bottomright'}).addTo(map);
-const allKeys=['airportN','nyingchi','suosong','basong','gongga','yamdrok','lhasa'];
+const allKeys=['airportH','hailar','morigele','erguna','mordaoga','shiwei','heishantou','caidaihe','manzhouli','hulunlake'];
 const bounds=L.latLngBounds(allKeys.map(k=>points[k].xy));
 const roadLines = window.roadRoutes.legs.map(leg=>leg.coordinates.map(([lng,lat])=>[lat,lng]));
 const fullRouteLayer=L.layerGroup().addTo(map);
@@ -61,7 +62,7 @@ roadLines.forEach(coords=>{
   L.polyline(coords,{color:'#2474db',weight:5,opacity:.85}).addTo(fullRouteLayer);
 });
 const selectedLayer=L.layerGroup().addTo(map),markers={};
-allKeys.forEach((k,i)=>{const p=points[k];markers[k]=L.circleMarker(p.xy,{radius:6,color:'#fff',weight:2,fillColor:'#c36a4f',fillOpacity:1}).addTo(map).bindTooltip(p.name,{permanent:false,direction:'top'}).on('click',()=>choose({airportN:0,nyingchi:0,suosong:1,basong:3,gongga:4,yamdrok:5,lhasa:6}[k],false));});
+allKeys.forEach((k,i)=>{const p=points[k];markers[k]=L.circleMarker(p.xy,{radius:6,color:'#fff',weight:2,fillColor:'#c36a4f',fillOpacity:1}).addTo(map).bindTooltip(p.name,{permanent:false,direction:'top'}).on('click',()=>choose({airportH:0,hailar:0,morigele:1,erguna:1,mordaoga:2,shiwei:3,heishantou:3,caidaihe:4,manzhouli:4,hulunlake:5}[k],false));});
 function fit(){if(!map.hasLayer(fullRouteLayer))fullRouteLayer.addTo(map);map.fitBounds(L.latLngBounds(roadLines.flat()),{paddingTopLeft:[50,70],paddingBottomRight:[50,65],animate:false});showTimeLabels([]);showOverviewTimes();}
 function showOverviewTimes(){
   document.getElementById('overview-times')?.remove();
@@ -88,18 +89,18 @@ function choose(i,focus=true){
     if(coords.length===1)map.setView(coords[0],12,{animate:false});
     else map.fitBounds(L.latLngBounds(road||coords),{padding:[60,65],maxZoom:11,animate:false});
   }
-  document.querySelector('.map-legend').innerHTML=road?'<span class="line-sample"></span>道路路线 · 不含实时路况':'市区目的地 · 高德实时规划路线';
+  document.querySelector('.map-legend').innerHTML=road?'<span class="line-sample"></span>行程连线示意 · 非道路导航':'市区目的地 · 高德实时规划路线';
   showTimeLabels(road?[legByDay[i]]:[]);
   lucide.createIcons();
   window.tibetAMap?.select(i);
 }
 document.querySelectorAll('.day-button').forEach(b=>b.addEventListener('click',()=>choose(Number(b.dataset.day))));
-document.getElementById('fit-map').onclick=()=>{if(window.tibetAMap?.overview())return;fit();document.querySelector('.map-legend').innerHTML='<span class="line-sample"></span>全程参考路线 · 不含实时路况';};
+document.getElementById('fit-map').onclick=()=>{if(window.tibetAMap?.overview())return;fit();document.querySelector('.map-legend').innerHTML='<span class="line-sample"></span>全程参考连线 · 非道路导航';};
 let tileErrors=0;tiles.on('tileerror',()=>{if(++tileErrors>=3)document.getElementById('map-error').hidden=false;});tiles.on('tileload',()=>{tileErrors=0;document.getElementById('map-error').hidden=true;});
-const checklist=['确认林芝取车、贡嘎机场还车','订好 5 处住宿、共 6 晚','确认索松村与结巴村入园接驳','准备证件与保暖衣物','下载离线地图、检查天气路况','确认 10/8 还车接驳'];
-let saved=[];try{saved=JSON.parse(localStorage.getItem('tibet-slow-trip-checklist-oct7-v2')||'[]');if(!Array.isArray(saved))saved=[];}catch{}
+const checklist=['确认海拉尔机场同点取还车','订好 6 晚住宿、莫尔道嘎与黑山头问供暖','确认额尔古纳湿地、莫尔道嘎开放时间','准备证件与防风保暖衣物','下载离线地图、检查天气路况','确认 10/8 还车与航站楼时间'];
+let saved=[];try{saved=JSON.parse(localStorage.getItem('hailar-slow-trip-checklist-oct7-v2')||'[]');if(!Array.isArray(saved))saved=[];}catch{}
 document.getElementById('checklist').innerHTML=checklist.map((t,i)=>`<label><input type="checkbox" value="${i}" ${saved.includes(i)?'checked':''}>${t}</label>`).join('');
-function updateChecks(){const values=[...document.querySelectorAll('.checklist input:checked')].map(e=>Number(e.value));document.getElementById('check-count').textContent=`${values.length} / 6`;try{localStorage.setItem('tibet-slow-trip-checklist-oct7-v2',JSON.stringify(values));}catch{document.getElementById('save-status').textContent='当前浏览器未允许保存，勾选仅在本页有效。';}}
+function updateChecks(){const values=[...document.querySelectorAll('.checklist input:checked')].map(e=>Number(e.value));document.getElementById('check-count').textContent=`${values.length} / 6`;try{localStorage.setItem('hailar-slow-trip-checklist-oct7-v2',JSON.stringify(values));}catch{document.getElementById('save-status').textContent='当前浏览器未允许保存，勾选仅在本页有效。';}}
 document.getElementById('checklist').addEventListener('change',updateChecks);updateChecks();
 document.getElementById('print-itinerary').innerHTML=days.map((d,i)=>`<article>${detail(d,i)}</article>`).join('');
 document.getElementById('print').onclick=()=>window.print();

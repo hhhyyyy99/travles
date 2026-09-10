@@ -15,4 +15,4 @@ const server=http.createServer((req,res)=>{
     });
   }catch{res.writeHead(400);res.end();}
 });
-server.listen(Number(process.env.TIBET_PORT)||4173,'127.0.0.1',()=>console.log(`Tibet guide: http://127.0.0.1:${server.address().port}/`));
+server.listen(Number(process.env.HAILAR_PORT)||Number(process.env.TIBET_PORT)||4173,'127.0.0.1',()=>console.log(`Hailar guide: http://127.0.0.1:${server.address().port}/`));
