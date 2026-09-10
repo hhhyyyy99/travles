@@ -19,7 +19,9 @@ import { RoutePanel } from './components/RoutePanel'
 import { AccommodationDialog } from './components/AccommodationDialog'
 import { useAmapLive } from './hooks/useAmapLive'
 import { useAccommodation } from './hooks/useAccommodation'
+import { useRouteStates } from './hooks/useRouteStates'
 import { inUseBaseCount } from './domain/accommodation'
+import { legendForDay } from './domain/routeView'
 import { useRouteMap } from './hooks/useRouteMap'
 import type { RouteMapHandle } from './services/map'
 import { dayPointCoords, tripPlan } from './data/itinerary'
@@ -47,6 +49,7 @@ export default function App() {
   const [mapHandle, setMapHandle] = useState<RouteMapHandle | null>(null)
   const amap = useAmapLive()
   const { state: accommodationState } = useAccommodation()
+  const routeStates = useRouteStates()
   const accommodationCount = inUseBaseCount(accommodationState)
 
   const mapHandleRef = useRef<RouteMapHandle | null>(null)
@@ -59,7 +62,9 @@ export default function App() {
       setOverview(false)
       const road = staticRouteGeometry(day)
       const coords = dayPointCoords(day)
-      setLegend(road ? '行程连线示意 · 非道路导航' : '市区目的地 · 高德实时规划路线')
+      // trip.js:186 — the legend follows the route state: 高德路线已更新 once a
+      // changed-endpoint day settles, 住宿已更换 · 路线未更新 while stale.
+      setLegend(legendForDay(accommodationState, routeStates.states, day))
       if (!options?.skipAmap) amap.select(day)
       const handle = mapHandleRef.current
       if (!handle) return
@@ -71,7 +76,7 @@ export default function App() {
         road && estimate ? [{ index: day, title: estimate.title, time: estimate.time, coordinates: road }] : [],
       )
     },
-    [amap.select],
+    [amap.select, accommodationState, routeStates.states],
   )
 
   const fit = useCallback(() => {

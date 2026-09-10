@@ -15,6 +15,7 @@
  */
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -23,7 +24,7 @@ import {
   type ReactNode,
 } from 'react'
 import { tripPlan } from '../data/itinerary'
-import type { RouteStatus } from '../domain/types'
+import type { AccommodationDayRoute, AccommodationState, RouteStatus } from '../domain/types'
 import { colors, duration, traffic } from '../domain/amapUtils'
 import {
   ROUTE_OVERVIEW_TIMEOUT_MS,
@@ -31,8 +32,7 @@ import {
   ROUTE_REFRESH_INTERVAL_MS,
   type RouteStateDetails,
 } from '../domain/routeStates'
-import { getDayRoute as accommodationGetDayRoute, type AccommodationDayRoute } from '../domain/accommodation'
-import type { AccommodationState } from '../domain/types'
+import { getDayRoute as accommodationGetDayRoute } from '../domain/accommodation'
 import type { AccommodationChangePayload } from './useAccommodation'
 import { useAccommodation } from './useAccommodation'
 import { hasCoordinates, wgs84ToGcj02LngLat } from '../domain/geo'
@@ -174,6 +174,14 @@ class AmapLiveController {
   private accommodationGeneration = 0
   /** Per-day in-flight accommodation queries: `{token, generation}` (legacy :319–321). */
   private accommodationRequests = new Map<number, { token: number; generation: number }>()
+  /**
+   * Boot queue — changed-endpoint days awaiting their re-query until the map
+   * connects (storage stays overrides at boot; port of the legacy boot query
+   * for the selected day extended to ALL affected days, ticket C1).
+   */
+  private queuedAccommodationDays = new Set<number>()
+  /** The boot flush runs exactly once per controller (StrictMode-safe). */
+  private bootFlushed = false
 
   constructor() {
     this.amap = getAMapStatic()
@@ -263,6 +271,7 @@ class AmapLiveController {
         trafficDisabled: false,
       })
       this.query()
+      this.flushQueuedAccommodationDays()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.patch({ amapStateText: '高德加载失败 · 当前为参考地图', connectLabel: '重试加载地图' })
@@ -545,10 +554,13 @@ class AmapLiveController {
   accommodationChanged(dayIndices: number[]): boolean {
     this.requestId++
     window.clearTimeout(this.queryTimer)
-    if (!this.map) return false
     const days = [...new Set(dayIndices.map(Number))]
       .filter((index) => index >= 0 && index < tripPlan.days.length)
       .filter((index) => this.accommodation?.getDayRoute(index)?.hasChangedEndpoint)
+    if (!this.map) {
+      days.forEach((index) => this.queuedAccommodationDays.add(index))
+      return false
+    }
     if (!days.length) {
       this.clearRoute()
       if (this.wholeTrip) {
@@ -563,6 +575,29 @@ class AmapLiveController {
     this.routes?.markRouteStatus(days, 'pending')
     days.forEach((index) => this.queryAccommodationRoute(index, generation))
     return true
+  }
+
+  /**
+   * Boot enqueue (ticket C1) — records changed-endpoint days so the map-connect
+   * flush re-queries them (storage overrides at boot). StrictMode-safe because
+   * the flush itself runs exactly once.
+   */
+  enqueueAccommodationDays(dayIndices: number[]): void {
+    dayIndices.map(Number).forEach((index) => {
+      if (index >= 0 && index < tripPlan.days.length && this.accommodation?.getDayRoute(index)?.hasChangedEndpoint) {
+        this.queuedAccommodationDays.add(index)
+      }
+    })
+  }
+
+  /** One-shot flush after the map connects (legacy boot query for the selected day stays as-is). */
+  private flushQueuedAccommodationDays(): void {
+    if (this.bootFlushed) return
+    this.bootFlushed = true
+    if (!this.queuedAccommodationDays.size) return
+    const days = [...this.queuedAccommodationDays].sort((a, b) => a - b)
+    this.queuedAccommodationDays.clear()
+    this.accommodationChanged(days)
   }
 
   /**
@@ -842,18 +877,22 @@ export function AmapLiveProvider({ children }: { children: ReactNode }) {
    * Boot seeding — route states are NOT persisted (legacy routeStates Map).
    * The legacy `routeState()` lazily seeds a changed-endpoint day as `stale`
    * on first read; React starts everything `reference`, so after a reload the
-   * changed days must be re-seeded (the AMap queries then re-fire on select).
+   * changed days must be re-seeded and their re-queries enqueued (C1 boot: the
+   * map-connect flush queries exactly the affected days with the NEW endpoints).
    */
   const seededRef = useRef(false)
   useEffect(() => {
     if (seededRef.current) return
     seededRef.current = true
+    const changedDays: number[] = []
     tripPlan.days.forEach((_, day) => {
       if (accommodationGetDayRoute(accommodationState, day)?.hasChangedEndpoint) {
         markRouteStatus([day], 'stale')
+        changedDays.push(day)
       }
     })
-  }, [accommodationState, markRouteStatus])
+    if (changedDays.length) controller.enqueueAccommodationDays(changedDays)
+  }, [accommodationState, markRouteStatus, controller])
 
   useEffect(() => {
     controller.attach({ markRouteStatus, beginRequest: routeStates.beginRequest })

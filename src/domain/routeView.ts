@@ -17,7 +17,7 @@ import { legByDay, roadLines, roadRoutes } from '../data/roadRoutes'
 import { hasCoordinates } from './geo'
 import { getDayRoute } from './accommodation'
 import { isStaleStatus, legendTextFor, routeStateOrDefault, type RouteState } from './routeStates'
-import type { AccommodationState, LatLng } from './types'
+import type { AccommodationState, LatLng, RouteEndpoint } from './types'
 
 /**
  * Per-day route geometry for the Leaflet layers (trip.js:88–95):
@@ -64,7 +64,7 @@ export function routeCoordsForDay(state: AccommodationState, dayIndex: number): 
   const route = getDayRoute(state, dayIndex)
   if (!route) return dayPointCoords(dayIndex)
   return [route.from, ...route.via, route.to]
-    .filter((point) => point && hasCoordinates(point))
+    .filter((point): point is RouteEndpoint => Boolean(point) && hasCoordinates(point))
     .map((point) => [point.lat!, point.lng!])
 }
 
@@ -155,7 +155,8 @@ export function summaryDistance(
     const routeState = routeStateOrDefault(routeStates, index)
     if (route?.hasChangedEndpoint) {
       changed = true
-      if (routeState.status === 'updated' && Number.isFinite(routeState.distance)) total += routeState.distance
+      const distance = routeState.distance
+      if (routeState.status === 'updated' && typeof distance === 'number' && Number.isFinite(distance)) total += distance
       else complete = false
     } else if (roadRoutes.legs[index]) {
       total += Number(roadRoutes.legs[index].distance) || 0
