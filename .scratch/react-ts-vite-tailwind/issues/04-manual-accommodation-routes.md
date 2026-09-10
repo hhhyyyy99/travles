@@ -52,3 +52,13 @@ Branch `ticket/04-manual-accommodation-routes`; NOT resolved — parts B (dialog
 - Defaults-only backup restore leaves explicit default stays entries in `stays` (legacy §2.2 copies backup stays verbatim) — selectors resolve them correctly; do not "optimize" by collapsing.
 - Default bases have no `createdAt` (legacy shape) — `AccommodationBase.createdAt` is optional; customs always have it.
 - `npm run test:app:prod` has intermittent timing flakes in the AMap preview suite (pre-existing; reproduced on ticket-03 tree).
+
+## Answer (part B — creation dialog, map picking, stay cards, summary)
+
+Implemented (uncommitted agent work verified + committed by orchestrator after the agent was terminated):
+
+- `src/components/AccommodationDialog.tsx` — faithful dialog: existing base list (custom vs default, in-use/alternate markers), 新增住宿基地 form (名称 required 1–120, 类型 hotel/area, 地址 ≤240 optional, 备注 ≤600 optional, 在地图上选点 leaflet picker with keyboard + Escape-cancel keeping draft), night checkboxes `input[name="accommodation-nights"]` (0..5), 保存并应用 / 仅保存为备选, exact validation + write-failure strings via provider `lastError`.
+- Stay card wiring in DayDetail/App: custom stay intro/name/meta (`住宿区域 · `, address or `已确认地图位置`), `data-accommodation-open` per day, grouped `#stay-note-text` (incl. trailing `<small>10/2 · 10/7 · 10/3 · 10/4 · 10/5 · 10/6</small>`), `#accommodation-count` = inUseBaseCount; picker uses the leaflet map and restores view on close (legacy `.amap-active`/map interplay preserved).
+- `tests/app/04-accommodation.app.browser.cjs` — 7 scenarios: create+apply+reload persistence, alternate excluded from count, choose-existing applies, validation message exact, keyboard pick + Escape keeps draft, storage failure exact string no false success, legacy-format seed renders + survives refresh.
+
+Evidence (orchestrator-run, all green): typecheck pass; build pass; `npm test` 44/44; `test:browser` 20/20; `test:app` 31/31; `test:app:prod` 31/31.
