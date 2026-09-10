@@ -90,7 +90,8 @@ Status: resolved
 - 本文沿用项目“住宿基地”“行程”“每日住宿”“路线”等用语。
 - 实现以当前呼伦贝尔行程快照 4356510 为基线，保留原有行程改动。
 - 本地 Markdown tracker 的五张实施票均为 resolved；原依赖关系保留以便追溯。
-- PR：https://github.com/hhhyyyy99/tibet-road-trip-guide/pull/1。没有对应的远程 issue 编号。
+- 正式交付分支为 `feature/hailaer`，代码基于已验证的原生 HTML/JS 实现提交 `9cb8702`，不包含 Next.js 集成改动。
+- 历史 PR：https://github.com/hhhyyyy99/tibet-road-trip-guide/pull/1。该 PR 误合入 `main`，已用回退提交 `4a2a601` 撤销；`main` 内容恢复到误合并前的 `4ed46ee`。
 - 验收：8 项 Node 测试、20 项浏览器测试通过，未跳过用例。高德异常与并发场景通过可控响应验收；已使用原项目本地配置实测默认自动加载及真实路线查询成功。
 - 界面已检查 1280px 桌面与 390px 手机视口；打印已检查 A4 分页与长文本。
 
