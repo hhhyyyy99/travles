@@ -74,9 +74,39 @@
     document.getElementById('amap-time-badge')?.remove();
     document.getElementById('overview-times')?.remove();
   }
+  function accommodationRoute(dayIndex) {
+    return window.tibetAccommodation?.getDayRoute(dayIndex) || null;
+  }
   function endpoints() {
     const d = window.tibetTrip.days[selectedDay];
-    return overrides.get(selectedDay) || d.nav;
+    if (overrides.has(selectedDay)) return overrides.get(selectedDay);
+    const route = accommodationRoute(selectedDay);
+    return route ? [route.from?.name || d.nav[0], route.to?.name || d.nav[1]] : d.nav;
+  }
+  function routeStops(dayIndex) {
+    const d = window.tibetTrip.days[dayIndex];
+    const route = accommodationRoute(dayIndex);
+    if (!route?.hasChangedEndpoint) return [{keyword:d.nav[0],city:d.cities[0]},...(d.via||[]).map(s=>({...s})),{keyword:d.nav[1],city:d.cities[1]}];
+    return route.stops.map((stop, index) => {
+      const result = {keyword:stop.keyword || stop.name, city:d.cities[Math.min(index, d.cities.length - 1)] || d.cities[0]};
+      const endpoint = index === 0 || index === route.stops.length - 1;
+      if (endpoint || stop.isCustom || stop.isChanged) {
+        const xy = coordtransform.wgs84togcj02(stop.lng, stop.lat);
+        result.location = new AMap.LngLat(xy[0], xy[1]);
+      }
+      return result;
+    });
+  }
+  function searchRoute(driving, stops, callback) {
+    if (!stops.some(stop => stop.location)) {
+      driving.search(stops, callback);
+      return;
+    }
+    const stopInput = stop => stop.location || {keyword: stop.keyword, city: stop.city};
+    const origin = stopInput(stops[0]);
+    const destination = stopInput(stops.at(-1));
+    const waypoints = stops.slice(1, -1).map(stopInput);
+    driving.search(origin, destination, {waypoints}, callback);
   }
   function renderForm() {
     const names = endpoints();
@@ -111,8 +141,9 @@
       if(!wholeTrip) {
         const position=(point,name)=>`${point.getLng?.() ?? point.lng ?? point[0]},${point.getLat?.() ?? point.lat ?? point[1]},${name}`;
         const params=new URLSearchParams({mode:'car',policy:'1',callnative:'1',src:'hailar-slow-trip',to:position(path.at(-1),$('route-to').value)});
-        const day=window.tibetTrip.days[selectedDay];
-        if(day.points.length>2){const via=window.tibetTrip.points[day.points[1]];const xy=coordtransform.wgs84togcj02(via.xy[1],via.xy[0]);params.set('via',`${xy[0]},${xy[1]},${via.name}`);}
+        const route=accommodationRoute(selectedDay);
+        const via=route?.via?.[0];
+        if(via){const xy=coordtransform.wgs84togcj02(via.lng,via.lat);params.set('via',`${xy[0]},${xy[1]},${via.name}`);}
         const currentLink=document.querySelector('.navigation-current');
         if(currentLink)currentLink.href=`https://uri.amap.com/navigation?${params}`;
         params.set('from',position(path[0],$('route-from').value));
@@ -123,10 +154,12 @@
     if (overlays.length) map.setFitView(overlays, false, wholeTrip?(innerWidth<720?[100,45,210,45]:[90,55,70,230]):[70,55,70,55]);
     const timestamp = new Date().toLocaleString('zh-CN', {hour12:false});
     status(`高德路线查询成功 · ${timestamp}（本地时间）`);
+    const accommodationState=accommodationRoute(selectedDay);
+    if(!wholeTrip && accommodationState?.hasChangedEndpoint)window.tibetAccommodation?.markRouteStatus([selectedDay], 'updated', {distance:Number(route.distance), duration:Number(route.time), durationText:utils.duration(route.time)});
     const rows = Object.entries(traffic.totals).filter(([,distance])=>distance>0);
     $('live-results').innerHTML = `<div class="live-metrics"><div><span>预计驾驶</span><strong>${utils.duration(route.time)}</strong></div><div><span>路线距离</span><strong>${(Number(route.distance)/1000).toFixed(1)} km</strong></div><div><span>路况数据</span><strong>${traffic.known?'已返回分段路况':'暂无覆盖'}</strong></div></div><div class="traffic-summary">${rows.map(([name,distance])=>`<span><b style="background:${utils.colors[name]}"></b>${name} ${(distance/1000).toFixed(1)} km</span>`).join('')}</div><p class="resolved-endpoints">${escape(result.start?.name || $('route-from').value)} → ${escape(result.end?.name || $('route-to').value)}。请核对具体入口；可修改上方酒店或航站楼名称重新规划。</p><details class="road-details"><summary>沿途道路与转向</summary><ol>${(route.steps||[]).map(step=>`<li><strong>${escape(step.road || '连接道路')}</strong><span>${escape(step.instruction || '')}</span></li>`).join('')}</ol></details>`;
   }
-  function query() {
+  function query(done) {
     if (!map) return;
     clearTimeout(queryTimer);
     const version = ++requestId;
@@ -144,14 +177,16 @@
     }
     status('正在获取高德路线、预计驾驶时间与路况…');
     const names=endpoints();
-    const stops=wholeTrip?window.tibetTrip.overviewStops.map(s=>({...s})):[{keyword:names[0],city:day.cities[0]},...(day.via||[]).map(s=>({...s})),{keyword:names[1],city:day.cities[1]}];
+    const stops=wholeTrip?window.tibetTrip.overviewStops.map(s=>({...s})):routeStops(selectedDay);
     // Search without automatic drawing so stale callbacks cannot replace the selected day.
     const driving = new AMap.Driving({extensions:'all', policy:AMap.DrivingPolicy.REAL_TRAFFIC});
     queryTimer = setTimeout(()=>{
       if(version!==requestId)return;
       requestId++;
       status('路线查询超时，请刷新重试；暂不显示时间与路况。');
+      if(!wholeTrip && accommodationRoute(selectedDay)?.hasChangedEndpoint)window.tibetAccommodation?.markRouteStatus([selectedDay], 'unupdated');
       $('amap-refresh').disabled=false;
+      done?.(false);
     },wholeTrip?60000:20000);
     const onResult = (state,result)=>{
       if(version!==requestId)return;
@@ -159,9 +194,12 @@
       $('amap-refresh').disabled=false;
       if(state!=='complete'||!result?.routes?.length) {
         status('未取得路线。请检查地点名称、Key 服务权限与配额，然后刷新重试。');
+        if(!wholeTrip && accommodationRoute(selectedDay)?.hasChangedEndpoint)window.tibetAccommodation?.markRouteStatus([selectedDay], 'unupdated');
+        done?.(false);
         return;
       }
       showRoute(result.routes[0],result);
+      done?.(true);
     };
     if(wholeTrip){
       const planned=window.tibetTrip.days.filter(d=>d.points.length>1);
@@ -175,8 +213,8 @@
         }
         status(`正在查询第 ${index+1}/${planned.length} 段高德路线…`);
         const d=planned[index];
-        const segment=[{keyword:d.nav[0],city:d.cities[0]},...(d.via||[]).map(s=>({...s})),{keyword:d.nav[1],city:d.cities[1]}];
-        try{driving.search(segment,(state,result)=>{
+        const segment=routeStops(window.tibetTrip.days.indexOf(d));
+        try{searchRoute(driving,segment,(state,result)=>{
           if(version!==requestId)return;
           if(state!=='complete'||!result?.routes?.length){onResult(state,result);return;}
           collected.push(result.routes[0]);
@@ -185,7 +223,7 @@
       };
       next(0);
     }else{
-      try { driving.search(stops,onResult); }
+      try { searchRoute(driving,stops,onResult); }
       catch { onResult('error',null); }
     }
   }
@@ -251,9 +289,33 @@
     }
     connect({key:$('amap-key').value.trim(),securityJsCode:$('amap-security').value.trim()});
   };
+  function recalculateAccommodation(dayIndices) {
+    if (!map) return false;
+    const days = [...new Set(dayIndices.map(Number))].filter(index => index >= 0 && index < window.tibetTrip.days.length);
+    if (!days.length) return true;
+    window.tibetAccommodation?.markRouteStatus(days, 'pending');
+    const originalDay = selectedDay;
+    const originalWholeTrip = wholeTrip;
+    let cursor = 0;
+    const next = () => {
+      if (cursor >= days.length) {
+        selectedDay = originalDay;
+        wholeTrip = originalWholeTrip;
+        renderForm();
+        query();
+        return;
+      }
+      selectedDay = days[cursor++];
+      wholeTrip = false;
+      query(next);
+    };
+    next();
+    return true;
+  }
   window.tibetAMap = {
     select(index) {selectedDay=index;wholeTrip=false;renderForm();if(map)query();},
-    overview() {if(!map)return false;wholeTrip=true;query();return true;}
+    overview() {if(!map)return false;wholeTrip=true;query();return true;},
+    accommodationChanged(dayIndices) { return recalculateAccommodation(dayIndices); }
   };
   window.addEventListener('beforeunload',()=>{clearInterval(refreshTimer);clearTimeout(queryTimer);map?.destroy();});
   const config=window.TIBET_AMAP_CONFIG;
