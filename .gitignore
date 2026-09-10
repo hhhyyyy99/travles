@@ -63,6 +63,3 @@ Icon?
 .tmp/
 *.tmp
 *.temp
-
-# Generated standalone guide assets
-/public/hailar/

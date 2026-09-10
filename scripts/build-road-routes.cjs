@@ -17,4 +17,4 @@ const result = {
     roads: [...new Set(leg.steps.map(step => step.ref || step.name).filter(Boolean))]
   }))
 };
-fs.writeFileSync('data/hailar-road-routes.js', `// Road geometry from OSRM, based on OpenStreetMap (ODbL).\nwindow.roadRoutes = ${JSON.stringify(result)};\n`);
+fs.writeFileSync('data/road-routes.js', `// Road geometry from OSRM, based on OpenStreetMap (ODbL).\nwindow.roadRoutes = ${JSON.stringify(result)};\n`);

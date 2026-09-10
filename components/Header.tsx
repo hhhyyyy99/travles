@@ -15,7 +15,6 @@ export default function Header() {
         山湖之间 <span>旅行手册 / TIBET</span>
       </a>
       <nav>
-        <a href={`${process.env.NEXT_PUBLIC_BASE_PATH || ""}/hailar/index.html`} aria-label="呼伦贝尔自驾手册">呼伦贝尔</a>
         <a href="#journey">每日行程</a>
         <a href="#prepare">出发准备</a>
         <button
