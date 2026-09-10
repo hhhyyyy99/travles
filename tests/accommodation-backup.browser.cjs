@@ -119,4 +119,20 @@ test('住宿备份可以预览、取消、整体恢复，并拒绝无效或失�
   const invalidCoordinate = await page.evaluate(next => window.tibetAccommodation.validateBackup({...next, bases: [{...next.bases[0], lat: ''}]}), replacement);
   assert.equal(invalidCoordinate.ok, false);
   assert.match(invalidCoordinate.error, /位置无效/);
+
+  const defaults = {
+    format: 'hailar-slow-trip-accommodation',
+    version: 1,
+    bases: [],
+    stays: {'0': 'default-hailar', '1': 'default-erguna', '2': 'default-mordaoga', '3': 'default-heishantou', '4': 'default-manzhouli', '5': 'default-hailar'}
+  };
+  const restoredDefaults = await page.evaluate(value => window.tibetAccommodation.replaceState(value), defaults);
+  assert.equal(restoredDefaults.ok, true);
+  assert.deepEqual(await page.evaluate(() => window.tibetAccommodation.overnightDays.map(index => window.tibetAccommodation.getRouteState(index).status)), ['reference', 'reference', 'reference', 'reference', 'reference', 'reference']);
+  const printState = await page.evaluate(() => ({
+    stale: document.querySelectorAll('#print-itinerary .print-route.is-stale').length,
+    text: document.querySelector('#print-itinerary')?.innerText || ''
+  }));
+  assert.equal(printState.stale, 0);
+  assert.doesNotMatch(printState.text, /路线未更新/);
 });

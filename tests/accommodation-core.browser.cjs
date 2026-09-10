@@ -33,6 +33,29 @@ test('a name without a confirmed map position cannot be saved', async () => {
   } finally { await guide.close(); }
 });
 
+test('keyboard-only map picking confirms the center and keeps the draft on cancel', async () => {
+  const guide = await openGuide({viewport: {width: 390, height: 844}});
+  try {
+    const {page} = guide;
+    await page.locator('#day-detail [data-accommodation-open]').click();
+    await page.getByRole('button', {name: '新增住宿基地', exact: true}).click();
+    await page.getByLabel('基地名称', {exact: true}).fill('键盘确认住宿');
+    await page.getByRole('button', {name: '在地图上选点', exact: true}).click();
+    assert.match(await page.locator('#accommodation-map-picker').innerText(), /方向键|Enter/);
+    await page.locator('#route-map').press('ArrowRight');
+    await page.locator('#route-map').press('Enter');
+    assert.equal(await page.locator('#accommodation-dialog').isVisible(), true);
+    assert.match(await page.locator('#accommodation-location-summary').innerText(), /已选择/);
+    await page.getByRole('button', {name: '在地图上选点', exact: true}).click();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#accommodation-dialog').isVisible(), true);
+    assert.equal(await page.getByLabel('基地名称', {exact: true}).inputValue(), '键盘确认住宿');
+    assert.match(await page.locator('#accommodation-dialog-status').innerText(), /保留当前填写内容/);
+    await page.getByRole('button', {name: '保存为备选', exact: false}).click();
+    assert.ok(await page.evaluate(() => window.tibetAccommodation.listBases().some(base => base.name === '键盘确认住宿')));
+  } finally { await guide.close(); }
+});
+
 test('selecting another default base survives reload and invalidates the old route', async () => {
   const guide = await openGuide();
   try {

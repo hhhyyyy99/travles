@@ -138,9 +138,7 @@
 
   if (!host.document) return api;
 
-  const escape = value => String(value ?? '').replace(/[&<>"']/g, character => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[character]));
+  const escape = host.TibetAMapUtils.escapeHtml;
 
   function setStatus(message) {
     const element = host.document.getElementById('accommodation-search-status');

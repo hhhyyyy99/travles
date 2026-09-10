@@ -20,12 +20,12 @@ function installAMapStub() {
       if (waypoints.some(p => !(p instanceof LngLat) && (!p || typeof p.keyword !== 'string'))) {
         window.routeProvider.errors.push('Invalid waypoint'); throw new Error('Invalid waypoint');
       }
-      const request = {coordinate, waypoints, origin: args[0], destination: args[1], mode: window.routeProvider.mode};
+      const request = {coordinate, waypoints, origin: args[0], destination: args[1], mode: window.routeProvider.mode, distance: window.routeProvider.distance, delay: window.routeProvider.delay};
       requests.push(request);
       const origin = coordinate ? args[0] : new LngLat(119.82,49.22);
       const destination = coordinate ? args[1] : new LngLat(119.78,49.21);
-      const route = {distance: window.routeProvider.distance, time: 5678, steps: [{path:[origin, destination],road:'测试道路',instruction:'继续行驶'}]};
-      setTimeout(() => { request.completed = true; callback(request.mode === 'failure' ? 'error' : 'complete', {routes: request.mode === 'failure' ? [] : [route]}); }, window.routeProvider.delay);
+      const route = {distance: request.distance, time: 5678, steps: [{path:[origin, destination],road:'测试道路',instruction:'继续行驶'}]};
+      setTimeout(() => { request.completed = true; callback(request.mode === 'failure' ? 'error' : 'complete', {routes: request.mode === 'failure' ? [] : [route]}); }, request.delay);
     }
   }
   class Map {

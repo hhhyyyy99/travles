@@ -2,7 +2,7 @@ const {days,points}=window.tripPlan;
 const accommodation=window.tibetAccommodation;
 let selectedDay=0;
 const icon=name=>`<i data-lucide="${name}"></i>`;
-const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const escapeHtml=window.TibetAMapUtils.escapeHtml;
 const searchUrl=name=>`https://uri.amap.com/search?keyword=${encodeURIComponent(name)}&callnative=0`;
 const legByDay = {0:0,1:1,2:2,3:3,4:4,5:5,6:6};
 function navigationUrl(dayIndex, currentLocation = false) {
@@ -24,9 +24,24 @@ function navigationUrl(dayIndex, currentLocation = false) {
     mode: 'car', policy: '1', src: 'hailar-slow-trip', callnative: '1'
   });
   if (!currentLocation) params.set('from', endpoint(from, from.name));
-  const via=changedEndpoint?route.via[0]:d.points.length>2?{lat:points[d.points[1]].xy[0],lng:points[d.points[1]].xy[1],name:points[d.points[1]].name}:null;
+  const viaCandidates=changedEndpoint ? (route.via || []) : d.points.length>2 ? [{lat:points[d.points[1]].xy[0],lng:points[d.points[1]].xy[1],name:points[d.points[1]].name}] : [];
+  const via=viaCandidates.find(point => Number.isFinite(Number(point?.lat)) && Number.isFinite(Number(point?.lng)));
   if(via)params.set('via',endpoint(via,via.name));
   return `https://uri.amap.com/navigation?${params}`;
+}
+function hasCoordinates(point) {
+  return Number.isFinite(Number(point?.lat)) && Number.isFinite(Number(point?.lng));
+}
+function navigationLimitNote(route) {
+  const via=route?.via || [];
+  const notes=[];
+  if(via.length>1) notes.push('外部高德链接最多保留一个途经点；页面路线仍按全部景点顺序查询。');
+  const keywordOnly=via.filter(point => point.keywordOnly || !hasCoordinates(point));
+  if(keywordOnly.length) notes.push(`${keywordOnly.map(point => point.name).join('、')}没有使用镇中心坐标，外部链接已省略该途经点，请通过旁边的景点搜索链接确认入口。`);
+  return notes.join(' ');
+}
+function navigationPlaceLinks(route) {
+  return (route?.via || []).filter(point => point.keywordOnly || !hasCoordinates(point)).map(point => `<a href="${searchUrl(point.keyword || point.name)}" target="_blank" rel="noopener">${icon('map-pin')}搜索${escapeHtml(point.name)}${icon('arrow-up-right')}</a>`).join('');
 }
 function navigationPanel(dayIndex) {
   const d = days[dayIndex];
@@ -44,7 +59,9 @@ function navigationPanel(dayIndex) {
   const routeNote = stale
     ? `住宿端点已变化，${routeState.status === 'pending' ? '正在重新查询路线。' : '当前没有可用的新路线结果，请连接高德地图后重试。'}${route?.from?.type === 'area' || route?.to?.type === 'area' ? '住宿区域按代表位置估算。' : ''}`
     : localDay ? '当天不安排长途驾驶，景区内交通以观光车及酒店接驳为准。' : '起终点为区域参考位置，请在高德中确认酒店、景区入口或航站楼。手机可调起高德；当前位置导航需要手机定位。';
-  return `<div class="navigation-panel"><div><span class="eyebrow">${stale ? '路线状态' : localDay ? '当地休整日' : '驾车路线'}</span><strong>${escapeHtml(fromName)} → ${escapeHtml(toName)}</strong><p class="route-estimate ${stale ? 'is-stale' : ''}">${routeDescription}</p></div><div class="navigation-actions"><a class="navigation-primary" href="${navigationUrl(dayIndex)}" target="_blank" rel="noopener">${icon(localDay?'map-pin':'navigation')}${localDay?'查看当天住处':'高德路线规划'}</a>${localDay?'':`<a class="navigation-current" href="${navigationUrl(dayIndex,true)}" target="_blank" rel="noopener">${icon('locate-fixed')}从当前位置导航</a>`}</div><p class="navigation-note">${routeNote}</p></div>`;
+  const externalNote=navigationLimitNote(route);
+  const navigationPlaces=navigationPlaceLinks(route);
+  return `<div class="navigation-panel"><div><span class="eyebrow">${stale ? '路线状态' : localDay ? '当地休整日' : '驾车路线'}</span><strong>${escapeHtml(fromName)} → ${escapeHtml(toName)}</strong><p class="route-estimate ${stale ? 'is-stale' : ''}">${routeDescription}</p></div><div class="navigation-actions"><a class="navigation-primary" href="${navigationUrl(dayIndex)}" target="_blank" rel="noopener">${icon(localDay?'map-pin':'navigation')}${localDay?'查看当天住处':'高德路线规划'}</a>${localDay?'':`<a class="navigation-current" href="${navigationUrl(dayIndex,true)}" target="_blank" rel="noopener">${icon('locate-fixed')}从当前位置导航</a>`}</div><p class="navigation-note">${routeNote}${externalNote ? ` ${externalNote}` : ''}</p>${navigationPlaces ? `<p class="navigation-place-links">${navigationPlaces}</p>` : ''}</div>`;
 }
 function detail(d,index){
   const stay=accommodation?.getDayStay(index);
@@ -125,7 +142,7 @@ function fit(){
   const visible=days.flatMap((_,index)=>routeGeometry(index)||[]);
   const fallback=days.flatMap((_,index)=>{
     const route=accommodation?.getDayRoute(index);
-    return route ? [route.from,...route.via,route.to].filter(Boolean).map(point=>[point.lat,point.lng]) : [];
+    return route ? [route.from,...route.via,route.to].filter(point => point && hasCoordinates(point)).map(point=>[point.lat,point.lng]) : [];
   });
   const coords=visible.length>1?visible:fallback;
   if(coords.length)map.fitBounds(L.latLngBounds(coords),{paddingTopLeft:[50,70],paddingBottomRight:[50,65],animate:false});
@@ -155,7 +172,7 @@ function choose(i,focus=true,options={}){
   document.getElementById('day-detail').innerHTML=navigationPanel(i)+detail(d,i);
   selectedLayer.clearLayers();
   const route=accommodation?.getDayRoute(i);
-  const coords=route?[route.from,...route.via,route.to].filter(Boolean).map(point=>[point.lat,point.lng]):d.points.map(k=>points[k].xy);
+  const coords=route?[route.from,...route.via,route.to].filter(point => point && hasCoordinates(point)).map(point=>[point.lat,point.lng]):d.points.map(k=>points[k].xy);
   const road=routeGeometry(i);
   if(focus)map.removeLayer(fullRouteLayer);
   if(road){
