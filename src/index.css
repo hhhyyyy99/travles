@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens from the legacy trip.css :root + one-off palette (note E §2),
+ * exposed to Tailwind v4 utilities. Named breakpoints are the legacy 720 /
+ * 1050 / 1500 px values (NOT Tailwind's defaults).
+ */
+@theme {
+  --color-ink: #202e2b;
+  --color-muted: #64716b;
+  --color-green: #236a51;
+  --color-line: #dce3de;
+  --color-paper: #f8faf9;
+  --color-red: #b75342;
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --breakpoint-sm: 720px;
+  --breakpoint-md: 1050px;
+  --breakpoint-lg: 1500px;
+}
+
+/*
+ * Legacy global element rules (note E §5) — kept as a base layer, not utilities.
+ */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 90px;
+  }
+  body {
+    margin: 0;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    line-height: 1.65;
+    letter-spacing: 0;
+  }
+  button,
+  a,
+  input,
+  summary {
+    -webkit-tap-highlight-color: transparent;
+  }
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+  button {
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    border: 0;
+    background: none;
+  }
+  button:focus-visible,
+  a:focus-visible,
+  summary:focus-visible,
+  input:focus-visible {
+    outline: 3px solid #d88551;
+    outline-offset: 4px;
+  }
+  svg {
+    width: 19px;
+    height: 19px;
+    stroke-width: 1.7;
+    flex-shrink: 0;
+  }
+  h1,
+  h2,
+  h3,
+  p {
+    margin: 0;
+  }
+  h2 {
+    font-size: 20px;
+  }
+  h3 {
+    font-size: 17px;
+  }
+  button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+}
+
+/* Legacy scroll-padding mobile override (trip.css L17) */
+@media (max-width: 720px) {
+  html {
+    scroll-padding-top: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
