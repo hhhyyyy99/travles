@@ -168,14 +168,25 @@ function updateAccommodationSummary(){
   });
   summary.innerHTML=groups.map(group=>`${escapeHtml(group.name)} ${group.count} 晚`).join(' → ')+'<small>10/2 · 10/7 · 10/3 · 10/4 · 10/5 · 10/6</small>';
 }
+function renderPrintItinerary(){
+  const target=document.getElementById('print-itinerary');
+  if(!target)return;
+  if(window.tibetAccommodationPrint?.render){
+    window.tibetAccommodationPrint.render({target,days,accommodation,roadRoutes:window.roadRoutes});
+    return;
+  }
+  target.innerHTML=days.map((d,i)=>`<article>${detail(d,i)}</article>`).join('');
+}
 function refreshAccommodationView(change={}){
   updateAccommodationSummary();
+  renderPrintItinerary();
   renderFullRoute();
   choose(selectedDay,false,{skipAmap:true});
   if(change.routeDays?.length)window.tibetAMap?.accommodationChanged(change.routeDays);
 }
 accommodation?.onChange(refreshAccommodationView);
 document.addEventListener('accommodationroutechange',()=>{
+  renderPrintItinerary();
   renderFullRoute();
   choose(selectedDay,false,{skipAmap:true});
 });
@@ -184,7 +195,7 @@ let saved=[];try{saved=JSON.parse(localStorage.getItem('hailar-slow-trip-checkli
 document.getElementById('checklist').innerHTML=checklist.map((t,i)=>`<label><input type="checkbox" value="${i}" ${saved.includes(i)?'checked':''}>${t}</label>`).join('');
 function updateChecks(){const values=[...document.querySelectorAll('.checklist input:checked')].map(e=>Number(e.value));document.getElementById('check-count').textContent=`${values.length} / 6`;try{localStorage.setItem('hailar-slow-trip-checklist-oct7-v2',JSON.stringify(values));}catch{document.getElementById('save-status').textContent='当前浏览器未允许保存，勾选仅在本页有效。';}}
 document.getElementById('checklist').addEventListener('change',updateChecks);updateChecks();
-document.getElementById('print-itinerary').innerHTML=days.map((d,i)=>`<article>${detail(d,i)}</article>`).join('');
+renderPrintItinerary();
 document.getElementById('print').onclick=()=>window.print();
 let detailOpenState=[];window.addEventListener('beforeprint',()=>{detailOpenState=[...document.querySelectorAll('details')].map(d=>d.open);document.querySelectorAll('details').forEach(d=>d.open=true);});window.addEventListener('afterprint',()=>document.querySelectorAll('details').forEach((d,i)=>d.open=detailOpenState[i]));
 const observer=new ResizeObserver(()=>{map.invalidateSize();});observer.observe(document.getElementById('route-map'));
