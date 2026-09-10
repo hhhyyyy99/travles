@@ -3,9 +3,7 @@
   if (!accommodation) return;
 
   const $ = id => document.getElementById(id);
-  const escape = value => String(value ?? '').replace(/[&<>"']/g, ch => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[ch]));
+  const escape = window.TibetAMapUtils.escapeHtml;
   const kindLabel = type => type === 'area' ? '住宿区域' : '酒店 / 民宿';
   let editingId = null;
 

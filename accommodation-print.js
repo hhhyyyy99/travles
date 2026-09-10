@@ -1,13 +1,7 @@
 (() => {
   const staleStatuses = new Set(['stale', 'pending', 'unupdated']);
 
-  const escape = value => String(value ?? '').replace(/[&<>"']/g, character => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  }[character]));
+  const escape = window.TibetAMapUtils.escapeHtml;
   const text = value => String(value ?? '').trim();
   const typeLabel = type => type === 'area' ? '住宿区域' : '酒店 / 民宿';
 

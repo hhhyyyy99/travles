@@ -43,9 +43,7 @@
   let mapMarkers = [];
 
   const $ = id => document.getElementById(id);
-  const escape = value => String(value ?? '').replace(/[&<>"']/g, ch => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[ch]));
+  const escape = window.TibetAMapUtils.escapeHtml;
   const kindLabel = kind => kind === 'area' ? '住宿区域' : '酒店 / 民宿';
   const copy = value => JSON.parse(JSON.stringify(value));
   const validCoordinate = (lat, lng) => Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
@@ -254,9 +252,10 @@
     // lodging route is requested so changing a base cannot drop the day's
     // actual sightseeing destination.
     if (index === 1 || index === 2) {
-      const pointKey = index === 1 ? 'erguna' : 'mordaoga';
-      const point = plan.points[pointKey];
-      via.push({id: `nav-${index}`, name: day.nav[1], routeName: day.nav[1], keyword: day.nav[1], lat: point.xy[0], lng: point.xy[1], isCustom: false});
+      // These live-route destinations are scenic keywords, not the nearby
+      // overnight town centers stored in plan.points. Keep them keyword-only
+      // until AMap resolves a real representative point.
+      via.push({id: `nav-${index}`, name: day.nav[1], routeName: day.nav[1], keyword: day.nav[1], city: day.cities?.[1], isCustom: false, keywordOnly: true});
     }
     return {from, to, via, stops: [from, ...via, to].filter(Boolean), hasCustomEndpoint: Boolean(from?.isCustom || to?.isCustom), hasChangedEndpoint: Boolean(from?.isChanged || to?.isChanged || from?.isCustom || to?.isCustom)};
   }
@@ -296,7 +295,7 @@
     const routeDays = plan.days
       .map((_, index) => index)
       .filter(index => before[index] !== routeSignature(getDayRoute(index)));
-    routeDays.forEach(index => routeStates.set(index, {status: 'stale'}));
+    normalizeRouteStatuses(routeDays, false);
     notify({type: 'restore', dayIndices: [...overnightDays], routeDays});
     return {ok: true, state: getState(), routeDays};
   }
@@ -318,6 +317,23 @@
       });
     });
     return [...affected].sort((a, b) => a - b);
+  }
+
+  function normalizeRouteStatuses(dayIndices, announce = true) {
+    const indices = [...new Set(dayIndices.map(Number))]
+      .filter(index => index >= 0 && index < plan.days.length);
+    const statuses = {};
+    indices.forEach(index => {
+      const status = getDayRoute(index)?.hasChangedEndpoint ? 'stale' : 'reference';
+      routeStates.set(index, {status});
+      statuses[index] = status;
+    });
+    if (announce && indices.length) {
+      document.dispatchEvent(new CustomEvent('accommodationroutechange', {
+        detail: {dayIndices: indices, status: 'synchronized', details: {statuses}}
+      }));
+    }
+    return indices;
   }
 
   function usedDaysForBase(id) {
@@ -425,6 +441,13 @@
     $('accommodation-map-picker')?.setAttribute('hidden', '');
     if (restoreAmapAfterPick) window.tibetAMap?.useReferenceMapForPicker(false);
     restoreAmapAfterPick = false;
+    const dialog = $('accommodation-dialog');
+    if (dialog && !dialog.open) {
+      if (dialog.showModal) dialog.showModal();
+      else dialog.removeAttribute('hidden');
+    }
+    setStatus('已取消地图选点，已保留当前填写内容。');
+    $('accommodation-pick-map')?.focus();
   }
 
   function startMapPick() {
@@ -437,8 +460,9 @@
     closeDialog();
     mapPickActive = true;
     $('accommodation-map-picker')?.removeAttribute('hidden');
-    $('accommodation-map-picker')?.focus();
     map.getContainer().classList.add('accommodation-picking');
+    map.getContainer().setAttribute('tabindex', '0');
+    map.getContainer().focus({preventScroll: true});
   }
 
   function completeMapPick(latlng) {
@@ -566,7 +590,7 @@
     const routeDays = affectedRoutes([index]);
     const result = commit(next, {type: 'restore', dayIndices: [index], routeDays});
     if (!result.ok) return result;
-    invalidateRoutes([index]);
+    normalizeRouteStatuses(routeDays);
     return {...result, changed: [index], dayIndices: [index], routeDays};
   }
 
@@ -631,10 +655,11 @@
   }
 
   function buildDialog() {
-    document.body.insertAdjacentHTML('beforeend', `<dialog id="accommodation-dialog" aria-labelledby="accommodation-dialog-title"><form id="accommodation-form"><div class="dialog-heading"><h2 id="accommodation-dialog-title">更换住宿</h2><button type="button" id="accommodation-close" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div><p class="accommodation-dialog-intro">自定义基地只保存在当前浏览器。必须确认地图位置后才能保存。</p><section class="accommodation-existing"><div class="accommodation-section-heading"><h3>已有住宿基地</h3><span id="accommodation-selected-label"></span></div><div id="accommodation-base-list"></div><button type="button" id="accommodation-apply-selected" class="accommodation-apply" disabled>应用到所选晚次</button></section><section class="accommodation-nights"><fieldset><legend>应用到住宿晚次</legend><div id="accommodation-night-choices"></div></fieldset><button type="button" id="accommodation-restore-night" class="accommodation-restore">恢复本晚默认住宿</button></section><section class="accommodation-editor" id="accommodation-editor" hidden><div class="accommodation-section-heading"><h3>新增住宿基地</h3><button type="button" id="accommodation-cancel-new">取消</button></div><label>基地名称<input id="accommodation-new-name" maxlength="120" autocomplete="off" required></label><label>类型<select id="accommodation-new-type"><option value="hotel">酒店 / 民宿</option><option value="area">住宿区域</option></select></label><label>详细地址（选填）<input id="accommodation-new-address" maxlength="240" autocomplete="street-address"></label><label>备注（选填）<textarea id="accommodation-new-notes" maxlength="600" rows="3"></textarea></label><div class="accommodation-location"><div><strong>地图位置</strong><span id="accommodation-location-summary">尚未在地图上选择位置</span></div><button type="button" id="accommodation-pick-map"><i data-lucide="crosshair"></i>在地图上选点</button></div><div class="accommodation-coordinates"><label>纬度<input id="accommodation-new-lat" inputmode="decimal" readonly required></label><label>经度<input id="accommodation-new-lng" inputmode="decimal" readonly required></label></div><div class="accommodation-editor-actions"><button type="button" id="accommodation-save-option">仅保存为备选</button><button type="button" id="accommodation-save-apply">保存并应用</button></div></section><p id="accommodation-dialog-status" role="status" aria-live="polite"></p></form></dialog><div id="accommodation-map-picker" tabindex="-1" role="status" hidden>请在地图上点击住宿代表位置 <button type="button" id="accommodation-cancel-pick">取消选点</button></div>`);
+    document.body.insertAdjacentHTML('beforeend', `<dialog id="accommodation-dialog" aria-labelledby="accommodation-dialog-title"><form id="accommodation-form"><div class="dialog-heading"><h2 id="accommodation-dialog-title">更换住宿</h2><button type="button" id="accommodation-close" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div><p class="accommodation-dialog-intro">自定义基地只保存在当前浏览器。必须确认地图位置后才能保存。</p><section class="accommodation-existing"><div class="accommodation-section-heading"><h3>已有住宿基地</h3><span id="accommodation-selected-label"></span></div><div id="accommodation-base-list"></div><button type="button" id="accommodation-apply-selected" class="accommodation-apply" disabled>应用到所选晚次</button></section><section class="accommodation-nights"><fieldset><legend>应用到住宿晚次</legend><div id="accommodation-night-choices"></div></fieldset><button type="button" id="accommodation-restore-night" class="accommodation-restore">恢复本晚默认住宿</button></section><section class="accommodation-editor" id="accommodation-editor" hidden><div class="accommodation-section-heading"><h3>新增住宿基地</h3><button type="button" id="accommodation-cancel-new">取消</button></div><label>基地名称<input id="accommodation-new-name" maxlength="120" autocomplete="off" required></label><label>类型<select id="accommodation-new-type"><option value="hotel">酒店 / 民宿</option><option value="area">住宿区域</option></select></label><label>详细地址（选填）<input id="accommodation-new-address" maxlength="240" autocomplete="street-address"></label><label>备注（选填）<textarea id="accommodation-new-notes" maxlength="600" rows="3"></textarea></label><div class="accommodation-location"><div><strong>地图位置</strong><span id="accommodation-location-summary">尚未在地图上选择位置</span></div><button type="button" id="accommodation-pick-map"><i data-lucide="crosshair"></i>在地图上选点</button></div><div class="accommodation-coordinates"><label>纬度<input id="accommodation-new-lat" inputmode="decimal" readonly required></label><label>经度<input id="accommodation-new-lng" inputmode="decimal" readonly required></label></div><div class="accommodation-editor-actions"><button type="button" id="accommodation-save-option">仅保存为备选</button><button type="button" id="accommodation-save-apply">保存并应用</button></div></section><p id="accommodation-dialog-status" role="status" aria-live="polite"></p></form></dialog><div id="accommodation-map-picker" tabindex="-1" role="status" hidden><span>拖动地图或使用方向键平移，按 Enter 确认地图中心。</span><button type="button" id="accommodation-confirm-pick">使用地图中心位置</button><button type="button" id="accommodation-cancel-pick">取消选点</button></div>`);
     $('accommodation-close').onclick = closeDialog;
     $('accommodation-cancel-new').onclick = () => { resetEditor(); renderBaseList(); };
     $('accommodation-pick-map').onclick = startMapPick;
+    $('accommodation-confirm-pick').onclick = () => completeMapPick(map.getCenter());
     $('accommodation-cancel-pick').onclick = cancelMapPick;
     $('accommodation-save-option').onclick = () => saveNew(false);
     $('accommodation-save-apply').onclick = () => saveNew(true);
@@ -659,7 +684,19 @@
       const button = event.target.closest('[data-accommodation-open]');
       if (button) openDialog(Number(button.dataset.accommodationOpen));
     });
-    document.addEventListener('keydown', event => { if (event.key === 'Escape' && mapPickActive) { event.preventDefault(); cancelMapPick(); } });
+    document.addEventListener('keydown', event => {
+      if (!mapPickActive) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelMapPick();
+        return;
+      }
+      const mapContainer = map?.getContainer();
+      if ((event.key === 'Enter' || event.key === ' ') && event.target === mapContainer) {
+        event.preventDefault();
+        completeMapPick(map.getCenter());
+      }
+    });
     window.lucide?.createIcons();
   }
 

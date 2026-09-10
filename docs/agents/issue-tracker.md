@@ -10,6 +10,13 @@ Issues and specs for this repo live as markdown files in `.scratch/`.
 - Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
 
+Implementation ticket lifecycle
+
+- Implementation tickets start with the triage status `ready-for-agent`.
+- When an agent begins work, it may claim the ticket by changing `Status:` to `claimed`; this is a work-state transition, not a new triage label.
+- When the ticket is complete, change `Status:` to `resolved` and append an `## Answer` section with the delivered behavior and verification evidence. Completed implementation tickets remain `resolved`; they do not need to be changed back to `ready-for-agent`.
+- The `claimed`/`resolved` states apply to implementation tickets in addition to the wayfinding child-ticket lifecycle below. Keep the existing `Status:` line rather than adding a second status field.
+
 ## When a skill says "publish to the issue tracker"
 
 Create a new file under `.scratch/<feature-slug>/` (creating the directory if needed).

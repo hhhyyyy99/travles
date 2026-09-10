@@ -2,9 +2,7 @@
   const accommodation = window.tibetAccommodation;
   if (!accommodation) return;
 
-  const escape = value => String(value ?? '').replace(/[&<>"']/g, character => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[character]));
+  const escape = window.TibetAMapUtils.escapeHtml;
   const $ = id => document.getElementById(id);
   let pending = null;
 

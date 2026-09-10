@@ -6,7 +6,7 @@
   let accommodationGeneration = 0;
   const accommodationRequests = new Map();
   const overrides = new Map();
-  const escape = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  const escape = utils.escapeHtml;
   const routePanel = document.querySelector('.route-panel');
   routePanel.insertAdjacentHTML('afterbegin', `<div class="trip-map-toolbar"><span id="amap-state" role="status">高德未配置 · 当前为参考地图</span><div><label><input id="traffic-toggle" type="checkbox" checked disabled>实时路况</label><button id="amap-refresh" title="刷新路线时间与路况" aria-label="刷新路线时间与路况" disabled><i data-lucide="refresh-cw"></i></button><button id="amap-settings" title="配置高德地图" aria-label="配置高德地图"><i data-lucide="settings-2"></i></button></div></div>`);
   document.querySelector('.map-wrap').insertAdjacentHTML('afterbegin', '<div id="amap-canvas" aria-label="高德地图与实时交通" hidden></div>');
@@ -157,7 +157,7 @@
         const position=(point,name)=>`${point.getLng?.() ?? point.lng ?? point[0]},${point.getLat?.() ?? point.lat ?? point[1]},${name}`;
         const params=new URLSearchParams({mode:'car',policy:'1',callnative:'1',src:'hailar-slow-trip',to:position(path.at(-1),$('route-to').value)});
         const route=accommodationRoute(selectedDay);
-        const via=route?.via?.[0];
+        const via=route?.via?.find(stop => Number.isFinite(Number(stop?.lat)) && Number.isFinite(Number(stop?.lng)));
         if(via){const xy=coordtransform.wgs84togcj02(via.lng,via.lat);params.set('via',`${xy[0]},${xy[1]},${via.name}`);}
         const currentLink=document.querySelector('.navigation-current');
         if(currentLink)currentLink.href=`https://uri.amap.com/navigation?${params}`;
@@ -342,12 +342,26 @@
     return true;
   }
   function recalculateAccommodation(dayIndices) {
+    // A lodging edit/import/restore invalidates normal and whole-trip queries
+    // too. Their callbacks use requestId, while accommodation legs use the
+    // separate generation token below.
+    requestId++;
+    clearTimeout(queryTimer);
     if (!map) return false;
     const days = [...new Set(dayIndices.map(Number))]
       .filter(index => index >= 0 && index < window.tibetTrip.days.length)
       .filter(index => window.tibetAccommodation?.getDayRoute(index)?.hasChangedEndpoint);
     const generation=++accommodationGeneration;
-    if (!days.length) return true;
+    if (!days.length) {
+      clearRoute();
+      if (wholeTrip) {
+        window.tibetTrip?.showOverviewTimes?.();
+      } else {
+        renderForm();
+        status('当前住宿使用默认路线，可按需刷新高德路况。');
+      }
+      return true;
+    }
     window.tibetAccommodation?.markRouteStatus(days, 'pending');
     days.forEach(index=>queryAccommodationRoute(index,generation));
     return true;
