@@ -41,7 +41,6 @@ test('route failure retains accommodation and marks estimates unavailable', asyn
     assert.match(await page.locator('#day-detail .route-estimate').innerText(), /未更新/);
   } finally {await guide.close();}
 });
-
 test('late responses cannot replace a newer accommodation route or change the selected day', async () => {
   const guide=await openGuide({init:installAMapStub});
   try {
