@@ -1,6 +1,9 @@
 (function(root) {
   const statuses = ['畅通', '缓行', '拥堵', '严重拥堵', '未知'];
   const colors = {'畅通':'#259b57','缓行':'#dfaa23','拥堵':'#e44b45','严重拥堵':'#a41d32','未知':'#8b949b'};
+  const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[character]));
   function duration(seconds) {
     if (seconds == null || seconds === '' || !Number.isFinite(Number(seconds)) || Number(seconds) < 0) return '暂无时间';
     const minutes = Math.max(1, Math.ceil(Number(seconds) / 60));
@@ -22,7 +25,7 @@
     totals['未知'] += Math.max(0, (Number(route.distance)||0) - accounted);
     return {totals, segments, known:statuses.slice(0,4).some(s => totals[s] > 0)};
   }
-  const api = {statuses, colors, duration, traffic};
+  const api = {statuses, colors, duration, traffic, escapeHtml};
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.TibetAMapUtils = api;
 })(typeof window === 'object' ? window : globalThis);

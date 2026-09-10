@@ -4,6 +4,7 @@ const isGithubActions = process.env.GITHUB_ACTIONS || false;
 
 const nextConfig = {
   reactStrictMode: true,
+  env: { NEXT_PUBLIC_BASE_PATH: isGithubActions ? '/tibet-road-trip-guide' : '' },
   // 当指定导出或处于 GitHub Actions 时启用纯静态导出
   ...(isExport ? { output: 'export' } : {}),
   basePath: isGithubActions ? '/tibet-road-trip-guide' : '',
