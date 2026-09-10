@@ -90,8 +90,11 @@ async function startViteApp({ mode } = {}) {
  * - 8s default timeout
  * - optional init script injected before navigation
  * - default entry /app.html; appMode from process.env.APP_MODE (default 'dev')
+ * - `amapConfig404`: force /amap-config.js to 404 (dev serves the gitignored
+ *   root file, so the no-config path needs explicit 404 in dev; preview 404s
+ *   it naturally)
  */
-async function openApp({ mode, init, viewport, entry = '/app.html' } = {}) {
+async function openApp({ mode, init, viewport, entry = '/app.html', amapConfig404 = false } = {}) {
   const server = await startViteApp({ mode });
   let browser;
   try {
@@ -104,6 +107,10 @@ async function openApp({ mode, init, viewport, entry = '/app.html' } = {}) {
     await page.route('**/*', (route) =>
       route.request().url().startsWith(server.url) ? route.continue() : route.abort(),
     );
+    // Registered after the catch-all: Playwright matches routes LIFO.
+    if (amapConfig404) {
+      await page.route('**/amap-config.js', (route) => route.fulfill({ status: 404, body: '' }));
+    }
     if (init) await page.addInitScript(init);
     await page.goto(`${server.url}${entry}`);
     return {
