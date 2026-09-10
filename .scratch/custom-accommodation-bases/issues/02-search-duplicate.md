@@ -24,3 +24,7 @@ Status: resolved
 
 - `node --test tests/*.test.cjs`：7 passed。
 - `NODE_PATH=... PLAYWRIGHT_CHROMIUM_EXECUTABLE=... node --test tests/accommodation-search.browser.cjs`：3 passed，包含移动视口和 Enter 键搜索。
+
+## Comments
+
+最终集成验收：修复提交 a4dc701、合并提交 e1d21c6；8 项 Node 测试及 18 项浏览器测试全部通过。PR：https://github.com/hhhyyyy99/tibet-road-trip-guide/pull/1。

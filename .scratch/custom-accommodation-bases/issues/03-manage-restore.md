@@ -22,3 +22,7 @@ Status: resolved
 新增独立 `accommodation-manager.js` 与样式文件，提供使用中/备选/默认基地分组、关联晚次、编辑、替换入口、删除保护及逐晚恢复默认。每日住宿选择器也提供恢复本晚默认住宿操作。
 
 验证：Node 内置测试 3/3 通过；Playwright 浏览器冒烟覆盖共享两晚编辑、坐标修改后的路线未更新状态、使用中删除保护、逐晚恢复、删除备选及默认基地只读，已通过。浏览器测试文件为 `tests/accommodation-manager.browser.cjs`，依赖实现分支提供的共享浏览器 helper。
+
+## Comments
+
+最终集成验收：修复提交 a4dc701、合并提交 e1d21c6；8 项 Node 测试及 18 项浏览器测试全部通过。PR：https://github.com/hhhyyyy99/tibet-road-trip-guide/pull/1。

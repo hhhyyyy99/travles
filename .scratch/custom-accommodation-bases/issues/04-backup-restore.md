@@ -19,3 +19,7 @@ Status: resolved
 Implemented on branch `codex/accommodation-04`. Added strict v1 backup validation and atomic `getBackup`/`validateBackup`/`replaceState` APIs, plus an independent export/import dialog with preview and explicit whole-state replacement. The backup contains only custom bases and all overnight base references, including defaults; app configuration and map credentials are excluded. Invalid files, dangling references, cancellation, and local-storage write failures preserve the current state. Restored endpoint changes mark only affected route legs stale so the existing route integration can recalculate them.
 
 Evidence: `node --check accommodation.js`; `node --check accommodation-backup.js`; `node --test tests/amap-utils.test.cjs` (3 passed); `NODE_PATH=... PLAYWRIGHT_CHROMIUM_EXECUTABLE=... node --test tests/accommodation-backup.browser.cjs` (1 passed). The browser flow covered export, preview, whole replacement, reload persistence, unknown version, dangling reference, cancellation, strict coordinate rejection, and storage failure.
+
+## Comments
+
+最终集成验收：修复提交 a4dc701、合并提交 e1d21c6；8 项 Node 测试及 18 项浏览器测试全部通过。PR：https://github.com/hhhyyyy99/tibet-road-trip-guide/pull/1。

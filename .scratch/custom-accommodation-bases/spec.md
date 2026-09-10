@@ -1,8 +1,8 @@
 # 支持用户自定义添加住宿基地
 
-Status: ready-for-agent
+Status: resolved
 
-需求及五张纵向票的拆分已确认，发布到本地 Markdown tracker。
+五张纵向票已完成，并通过集成测试与代码审查修复。
 
 ## Problem Statement
 
@@ -86,8 +86,10 @@ Status: ready-for-agent
 
 ## Further Notes
 
-- 用户已逐项接受以上产品范围。本次交付为规格，不代表已开始或完成实现。
+- 已完成票 01–05；最终代码修复提交为 a4dc701，集成提交为 e1d21c6。
 - 本文沿用项目“住宿基地”“行程”“每日住宿”“路线”等用语。
-- 当前工作树已有用户修改；实施时必须在现有内容基础上集成，避免覆盖未提交工作。
-- 项目已配置本地 Markdown tracker；五张实施票各自保存，状态为 ready-for-agent。票 01 无阻塞，票 02–05 仅被票 01 阻塞。
-- 未创建远程 issue，未修改应用代码。
+- 实现以当前呼伦贝尔行程快照 4356510 为基线，保留原有行程改动。
+- 本地 Markdown tracker 的五张实施票均为 resolved；原依赖关系保留以便追溯。
+- PR：https://github.com/hhhyyyy99/tibet-road-trip-guide/pull/1。没有对应的远程 issue 编号。
+- 验收：8 项 Node 测试、18 项浏览器测试通过，未跳过用例。高德服务通过符合接口契约的可控响应验收；未使用真实密钥进行线上服务验证。
+- 界面已检查 1280px 桌面与 390px 手机视口；打印已检查 A4 分页与长文本。

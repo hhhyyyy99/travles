@@ -22,3 +22,7 @@ Status: resolved
 Implemented on branch `codex/accommodation-01`. The new accommodation API persists validated custom bases and per-night references, supports Leaflet map picking, multi-night assignment, default restoration, synchronized stay/map/summary rendering, stale-route suppression, and AMap recalculation with request-version protection. D1/D2 route stops preserve the scenic destinations from the approved route contract.
 
 Evidence: `node --check accommodation.js trip.js amap-integration.js`; `node --test` (3 existing tests passed); isolated browser smoke flow at `http://127.0.0.1:4190/index.html` confirmed map pick at `49.300000,119.700000`, multi-night assignment, reload persistence, base count, and `路线未更新` for affected legs. Extension seam: `/private/tmp/accommodation-extension-notes.md`.
+
+## Comments
+
+最终集成验收：修复提交 a4dc701、合并提交 e1d21c6；8 项 Node 测试及 18 项浏览器测试全部通过。PR：https://github.com/hhhyyyy99/tibet-road-trip-guide/pull/1。

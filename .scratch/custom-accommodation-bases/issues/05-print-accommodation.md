@@ -19,3 +19,7 @@ Status: resolved
 Implemented on branch `codex/accommodation-05` in the ticket implementation commit. The print view now renders from the current accommodation API state, shows each effective overnight base with its name, optional address, optional notes, area representative-position disclosure, and route status. Unused backup bases and stale route estimates are excluded from the printed itinerary. The print-only stylesheet removes maps, editing controls, and management UI, adds wrapping and pagination rules, and supports browser print / Save as PDF.
 
 Evidence: `npm test` passed 3 tests; `tests/accommodation-print.browser.cjs` passed in desktop and mobile print media, with long text and overflow assertions. An A4 PDF rendered to 6 pages; pages 1, 2, and 6 were visually inspected for pagination, route status, area disclaimers, long accommodation fields, and uncropped text. The complete browser suite on this isolated ticket branch still has five failures in the separate route/core acceptance flows that depend on other integration work.
+
+## Comments
+
+最终集成验收：修复提交 a4dc701、合并提交 e1d21c6；8 项 Node 测试及 18 项浏览器测试全部通过。PR：https://github.com/hhhyyyy99/tibet-road-trip-guide/pull/1。
