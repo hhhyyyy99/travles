@@ -59,6 +59,8 @@ test('manager keeps default bases immutable and restores a single night', async 
 
     await page.locator('[data-manager-restore="1"]').last().click();
     await page.waitForFunction(() => window.tibetAccommodation.getDayStay(1).id === 'default-erguna');
+    await page.locator('#accommodation-manager-close').click();
+    await page.locator('[data-day="1"]').click();
     assert.match(await page.locator('#day-detail .stay-card').innerText(), /额尔古纳/);
   } finally {
     await guide.close();
