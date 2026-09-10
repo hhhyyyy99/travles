@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-Status: ready-for-agent
+Status: claimed
 
 - [ ] 选择兼容的 React、TypeScript、Vite 与 Tailwind CSS 版本，声明 Node 要求并锁定依赖；提供开发、独立严格类型检查、构建及预览命令。
 - [ ] 先保留旧入口及原有功能，为新版提供可验收入口；新旧实现不得在同一页面竞争 DOM 或同时写入业务状态。必要的兼容改造在迁移调用方之前完成。
