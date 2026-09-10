@@ -3,6 +3,8 @@
   const utils = window.TibetAMapUtils;
   let map, trafficLayer, overlays = [], selectedDay = 0, wholeTrip = false;
   let requestId = 0, queryTimer, refreshTimer, loading = false;
+  let accommodationGeneration = 0;
+  const accommodationRequests = new Map();
   const overrides = new Map();
   const escape = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const routePanel = document.querySelector('.route-panel');
@@ -86,6 +88,10 @@
   function routeStops(dayIndex) {
     const d = window.tibetTrip.days[dayIndex];
     const route = accommodationRoute(dayIndex);
+    if (overrides.has(dayIndex)) {
+      const names = overrides.get(dayIndex);
+      return [{keyword:names[0],city:d.cities[0]},...(d.via||[]).map(s=>({...s})),{keyword:names[1],city:d.cities[1]}];
+    }
     if (!route?.hasChangedEndpoint) return [{keyword:d.nav[0],city:d.cities[0]},...(d.via||[]).map(s=>({...s})),{keyword:d.nav[1],city:d.cities[1]}];
     return route.stops.map((stop, index) => {
       const result = {keyword:stop.keyword || stop.name, city:d.cities[Math.min(index, d.cities.length - 1)] || d.cities[0]};
@@ -119,8 +125,17 @@
     if (!Array.isArray(path) || path.length < 2) return;
     overlays.push(new AMap.Polyline({path, strokeColor:color, strokeWeight:weight, isOutline:true, outlineColor:'#fff', borderWeight:1, lineJoin:'round', zIndex:60}));
   }
-  function showRoute(route, result) {
+  function routePathWgs84(route) {
+    return (route.steps || []).flatMap(step => step.path || []).map(point => {
+      const lng=point.getLng?.() ?? point.lng ?? point[0];
+      const lat=point.getLat?.() ?? point.lat ?? point[1];
+      const [wgsLng,wgsLat]=coordtransform.gcj02towgs84(Number(lng),Number(lat));
+      return [wgsLat,wgsLng];
+    }).filter(point => point.every(Number.isFinite));
+  }
+  function showRoute(route, result, routeDay = selectedDay) {
     const path = (route.steps || []).flatMap(step => step.path || []);
+    const routeCoordinates=routePathWgs84(route);
     line(path, utils.colors['未知']);
     const traffic = utils.traffic(route);
     const queryTime=new Date().toLocaleTimeString('zh-CN',{hour12:false});
@@ -154,8 +169,8 @@
     if (overlays.length) map.setFitView(overlays, false, wholeTrip?(innerWidth<720?[100,45,210,45]:[90,55,70,230]):[70,55,70,55]);
     const timestamp = new Date().toLocaleString('zh-CN', {hour12:false});
     status(`高德路线查询成功 · ${timestamp}（本地时间）`);
-    const accommodationState=accommodationRoute(selectedDay);
-    if(!wholeTrip && accommodationState?.hasChangedEndpoint)window.tibetAccommodation?.markRouteStatus([selectedDay], 'updated', {distance:Number(route.distance), duration:Number(route.time), durationText:utils.duration(route.time)});
+    const accommodationState=accommodationRoute(routeDay);
+    if(!wholeTrip && accommodationState?.hasChangedEndpoint)window.tibetAccommodation?.markRouteStatus([routeDay], 'updated', {distance:Number(route.distance), duration:Number(route.time), durationText:utils.duration(route.time), coordinates:routeCoordinates});
     const rows = Object.entries(traffic.totals).filter(([,distance])=>distance>0);
     $('live-results').innerHTML = `<div class="live-metrics"><div><span>预计驾驶</span><strong>${utils.duration(route.time)}</strong></div><div><span>路线距离</span><strong>${(Number(route.distance)/1000).toFixed(1)} km</strong></div><div><span>路况数据</span><strong>${traffic.known?'已返回分段路况':'暂无覆盖'}</strong></div></div><div class="traffic-summary">${rows.map(([name,distance])=>`<span><b style="background:${utils.colors[name]}"></b>${name} ${(distance/1000).toFixed(1)} km</span>`).join('')}</div><p class="resolved-endpoints">${escape(result.start?.name || $('route-from').value)} → ${escape(result.end?.name || $('route-to').value)}。请核对具体入口；可修改上方酒店或航站楼名称重新规划。</p><details class="road-details"><summary>沿途道路与转向</summary><ol>${(route.steps||[]).map(step=>`<li><strong>${escape(step.road || '连接道路')}</strong><span>${escape(step.instruction || '')}</span></li>`).join('')}</ol></details>`;
   }
@@ -289,33 +304,73 @@
     }
     connect({key:$('amap-key').value.trim(),securityJsCode:$('amap-security').value.trim()});
   };
-  function recalculateAccommodation(dayIndices) {
+  function queryAccommodationRoute(dayIndex, generation) {
     if (!map) return false;
-    const days = [...new Set(dayIndices.map(Number))].filter(index => index >= 0 && index < window.tibetTrip.days.length);
-    if (!days.length) return true;
-    window.tibetAccommodation?.markRouteStatus(days, 'pending');
-    const originalDay = selectedDay;
-    const originalWholeTrip = wholeTrip;
-    let cursor = 0;
-    const next = () => {
-      if (cursor >= days.length) {
-        selectedDay = originalDay;
-        wholeTrip = originalWholeTrip;
-        renderForm();
-        query();
+    const token=Symbol(`accommodation-${dayIndex}`);
+    accommodationRequests.set(dayIndex,{token,generation});
+    const current=()=>accommodationRequests.get(dayIndex)?.token===token && accommodationGeneration===generation;
+    const driving=new AMap.Driving({extensions:'all',policy:AMap.DrivingPolicy.REAL_TRAFFIC});
+    const stops=routeStops(dayIndex);
+    if(dayIndex===selectedDay && !wholeTrip){
+      clearRoute();
+      renderForm();
+      status('正在获取高德路线、预计驾驶时间与路况…');
+    }
+    const timer=setTimeout(()=>{
+      if(!current())return;
+      accommodationRequests.delete(dayIndex);
+      if(dayIndex===selectedDay && !wholeTrip)status('路线查询超时，请刷新重试；暂不显示时间与路况。');
+      window.tibetAccommodation?.markRouteStatus([dayIndex],'unupdated');
+    },20000);
+    const onResult=(state,result)=>{
+      if(!current())return;
+      clearTimeout(timer);
+      accommodationRequests.delete(dayIndex);
+      if(state!=='complete'||!result?.routes?.length){
+        if(dayIndex===selectedDay && !wholeTrip)status('未取得路线。请检查地点名称、Key 服务权限与配额，然后刷新重试。');
+        window.tibetAccommodation?.markRouteStatus([dayIndex],'unupdated');
         return;
       }
-      selectedDay = days[cursor++];
-      wholeTrip = false;
-      query(next);
+      if(dayIndex===selectedDay && !wholeTrip){
+        showRoute(result.routes[0],result,dayIndex);
+      }else{
+        const route=result.routes[0];
+        window.tibetAccommodation?.markRouteStatus([dayIndex],'updated',{distance:Number(route.distance),duration:Number(route.time),durationText:utils.duration(route.time),coordinates:routePathWgs84(route)});
+      }
     };
-    next();
+    try{searchRoute(driving,stops,onResult);}catch{onResult('error',null);}
+    return true;
+  }
+  function recalculateAccommodation(dayIndices) {
+    if (!map) return false;
+    const days = [...new Set(dayIndices.map(Number))]
+      .filter(index => index >= 0 && index < window.tibetTrip.days.length)
+      .filter(index => window.tibetAccommodation?.getDayRoute(index)?.hasChangedEndpoint);
+    const generation=++accommodationGeneration;
+    if (!days.length) return true;
+    window.tibetAccommodation?.markRouteStatus(days, 'pending');
+    days.forEach(index=>queryAccommodationRoute(index,generation));
+    return true;
+  }
+  function useReferenceMapForPicker(reference) {
+    const wrapper=document.querySelector('.map-wrap');
+    if(!map||!wrapper)return false;
+    if(reference){
+      $('amap-canvas').hidden=true;
+      wrapper.classList.remove('amap-active');
+      window.tibetTrip.getMap()?.invalidateSize();
+    }else{
+      $('amap-canvas').hidden=false;
+      wrapper.classList.add('amap-active');
+      map.resize?.();
+    }
     return true;
   }
   window.tibetAMap = {
     select(index) {selectedDay=index;wholeTrip=false;renderForm();if(map)query();},
     overview() {if(!map)return false;wholeTrip=true;query();return true;},
-    accommodationChanged(dayIndices) { return recalculateAccommodation(dayIndices); }
+    accommodationChanged(dayIndices) { return recalculateAccommodation(dayIndices); },
+    useReferenceMapForPicker
   };
   window.addEventListener('beforeunload',()=>{clearInterval(refreshTimer);clearTimeout(queryTimer);map?.destroy();});
   const config=window.TIBET_AMAP_CONFIG;

@@ -37,6 +37,7 @@
   let editing = false;
   let map = null;
   let mapPickActive = false;
+  let restoreAmapAfterPick = false;
   let mapMarkers = [];
 
   const $ = id => document.getElementById(id);
@@ -57,8 +58,11 @@
     if (!value || typeof value !== 'object') return null;
     const name = String(value.name || '').trim();
     const type = value.type === 'area' ? 'area' : 'hotel';
-    const lat = Number(value.lat);
-    const lng = Number(value.lng);
+    const latText = String(value.lat ?? '').trim();
+    const lngText = String(value.lng ?? '').trim();
+    if (!latText || !lngText) return null;
+    const lat = Number(latText);
+    const lng = Number(lngText);
     if (!name || !validCoordinate(lat, lng)) return null;
     return {
       id: String(value.id || idForBase()),
@@ -286,11 +290,21 @@
     else dialog?.setAttribute('hidden', '');
   }
 
+  function cancelMapPick() {
+    mapPickActive = false;
+    map?.getContainer().classList.remove('accommodation-picking');
+    $('accommodation-map-picker')?.setAttribute('hidden', '');
+    if (restoreAmapAfterPick) window.tibetAMap?.useReferenceMapForPicker(false);
+    restoreAmapAfterPick = false;
+  }
+
   function startMapPick() {
     if (!map) {
       setStatus('地图尚未就绪，暂时无法选择位置。');
       return;
     }
+    restoreAmapAfterPick = Boolean(document.querySelector('.map-wrap.amap-active'));
+    if (restoreAmapAfterPick) window.tibetAMap?.useReferenceMapForPicker(true);
     closeDialog();
     mapPickActive = true;
     $('accommodation-map-picker')?.removeAttribute('hidden');
@@ -310,6 +324,8 @@
     const dialog = $('accommodation-dialog');
     if (dialog?.showModal) dialog.showModal();
     else dialog?.removeAttribute('hidden');
+    if (restoreAmapAfterPick) window.tibetAMap?.useReferenceMapForPicker(false);
+    restoreAmapAfterPick = false;
     setStatus('位置已选择，填写名称后保存。');
   }
 
@@ -393,7 +409,7 @@
     mapMarkers = [];
     state.bases.forEach(base => {
       const marker = L.circleMarker([base.lat, base.lng], {radius: 7, color: '#fff', weight: 2, fillColor: '#8b654f', fillOpacity: .95, className: 'accommodation-marker'})
-        .addTo(map).bindTooltip(base.name, {direction: 'top'});
+        .addTo(map).bindTooltip(escape(base.name), {direction: 'top'});
       mapMarkers.push(marker);
     });
   }
@@ -409,7 +425,7 @@
     $('accommodation-close').onclick = closeDialog;
     $('accommodation-cancel-new').onclick = () => { resetEditor(); renderBaseList(); };
     $('accommodation-pick-map').onclick = startMapPick;
-    $('accommodation-cancel-pick').onclick = () => { mapPickActive = false; map?.getContainer().classList.remove('accommodation-picking'); $('accommodation-map-picker')?.setAttribute('hidden', ''); };
+    $('accommodation-cancel-pick').onclick = cancelMapPick;
     $('accommodation-save-option').onclick = () => saveNew(false);
     $('accommodation-save-apply').onclick = () => saveNew(true);
     $('accommodation-apply-selected').onclick = applySelected;
@@ -425,6 +441,7 @@
       const button = event.target.closest('[data-accommodation-open]');
       if (button) openDialog(Number(button.dataset.accommodationOpen));
     });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && mapPickActive) { event.preventDefault(); cancelMapPick(); } });
     window.lucide?.createIcons();
   }
 
