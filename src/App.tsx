@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -16,19 +16,17 @@ import {
 import { Checklist } from './components/Checklist'
 import { DaysPanel } from './components/DaysPanel'
 import { RoutePanel } from './components/RoutePanel'
+import { AccommodationDialog } from './components/AccommodationDialog'
 import { useAmapLive } from './hooks/useAmapLive'
+import { useAccommodation } from './hooks/useAccommodation'
+import { useRouteStates } from './hooks/useRouteStates'
+import { inUseBaseCount } from './domain/accommodation'
+import { legendForDay } from './domain/routeView'
 import { useRouteMap } from './hooks/useRouteMap'
 import type { RouteMapHandle } from './services/map'
-import { dayPointCoords, tripPlan } from './data/itinerary'
-import {
-  allRouteGeometries,
-  drawSelectedDay,
-  fitTrip,
-  focusDay,
-  renderFullRoute,
-  showTimeLabels,
-  staticRouteGeometry,
-} from './services/map'
+import { tripPlan } from './data/itinerary'
+import { allRouteGeometries, drawSelectedDay, fitTrip, focusDay, renderFullRoute, showTimeLabels } from './services/map'
+import { allRouteGeometries as allRouteGeometriesState, routeCoordsForDay, routeGeometry, summaryDistance, timeLabelForDay } from './domain/routeView'
 
 const OVERVIEW_LEGEND = '全程参考连线 · 非道路导航'
 
@@ -40,10 +38,28 @@ const OVERVIEW_LEGEND = '全程参考连线 · 非道路导航'
 export default function App() {
   const [selectedDay, setSelectedDay] = useState(0)
   const [overview, setOverview] = useState(true)
-  const [legend, setLegend] = useState(OVERVIEW_LEGEND)
+  const [mapHandle, setMapHandle] = useState<RouteMapHandle | null>(null)
   const amap = useAmapLive()
+  const { state: accommodationState, subscribe } = useAccommodation()
+  const routeStates = useRouteStates()
+  const accommodationCount = inUseBaseCount(accommodationState)
+  // trip.js:186 + refreshAccommodationView — the legend is DERIVED on every
+  // render (a stay change re-flips the selected day's copy without a click:
+  // 住宿已更换 · 路线未更新 → 高德路线已更新 as the re-query settles).
+  const legend = overview ? OVERVIEW_LEGEND : legendForDay(accommodationState, routeStates.states, selectedDay)
+
+  // Legacy `refreshAccommodationView` re-runs choose() on every change (day
+  // view returned, legend re-derived); here just leave the overview mode so the
+  // derived legend follows the route state (query wiring lives in AmapLive).
+  useEffect(() => subscribe(() => setOverview(false)), [subscribe])
 
   const mapHandleRef = useRef<RouteMapHandle | null>(null)
+
+  // The imperative map-drawing port keeps the latest accommodation/route state
+  // in a ref so `choose`/`fit` stay stable (recreating them on every route
+  // settle would re-trigger the map-ready callback and re-run the boot render).
+  const routeViewRef = useRef({ accommodationState, routeStates })
+  routeViewRef.current = { accommodationState, routeStates }
 
   // `options.skipAmap` mirrors trip.js choose(..., {skipAmap}) — the boot
   // render must not trigger a live AMap query (legacy boot order gotcha 1).
@@ -51,19 +67,19 @@ export default function App() {
     (day: number, focus = true, options?: { skipAmap?: boolean }) => {
       setSelectedDay(day)
       setOverview(false)
-      const road = staticRouteGeometry(day)
-      const coords = dayPointCoords(day)
-      setLegend(road ? '行程连线示意 · 非道路导航' : '市区目的地 · 高德实时规划路线')
+      const { accommodationState: acc, routeStates: rs } = routeViewRef.current
+      // trip.js:88/173 — the geometry + endpoint markers follow the
+      // accommodation route (updated coordinates when a changed endpoint has
+      // settled), falling back to the day's plan points.
+      const road = routeGeometry(acc, rs.states, day)
+      const coords = routeCoordsForDay(acc, day)
       if (!options?.skipAmap) amap.select(day)
       const handle = mapHandleRef.current
       if (!handle) return
       drawSelectedDay(handle, road, coords)
       if (focus) focusDay(handle, road ?? coords)
-      const estimate = tripPlan.estimates[day]
-      showTimeLabels(
-        handle,
-        road && estimate ? [{ index: day, title: estimate.title, time: estimate.time, coordinates: road }] : [],
-      )
+      const label = timeLabelForDay(acc, rs.states, day)
+      showTimeLabels(handle, label ? [label] : [])
     },
     [amap.select],
   )
@@ -72,10 +88,10 @@ export default function App() {
     // AMap whole-trip view takes precedence over the Leaflet fit (trip.js:193).
     if (amap.overview()) return
     setOverview(true)
-    setLegend(OVERVIEW_LEGEND)
     const handle = mapHandleRef.current
     if (!handle) return
-    const geometries = allRouteGeometries()
+    const { accommodationState: acc, routeStates: rs } = routeViewRef.current
+    const geometries = allRouteGeometriesState(acc, rs.states)
     renderFullRoute(handle, geometries)
     fitTrip(handle, geometries.flat())
     showTimeLabels(handle, [])
@@ -85,6 +101,7 @@ export default function App() {
   // day-0 detail rendered, no day focus, 全程 legend. skipAmap keeps the boot
   // AMap-free: the AMap panel connects later and runs its own day-0 query.
   const handleMapReady = useCallback(() => {
+    setMapHandle(mapHandleRef.current)
     choose(0, false, { skipAmap: true })
     fit()
   }, [choose, fit])
@@ -152,11 +169,11 @@ export default function App() {
           </span>
           <span className="flex items-center gap-[7px]">
             <CarFront aria-hidden="true" className="w-[17px] text-muted" />
-            <b id="distance-summary">约 1,000–1,100 km</b>
+            <b id="distance-summary">{summaryDistance(accommodationState, routeStates.states)}</b>
           </span>
           <span className="flex items-center gap-[7px]">
             <BedDouble aria-hidden="true" className="w-[17px] text-muted" />
-            <b id="accommodation-count">5</b> 处住宿基地
+            <b id="accommodation-count">{accommodationCount}</b> 处住宿基地
           </span>
           <span className="pace flex items-center gap-[7px] text-green ml-auto max-[720px]:m-0 max-[720px]:text-[10px]">
             <Coffee aria-hidden="true" className="w-[17px] text-muted max-[720px]:hidden" />
@@ -309,6 +326,7 @@ export default function App() {
           <ArrowUpRight aria-hidden="true" />
         </a>
       </footer>
+      <AccommodationDialog mapHandle={mapHandle} />
     </>
   )
 }

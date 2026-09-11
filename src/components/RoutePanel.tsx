@@ -2,6 +2,9 @@ import { Fragment, useRef, type FormEvent, type RefObject } from 'react'
 import { ArrowRight, RefreshCw, Scan } from 'lucide-react'
 import { tripPlan } from '../data/itinerary'
 import { useAmapLive } from '../hooks/useAmapLive'
+import { useAccommodation } from '../hooks/useAccommodation'
+import { useRouteStates } from '../hooks/useRouteStates'
+import { overviewTimesLabels } from '../domain/routeView'
 import { DayDetail } from './DayDetail'
 
 export interface RoutePanelProps {
@@ -77,10 +80,16 @@ const SUGGESTION_LIST = (() => {
  */
 export function RoutePanel({ containerRef, selectedDay, overview, legend, tileError, onFit, onSelectDay }: RoutePanelProps) {
   const amap = useAmapLive()
+  const { state: accommodationState } = useAccommodation()
+  const routeStates = useRouteStates()
   const day = tripPlan.days[selectedDay] ?? tripPlan.days[0]!
   const fromRef = useRef<HTMLInputElement | null>(null)
   const toRef = useRef<HTMLInputElement | null>(null)
   const formKey = `${selectedDay}-${amap.formFrom}-${amap.formTo}`
+  // trip.js:151–166 — reference estimates normally; changed-endpoint days show
+  // 路线未更新 / 待查询 while stale and the resolved endpoints + duration once
+  // the accommodation re-query settles.
+  const overviewLabels = overviewTimesLabels(accommodationState, routeStates.states)
 
   const submitEndpoints = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
@@ -120,8 +129,8 @@ export function RoutePanel({ containerRef, selectedDay, overview, legend, tileEr
           </button>
         </div>
       </div>
-      <div className={`map-wrap${amap.connected ? ' amap-active' : ''}`}>
-        <div id="amap-canvas" aria-label="高德地图与实时交通" hidden={!amap.connected} />
+      <div className={`map-wrap${amap.connected && !amap.pickMode ? ' amap-active' : ''}`}>
+        <div id="amap-canvas" aria-label="高德地图与实时交通" hidden={!amap.connected || amap.pickMode} />
         <div id="route-map" ref={containerRef} aria-label="海拉尔出发呼伦贝尔环线自驾路线地图" />
         <div className="map-title">
           <span>THE SLOW ROUTE</span>
@@ -146,14 +155,14 @@ export function RoutePanel({ containerRef, selectedDay, overview, legend, tileEr
         )}
         {showOverviewTimes && (
           <div id="overview-times">
-            {tripPlan.estimates.map((estimate) => (
+            {overviewLabels.map((label) => (
               <button
-                key={estimate.day}
-                data-route-day={estimate.day}
-                onClick={() => onSelectDay(estimate.day)}
+                key={label.day}
+                data-route-day={label.day}
+                onClick={() => onSelectDay(label.day)}
               >
-                <span>{estimate.title}</span>
-                <strong>{estimate.time}</strong>
+                <span>{label.title}</span>
+                <strong>{label.time}</strong>
               </button>
             ))}
             <small>行程预估 · 点击查看路段</small>

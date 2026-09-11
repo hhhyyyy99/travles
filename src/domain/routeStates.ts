@@ -146,13 +146,20 @@ export function rewriteScheduleRow(row: string, routeChanged: boolean): string {
   return routeChanged ? row.replace(/约[^，。]*驾驶/g, '路线未更新，待重新查询') : row
 }
 
+/** Route shape consumed by `describeRouteNote` for the area suffix (trip.js:54). */
+export interface RouteNoteRouteLike {
+  from?: { type?: string } | null
+  to?: { type?: string } | null
+}
+
 /**
- * `routeNote` (trip.js:56–60) — accommodation-absent branch for ticket 03;
- * ticket 04 threads the changed-endpoint area suffix through here.
+ * `routeNote` (trip.js:56–60). `route` threads the changed-endpoint area
+ * suffix `住宿区域按代表位置估算。` (present only in the stale branch).
  */
-export function describeRouteNote(state: RouteState, localDay: boolean): string {
+export function describeRouteNote(state: RouteState, localDay: boolean, route?: RouteNoteRouteLike | null): string {
   if (isStaleStatus(state.status)) {
-    return `住宿端点已变化，${state.status === 'pending' ? '正在重新查询路线。' : '当前没有可用的新路线结果，请连接高德地图后重试。'}`
+    const area = route?.from?.type === 'area' || route?.to?.type === 'area' ? '住宿区域按代表位置估算。' : ''
+    return `住宿端点已变化，${state.status === 'pending' ? '正在重新查询路线。' : '当前没有可用的新路线结果，请连接高德地图后重试。'}${area}`
   }
   if (localDay) return '当天不安排长途驾驶，景区内交通以观光车及酒店接驳为准。'
   return '起终点为区域参考位置，请在高德中确认酒店、景区入口或航站楼。手机可调起高德；当前位置导航需要手机定位。'
