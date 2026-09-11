@@ -7,11 +7,13 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:server": "pnpm --filter @hailar/server dev",
     "start": "pnpm run build && vite preview --port 4173",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && pnpm --filter @hailar/server typecheck",
     "build": "tsc --noEmit && vite build",
+    "build:server": "pnpm --filter @hailar/server build",
     "preview": "vite preview",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test tests/*.test.ts && pnpm --filter @hailar/server test",
     "test:browser": "node --test tests/app/*.browser.cjs",
     "test:app": "node --test tests/app/*.browser.cjs",
     "test:app:prod": "pnpm run build && APP_MODE=preview node --test tests/app/*.browser.cjs"
