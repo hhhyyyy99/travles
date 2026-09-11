@@ -11,6 +11,7 @@ import {
   type TripFormInput,
   type TripSummary,
 } from '../domain/tripList'
+import { migrateLegacyDataToServer } from '../domain/migration'
 
 /**
  * 行程列表页 (ticket 02) — default view of the app shell. Create / rename /
@@ -30,6 +31,7 @@ export default function TripListPage({ onOpenGuide }: { onOpenGuide: () => void 
   const [actionError, setActionError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<TripSummary | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [migrationNote, setMigrationNote] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     setLoadError(null)
@@ -41,6 +43,22 @@ export default function TripListPage({ onOpenGuide }: { onOpenGuide: () => void 
   useEffect(() => {
     void reload()
   }, [reload])
+
+  // Ticket 03: a browser with legacy guide data (checklist + accommodation in
+  // localStorage) migrates it into the built-in trip on first entry. The
+  // migration is idempotent (marker + fixed row ids) and silent on failure —
+  // it retries on the next visit, so the note only shows real success.
+  useEffect(() => {
+    let cancelled = false
+    void migrateLegacyDataToServer().then((result) => {
+      if (!cancelled && result.status === 'migrated' && result.tripTitle) {
+        setMigrationNote(`已把本浏览器的行前清单与住宿安排迁移到「${result.tripTitle}」。`)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -122,6 +140,11 @@ export default function TripListPage({ onOpenGuide }: { onOpenGuide: () => void 
         <section className="pt-[42px] pb-[30px] max-sm:pt-[28px] max-sm:pb-[22px]">
           <p className="eyebrow text-[11px] text-green font-[650] mb-[10px]">MY TRIPS · 行程管理</p>
           <h1 className="text-[42px] font-[600] leading-[1.3] max-[720px]:text-[34px]">每一次慢慢走的出发。</h1>
+          {migrationNote && (
+            <p id="migration-status" className="mt-[14px] text-[12px] text-muted border border-line rounded-[5px] bg-white px-[14px] py-[8px] inline-block">
+              {migrationNote}
+            </p>
+          )}
         </section>
 
         {/* 创建行程 */}

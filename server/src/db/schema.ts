@@ -3,7 +3,8 @@
  *
  * The spec §Implementation Decisions fixes the full table list once:
  * trips / days / items / legs / messages / checklist / notes / gallery /
- * stash / favorites / ai_providers. All tables are created up front so later
+ * stash / favorites / ai_providers (+ `app_meta`, ticket 03: startup-seed
+ * markers). All tables are created up front so later
  * tickets (chat, workbench, settings) never churn migrations; only `trips`
  * carries behavior this ticket.
  *
@@ -104,6 +105,11 @@ export const SCHEMA_STATEMENTS: string[] = [
     poi TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS app_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS ai_providers (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL DEFAULT '',
@@ -126,6 +132,7 @@ export const SCHEMA_STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_gallery_trip ON gallery(trip_id)`,
   `CREATE INDEX IF NOT EXISTS idx_stash_trip ON stash(trip_id)`,
   `CREATE INDEX IF NOT EXISTS idx_favorites_trip ON favorites(trip_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_items_day_order ON items(day_id, item_order)`,
 ]
 
 /** Create every table/index if missing and enable FK cascade deletes. */
