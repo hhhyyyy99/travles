@@ -11,6 +11,9 @@ import { seedBuiltinTrip } from './seed/seed.js'
 import { createSqliteWorkbenchStore } from './days/driver-sqlite.js'
 import { readTripCanvas } from './days/repository.js'
 import type { WorkbenchStoreDriver } from './days/types.js'
+import { DaysAdminRepository } from './days-admin/repository.js'
+import { createSqliteDaysAdminStore } from './days-admin/driver-sqlite.js'
+import type { DaysAdminStoreDriver } from './days-admin/types.js'
 import type { TripUpdate } from './trips/types.js'
 
 export type AppEnv = {
@@ -43,6 +46,13 @@ export type CreateAppOptions = {
    * a database file.
    */
   workbenchStore?: WorkbenchStoreDriver
+  /**
+   * Injected day-admin write store (ticket 10; tests use the in-memory
+   * driver). Defaults to the same SQLite database the trip repository opens,
+   * resolved lazily like `workbenchStore` so pure in-memory apps never open
+   * a database file.
+   */
+  daysAdminStore?: DaysAdminStoreDriver
 }
 
 /** Default SQLite location: <server>/data/trips.db (gitignored). */
@@ -82,6 +92,28 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     return workbenchStore
   }
 
+  // ---- Day-admin writes (ticket 10, additive) -------------------------------
+  // Create / theme-update / cascade-delete for workbench days. Resolved
+  // lazily like the workbench store; the default shares the same SQLite db.
+  let daysAdminStore = options.daysAdminStore ?? null
+  const resolveDaysAdminStore = async (): Promise<DaysAdminStoreDriver> => {
+    if (daysAdminStore) return daysAdminStore
+    if (!workbenchDb) {
+      if (options.workbenchStore) {
+        // The workbench store was injected (no db opened yet); open the
+        // default database ourselves, same rule as the workbench default.
+        const created = await createSqliteTripRepository(
+          options.databaseUrl ?? process.env.TRIPS_DB_PATH ?? defaultDatabaseUrl(),
+        )
+        workbenchDb = created.db
+      } else {
+        await resolveWorkbenchStore()
+      }
+    }
+    daysAdminStore = createSqliteDaysAdminStore(workbenchDb as NonNullable<typeof workbenchDb>)
+    return daysAdminStore
+  }
+
   let tripRepository: TripRepository
   let contentRepository: TripContentRepository | undefined
 
@@ -94,6 +126,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     )
     tripRepository = sqlite.repository
     contentRepository = sqlite.contentRepository
+    workbenchDb = sqlite.db
     workbenchStore = createSqliteWorkbenchStore(sqlite.db)
     if (options.seedBuiltinTrip ?? (options.databaseUrl === undefined)) {
       await seedBuiltinTrip(sqlite.db)
@@ -202,6 +235,51 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     if (trip === null) return c.json({ error: '行程不存在' }, 404)
     const canvas = await readTripCanvas(await resolveWorkbenchStore(), c.req.param('id'))
     return c.json({ trip, ...canvas })
+  })
+
+  // ---- Day management writes (ticket 10, additive) --------------------------
+  // POST   /api/trips/:id/days           create a day (next date / empty body OK)
+  // PATCH  /api/trips/:id/days/:dayId    update theme (and color)
+  // DELETE /api/trips/:id/days/:dayId    delete the day, its items and legs
+
+  app.post('/api/trips/:id/days', async (c) => {
+    const tripId = c.req.param('id')
+    const trip = await tripRepository.get(tripId)
+    if (trip === null) return c.json({ error: '行程不存在' }, 404)
+    // The body is optional for create-day (default: append after the last day).
+    const body = (await readJsonBody(c)) ?? {}
+    const result = await new DaysAdminRepository(await resolveDaysAdminStore()).createDay(tripId, {
+      date: body.date,
+      theme: body.theme,
+      color: body.color,
+    })
+    if (!result.ok) return tripError(c, result.error, result.code)
+    return c.json({ day: result.day }, 201)
+  })
+
+  app.patch('/api/trips/:id/days/:dayId', async (c) => {
+    const tripId = c.req.param('id')
+    const body = await readJsonBody(c)
+    if (body === null) return c.json({ error: '请求体必须是有效的 JSON' }, 400)
+    const patch: { theme?: unknown; color?: unknown } = {}
+    if ('theme' in body) patch.theme = body.theme
+    if ('color' in body) patch.color = body.color
+    const result = await new DaysAdminRepository(await resolveDaysAdminStore()).updateDay(
+      tripId,
+      c.req.param('dayId'),
+      patch,
+    )
+    if (!result.ok) return tripError(c, result.error, result.code)
+    return c.json({ day: result.day })
+  })
+
+  app.delete('/api/trips/:id/days/:dayId', async (c) => {
+    const result = await new DaysAdminRepository(await resolveDaysAdminStore()).deleteDay(
+      c.req.param('id'),
+      c.req.param('dayId'),
+    )
+    if (!result.ok) return tripError(c, result.error, result.code)
+    return c.json({ ok: true, removedItems: result.removedItems })
   })
 
   app.get('/api/health', (c) => {

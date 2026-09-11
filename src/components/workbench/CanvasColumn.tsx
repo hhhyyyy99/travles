@@ -1,10 +1,12 @@
 /**
- * 行程画布 (ticket 04, read-only) — horizontal per-day columns, day headers
- * (date + weekday + per-day accent color + theme) and the four card types
- * with cover image, order number and note; adjacent cards are joined by a
- * transport leg chip ("30.3 千米 · 31 分钟") rendered from server data only
- * (recomputation is ticket 09's job).
+ * 行程画布 (ticket 04, read-only; ticket 10 adds day management) — horizontal
+ * per-day columns, day headers (date + weekday + per-day accent color +
+ * editable theme) and the four card types with cover image, order number and
+ * note; adjacent cards are joined by a transport leg chip ("30.3 千米 ·
+ * 31 分钟") rendered from server data only. Day management: inline theme
+ * edit, day delete (confirm handled by the page), and an append-day button.
  */
+import { Trash2 } from 'lucide-react'
 import { Car } from 'lucide-react'
 import {
   CARD_TYPE_LABEL,
@@ -18,6 +20,7 @@ import {
   type WorkbenchItem,
   type WorkbenchLeg,
 } from '../../domain/workbench'
+import EditableTheme from './EditableTheme'
 
 const VISUAL_CLASSES = {
   traffic: {
@@ -38,7 +41,16 @@ const VISUAL_CLASSES = {
   },
 } as const
 
-export default function CanvasColumn({ days, legs }: { days: WorkbenchDay[]; legs: WorkbenchLeg[] }) {
+export type CanvasColumnProps = {
+  days: WorkbenchDay[]
+  legs: WorkbenchLeg[]
+  /** Ticket 10 day management — optional so the read-only usage keeps working. */
+  onAddDay?: () => void
+  onThemeSave?: (dayId: string, theme: string) => void
+  onDeleteDay?: (day: WorkbenchDay) => void
+}
+
+export default function CanvasColumn({ days, legs, onAddDay, onThemeSave, onDeleteDay }: CanvasColumnProps) {
   const legLookup = legsByPair(legs)
   return (
     <div id="workbench-canvas" className="h-full overflow-x-auto overflow-y-hidden bg-paper">
@@ -52,15 +64,42 @@ export default function CanvasColumn({ days, legs }: { days: WorkbenchDay[]; leg
           </p>
         )}
         {days.map((day) => (
-          <DayColumn key={day.id} day={day} legLookup={legLookup} />
+          <DayColumn
+            key={day.id}
+            day={day}
+            legLookup={legLookup}
+            onThemeSave={onThemeSave}
+            onDeleteDay={onDeleteDay}
+          />
         ))}
+        {onAddDay && (
+          <button
+            type="button"
+            data-action="add-day"
+            onClick={onAddDay}
+            className="flex h-[40px] shrink-0 items-center gap-[6px] self-start rounded-[6px] border border-dashed border-line bg-white px-[14px] text-[13px] text-muted hover:border-green hover:text-green transition-colors"
+          >
+            + 添加天
+          </button>
+        )}
       </div>
     </div>
   )
 }
 
-function DayColumn({ day, legLookup }: { day: WorkbenchDay; legLookup: Map<string, WorkbenchLeg> }) {
+function DayColumn({
+  day,
+  legLookup,
+  onThemeSave,
+  onDeleteDay,
+}: {
+  day: WorkbenchDay
+  legLookup: Map<string, WorkbenchLeg>
+  onThemeSave?: (dayId: string, theme: string) => void
+  onDeleteDay?: (day: WorkbenchDay) => void
+}) {
   const accent = dayAccentColor(day.color, day.index)
+  const dateLabel = dayDateLabel(day.date) || `D${day.index + 1}`
   return (
     <section
       data-canvas-day={day.id}
@@ -74,12 +113,29 @@ function DayColumn({ day, legLookup }: { day: WorkbenchDay; legLookup: Map<strin
             style={{ backgroundColor: accent }}
           />
           <span className="text-[14px] font-[600]" style={{ color: accent }}>
-            {dayDateLabel(day.date) || `D${day.index + 1}`}
+            {dateLabel}
           </span>
           <span className="text-[12px] text-muted">{weekdayLabel(day.date)}</span>
           <span className="ml-auto text-[11px] text-muted">D{day.index + 1}</span>
+          {onDeleteDay && (
+            <button
+              type="button"
+              data-action="delete-day"
+              data-day-id={day.id}
+              title={`删除 ${dateLabel}`}
+              aria-label={`删除天 ${dateLabel}`}
+              onClick={() => onDeleteDay(day)}
+              className="grid h-[22px] w-[22px] place-items-center rounded-[4px] text-muted hover:text-[#b75342] transition-colors"
+            >
+              <Trash2 aria-hidden="true" className="w-[13px]" />
+            </button>
+          )}
         </div>
-        {day.theme && <p className="mt-[6px] text-[13px] font-[550] text-ink">{day.theme}</p>}
+        {onThemeSave ? (
+          <EditableTheme dayId={day.id} theme={day.theme} onSave={onThemeSave} />
+        ) : (
+          day.theme && <p className="mt-[6px] text-[13px] font-[550] text-ink">{day.theme}</p>
+        )}
       </header>
       <div className="flex flex-1 flex-col gap-[10px] overflow-y-auto p-[12px]">
         {day.items.map((item, i) => (
@@ -93,7 +149,7 @@ function DayColumn({ day, legLookup }: { day: WorkbenchDay; legLookup: Map<strin
   )
 }
 
-function CanvasCard({ item, order, accent }: { item: WorkbenchItem; order: number; accent: string }) {
+export function CanvasCard({ item, order, accent }: { item: WorkbenchItem; order: number; accent: string }) {
   const visual = VISUAL_CLASSES[cardVisual(item.type)]
   const cover = item.images[0]?.url ?? null
   const isPlainText = item.poi === null && cover === null

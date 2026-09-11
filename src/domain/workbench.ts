@@ -69,6 +69,100 @@ export type TripCanvasData = {
 
 export const CANVAS_NETWORK_ERROR = '无法连接服务器，请确认后端服务已启动。'
 
+// ---------------------------------------------------------------------------
+// Day-management writes (ticket 10) — same result convention as the reads:
+// {ok:true,data} | {ok:false,error}, injectable FetchLike, never throws.
+// ---------------------------------------------------------------------------
+
+/** Optional payload for creating a day; omitted fields take server defaults. */
+export type WorkbenchDayInput = { date?: string; theme?: string; color?: string }
+
+/** Theme (and color) patch for an existing day. */
+export type WorkbenchDayPatch = { theme?: string; color?: string }
+
+/** Shared response handling for the three day-admin routes. */
+async function dayRequest(
+  url: string,
+  init: RequestInit,
+  fetchLike: FetchLike,
+): Promise<ApiResult<unknown>> {
+  let response: Response
+  try {
+    response = await fetchLike(url, init)
+  } catch {
+    return { ok: false, error: CANVAS_NETWORK_ERROR }
+  }
+  if (!response.ok) {
+    const message = ((await response.json().catch(() => null)) as { error?: unknown } | null)?.error
+    return { ok: false, error: typeof message === 'string' && message ? message : `请求失败（HTTP ${response.status}）` }
+  }
+  const payload = (await response.json().catch(() => null)) as unknown
+  if (payload === null || typeof payload !== 'object') return { ok: false, error: '服务器返回的数据无法解析。' }
+  return { ok: true, data: payload }
+}
+
+/**
+ * POST /api/trips/:id/days — append a day (server computes the next date, or
+ * '' when the trip has no dated days). Returns the created day with no items.
+ */
+export async function createWorkbenchDay(
+  tripId: string,
+  input: WorkbenchDayInput = {},
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<WorkbenchDay>> {
+  const result = await dayRequest(
+    `/api/trips/${encodeURIComponent(tripId)}/days`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+    fetchLike,
+  )
+  if (!result.ok) return result
+  const day = normalizeDay((result.data as { day?: unknown }).day)
+  if (day === null) return { ok: false, error: '服务器返回的日程数据无法解析。' }
+  return { ok: true, data: day }
+}
+
+/** PATCH /api/trips/:id/days/:dayId — update a day's theme (and color). */
+export async function updateWorkbenchDay(
+  tripId: string,
+  dayId: string,
+  patch: WorkbenchDayPatch,
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<WorkbenchDay>> {
+  const result = await dayRequest(
+    `/api/trips/${encodeURIComponent(tripId)}/days/${encodeURIComponent(dayId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    },
+    fetchLike,
+  )
+  if (!result.ok) return result
+  const day = normalizeDay((result.data as { day?: unknown }).day)
+  if (day === null) return { ok: false, error: '服务器返回的日程数据无法解析。' }
+  return { ok: true, data: day }
+}
+
+/** DELETE /api/trips/:id/days/:dayId — removes the day, its items and legs. */
+export async function deleteWorkbenchDay(
+  tripId: string,
+  dayId: string,
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<{ removedItems: number }>> {
+  const result = await dayRequest(
+    `/api/trips/${encodeURIComponent(tripId)}/days/${encodeURIComponent(dayId)}`,
+    { method: 'DELETE' },
+    fetchLike,
+  )
+  if (!result.ok) return result
+  const removed = (result.data as { removedItems?: unknown }).removedItems
+  return { ok: true, data: { removedItems: finiteNumber(removed) } }
+}
+
 /**
  * GET /api/trips/:id/canvas — read-only days/items/legs for the canvas.
  * Never throws; unparseable entries are dropped.

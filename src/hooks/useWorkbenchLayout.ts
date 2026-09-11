@@ -8,10 +8,12 @@ import { defaultStorage, type StorageLike } from '../domain/storage'
 import {
   readTripLayout,
   resizeAiColumn,
+  setWorkbenchView,
   toggleColumn,
   writeTripLayout,
   type ColumnId,
   type TripLayout,
+  type WorkbenchView,
 } from '../domain/workbenchLayout'
 
 export function useWorkbenchLayout(tripId: string, storage: StorageLike = defaultStorage()) {
@@ -43,5 +45,13 @@ export function useWorkbenchLayout(tripId: string, storage: StorageLike = defaul
     update,
   ])
 
-  return { layout, toggle, resizeAi }
+  // Center-column view (canvas/list) — remembered per trip (ticket 10).
+  const setView = useCallback(
+    (view: WorkbenchView) => {
+      update(setWorkbenchView(readTripLayout(storage, tripId), view))
+    },
+    [storage, tripId, update],
+  )
+
+  return { layout, toggle, resizeAi, setView }
 }
