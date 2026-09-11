@@ -277,6 +277,11 @@ test('dangling stay reference is rejected with the exact night message and data 
     await openBackupDialog(page);
     const dangling = backupPayload({ bases: [base('custom-dangling', '悬空民宿')], stays: { '1': 'missing-base' } });
     await importFile(page, 'dangling.json', dangling);
+    await page.waitForFunction(
+      () =>
+        document.querySelector('#accommodation-backup-status')?.textContent ===
+        '无法导入：第 2 晚引用了不存在的住宿基地。',
+    );
     assert.equal(
       await page.locator('#accommodation-backup-status').textContent(),
       '无法导入：第 2 晚引用了不存在的住宿基地。',

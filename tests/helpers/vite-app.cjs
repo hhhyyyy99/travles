@@ -42,7 +42,7 @@ function waitFor(url, { timeoutMs = 20000 } = {}) {
 
 /**
  * Starts a real Vite server (dev or preview) on 127.0.0.1 with a free port and
- * --strictPort, and waits until /app.html responds. Returns {url, port, close}.
+ * --strictPort, and waits until the root entry responds. Returns {url, port, close}.
  */
 async function startViteApp({ mode } = {}) {
   const appMode = mode || process.env.APP_MODE || 'dev';
@@ -66,7 +66,7 @@ async function startViteApp({ mode } = {}) {
   child.on('exit', () => (exited = true));
   const url = `http://${host}:${port}`;
   try {
-    await waitFor(`${url}/app.html`);
+    await waitFor(`${url}/`);
   } catch (error) {
     child.kill('SIGTERM');
     throw new Error(`${error.message}\nvite (${appMode}) logs:\n${logs}`);
@@ -89,12 +89,12 @@ async function startViteApp({ mode } = {}) {
  * - abort every non-127.0.0.1 request
  * - 8s default timeout
  * - optional init script injected before navigation
- * - default entry /app.html; appMode from process.env.APP_MODE (default 'dev')
+ * - default entry / (ticket 09 cutover; appMode from process.env.APP_MODE (default 'dev'))
  * - `amapConfig404`: force /amap-config.js to 404 (dev serves the gitignored
  *   root file, so the no-config path needs explicit 404 in dev; preview 404s
  *   it naturally)
  */
-async function openApp({ mode, init, viewport, entry = '/app.html', amapConfig404 = false, acceptDownloads = false } = {}) {
+async function openApp({ mode, init, viewport, entry = '/', amapConfig404 = false, acceptDownloads = false } = {}) {
   const server = await startViteApp({ mode });
   let browser;
   try {

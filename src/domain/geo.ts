@@ -3,7 +3,7 @@
  *
  * Persisted itinerary coordinates are WGS-84 [lat, lng]. GCJ-02 is needed only
  * at the AMap edge. The vendored `public/vendor/coordtransform.js` (classic
- * script, loaded in app.html BEFORE the module script) defines the global
+ * script, loaded in index.html BEFORE the module script) defines the global
  * `coordtransform` with `wgs84togcj02(lng, lat)` / `gcj02towgs84(lng, lat)`
  * returning `[lng, lat]` arrays — exactly the legacy call pattern (trip.js:14).
  */
