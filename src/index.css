@@ -1340,3 +1340,244 @@
     }
   }
 }
+/* ==========================================================================
+ * Print stylesheet (ticket 08) — faithful port of the legacy trip.css print
+ * rules (page-level hiding L18 + dedicated print-sheet stylesheet L24–62) as
+ * plain CSS. `@page` margin 14mm 13mm; page-break rules; interactive UI,
+ * dialogs and map chrome hidden; long names/addresses/notes wrap with
+ * `overflow-wrap:anywhere` instead of clipping; A4 sizing in pt/mm.
+ * ========================================================================== */
+#print-itinerary {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 14mm 13mm;
+  }
+
+  body {
+    font-size: 10.5pt;
+    line-height: 1.55;
+    background: #fff;
+    color: #202e2b;
+  }
+
+  /* page-level: hide the interactive app shell, dialogs, map chrome */
+  .topbar,
+  .days-panel,
+  main > .intro,
+  main > .summary,
+  main > .journey,
+  main > .reason,
+  main > .prepare,
+  main > .check-section,
+  main > .sources,
+  .footer,
+  dialog,
+  #accommodation-map-picker,
+  .trip-map-toolbar,
+  .amap-live,
+  .navigation-actions,
+  .leaflet-control-layers,
+  .fit-map,
+  .day-links,
+  .check-section,
+  #day-detail,
+  #map-error,
+  .prepare summary::after {
+    display: none !important;
+  }
+
+  /* generic print shell rules (trip.css L18) */
+  .intro {
+    padding: 15px 0;
+  }
+  .notes-grid {
+    display: block;
+  }
+  .notes-grid details {
+    break-inside: avoid;
+  }
+  #print-itinerary h2 {
+    font-size: 18px;
+  }
+  a {
+    overflow-wrap: anywhere;
+  }
+
+  /* --- print sheet (trip.css L24–62 dedicated stylesheet) --- */
+  #print-itinerary {
+    display: block !important;
+    padding: 0;
+    max-width: none;
+  }
+  .print-sheet-header {
+    border-bottom: 1.5px solid #236a51;
+    padding: 0 0 10px;
+    margin: 0 0 10px;
+    break-after: avoid;
+  }
+  .print-sheet-header .eyebrow {
+    margin-bottom: 3px;
+  }
+  .print-sheet-header h1 {
+    font-size: 24pt;
+    line-height: 1.2;
+    margin: 0;
+  }
+  .print-sheet-summary {
+    font-size: 11pt;
+    margin-top: 5px;
+  }
+  .print-sheet-note {
+    color: #64716b;
+    font-size: 9pt;
+    margin-top: 4px;
+    overflow-wrap: anywhere;
+  }
+  .print-day {
+    padding: 12px 0 15px;
+    border-bottom: 1px solid #dce3de;
+    break-inside: avoid;
+    overflow-wrap: anywhere;
+  }
+  .print-day-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    gap: 12px;
+    break-after: avoid;
+  }
+  .print-day-heading .eyebrow {
+    margin-bottom: 2px;
+  }
+  .print-day-heading h2 {
+    font-size: 16pt;
+    line-height: 1.3;
+  }
+  .print-day .tag {
+    font-size: 9pt;
+    padding: 2px 7px;
+  }
+  .print-route {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 9px;
+    margin-top: 9px;
+    padding: 8px 10px;
+    border: 1px solid #dce3de;
+    break-inside: avoid;
+  }
+  .print-route > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .print-route-label {
+    grid-column: 1 / -1;
+    font-size: 8.5pt;
+    color: #64716b;
+  }
+  .print-route strong {
+    font-size: 10.5pt;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .print-route > b {
+    font-size: 9.5pt;
+    color: #236a51;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+  .print-route.is-stale {
+    border-color: #d9b5a8;
+    background: #fffaf8;
+  }
+  .print-route.is-stale > b {
+    color: #b75342;
+  }
+  .print-route p {
+    grid-column: 1 / -1;
+    color: #64716b;
+    font-size: 8.5pt;
+    margin-top: 2px;
+    overflow-wrap: anywhere;
+  }
+  .print-stay {
+    margin-top: 9px;
+    padding: 8px 10px;
+    border-left: 3px solid #236a51;
+    background: #f0f6f1;
+    break-inside: avoid;
+    overflow-wrap: anywhere;
+  }
+  .print-stay-label {
+    font-size: 8.5pt;
+    color: #236a51;
+    margin: 0 0 1px;
+  }
+  .print-stay strong {
+    display: block;
+    font-size: 11.5pt;
+    line-height: 1.35;
+  }
+  .print-stay > span {
+    display: block;
+    color: #64716b;
+    font-size: 8.5pt;
+    margin-top: 1px;
+  }
+  .print-stay p {
+    font-size: 9pt;
+    margin-top: 4px;
+  }
+  .print-stay p b {
+    font-weight: 600;
+    margin-right: 4px;
+  }
+  .print-stay .print-stay-disclaimer {
+    color: #b75342;
+    font-size: 8.5pt;
+  }
+  .print-day-description {
+    color: #64716b;
+    font-size: 9pt;
+    margin-top: 9px;
+    overflow-wrap: anywhere;
+  }
+  .print-timeline {
+    margin-top: 8px;
+    break-inside: auto;
+  }
+  .print-time-row {
+    display: grid;
+    grid-template-columns: 14mm minmax(0, 1fr);
+    gap: 7px;
+    padding: 3px 0;
+    break-inside: avoid;
+  }
+  .print-time-row time {
+    color: #236a51;
+    font-size: 9pt;
+    font-variant-numeric: tabular-nums;
+  }
+  .print-time-row strong {
+    font-size: 9.5pt;
+    font-weight: 600;
+  }
+  .print-time-row p {
+    color: #64716b;
+    font-size: 8.5pt;
+    margin-top: 1px;
+    overflow-wrap: anywhere;
+  }
+  .print-day-tip {
+    margin-top: 8px;
+    padding: 6px 8px;
+    border-left: 2px solid #bc8970;
+    background: #f2f0ed;
+    font-size: 8.5pt;
+    overflow-wrap: anywhere;
+    break-inside: avoid;
+  }
+}
