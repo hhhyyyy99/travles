@@ -80,11 +80,18 @@ export function AccommodationBackupDialog({
   const [pending, setPending] = useState<AccommodationBackup | null>(null)
   const [status, setStatus] = useState('')
   const [tone, setTone] = useState<'normal' | typeof TONE_ERROR>('normal')
+  const wasOpenRef = useRef(false)
 
   const setStatusTone = (message: string, nextTone: 'normal' | typeof TONE_ERROR = 'normal'): void => {
     setStatus(message)
     setTone(nextTone)
   }
+
+  // Legacy open flow (accommodation-backup.js open button): greet before showing.
+  useEffect(() => {
+    if (open && !wasOpenRef.current) setStatusTone('可导出当前安排，或选择备份文件进行预览。')
+    wasOpenRef.current = open
+  }, [open])
 
   /** Legacy closeDialog: reset pending/preview/file/confirm, then close. */
   const resetDraft = (): void => {
