@@ -153,10 +153,12 @@ export default function MapPanel({ days, legs, selectedItemId, onSelectItem, onC
 
   // AI-message POI link click (ticket 07) → pan to the coordinate. Panning
   // only: the linked POI is not an itinerary item, so no detail card opens.
+  // The container's data-last-focus exposes the applied target to tests.
   useEffect(() => {
     const handle = handleRef.current
     if (!handle || !focus) return
     focusWorkbenchPoi(handle, [focus.lat, focus.lng])
+    handle.map.getContainer().setAttribute('data-last-focus', `${focus.lat},${focus.lng}`)
   }, [focus])
 
   const fitOverview = (): void => {

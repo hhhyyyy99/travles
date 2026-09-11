@@ -206,7 +206,7 @@ test('clicking a chip sends the chip value as the user reply through the same SS
   }
 })
 
-test('clicking an inline POI link in an AI message focuses the map placeholder', async () => {
+test('clicking an inline POI link in an AI message pans the real map to the POI', async () => {
   const { page, close } = await openApp({
     entry: `/?view=workbench&trip=${TRIP_ID}`,
     init: clipboardInit,
@@ -216,13 +216,13 @@ test('clicking an inline POI link in an AI message focuses the map placeholder',
     await page.locator('#chat-list').waitFor()
     const poiLink = page.locator('[data-chat-poi-link="莫尔格勒河"]')
     await poiLink.waitFor()
-    assert.equal(await page.locator('#map-focus-target').count(), 0, 'no focus target before the click')
+    assert.equal(await page.locator('[data-last-focus]').count(), 0, 'no focus applied before the click')
     await poiLink.click()
-    const target = page.locator('#map-focus-target')
+    // The map panel (ticket 05) pans to the POI; the applied target is
+    // exposed on the Leaflet container as data-last-focus.
+    const target = page.locator('[data-last-focus]')
     await target.waitFor()
-    assert.equal(await target.getAttribute('data-map-focus'), '莫尔格勒河')
-    assert.equal(await target.getAttribute('data-map-focus-lat'), '49.4072')
-    assert.equal(await target.getAttribute('data-map-focus-lng'), '119.7478')
+    assert.equal(await target.getAttribute('data-last-focus'), '49.4072,119.7478')
   } finally {
     await close()
   }
