@@ -15,6 +15,9 @@ export const WORKBENCH_LAYOUT_STORAGE_KEY = 'journey-workbench-layout-v1'
 
 export type ColumnId = 'ai' | 'canvas' | 'map'
 
+/** Center-column view (ticket 10): horizontal canvas or single-day list. */
+export type WorkbenchView = 'canvas' | 'list'
+
 /** AI column is drag-resizable; the other two have fixed widths. */
 export const AI_WIDTH_MIN = 260
 export const AI_WIDTH_MAX = 560
@@ -25,6 +28,7 @@ export type TripLayout = {
   aiWidth: number
   canvasCollapsed: boolean
   mapCollapsed: boolean
+  view: WorkbenchView
 }
 
 export type WorkbenchLayoutFile = {
@@ -33,7 +37,7 @@ export type WorkbenchLayoutFile = {
 }
 
 export function defaultLayout(): TripLayout {
-  return { aiCollapsed: false, aiWidth: AI_WIDTH_DEFAULT, canvasCollapsed: false, mapCollapsed: false }
+  return { aiCollapsed: false, aiWidth: AI_WIDTH_DEFAULT, canvasCollapsed: false, mapCollapsed: false, view: 'canvas' }
 }
 
 /** Clamp keeps drag/resume/corrupt values inside sane bounds. */
@@ -63,6 +67,7 @@ export function readTripLayout(storage: StorageLike, tripId: string): TripLayout
       aiWidth: clampAiWidth(typeof record.aiWidth === 'number' ? record.aiWidth : AI_WIDTH_DEFAULT),
       canvasCollapsed: record.canvasCollapsed === true,
       mapCollapsed: record.mapCollapsed === true,
+      view: record.view === 'list' ? 'list' : 'canvas',
     }
   } catch {
     return fallback
@@ -90,6 +95,7 @@ export function writeTripLayout(storage: StorageLike, tripId: string, layout: Tr
     aiWidth: clampAiWidth(layout.aiWidth),
     canvasCollapsed: layout.canvasCollapsed === true,
     mapCollapsed: layout.mapCollapsed === true,
+    view: layout.view === 'list' ? 'list' : 'canvas',
   }
   const file: WorkbenchLayoutFile = { version: 1, trips }
   try {
@@ -114,4 +120,9 @@ export function toggleColumn(layout: TripLayout, column: ColumnId): TripLayout {
 /** Pure AI-width setter for the drag handle (always clamped). */
 export function resizeAiColumn(layout: TripLayout, width: number): TripLayout {
   return { ...layout, aiWidth: clampAiWidth(width) }
+}
+
+/** Pure center-column view setter (ticket 10; remembered per trip). */
+export function setWorkbenchView(layout: TripLayout, view: WorkbenchView): TripLayout {
+  return { ...layout, view: view === 'list' ? 'list' : 'canvas' }
 }

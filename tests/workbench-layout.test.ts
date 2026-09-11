@@ -51,8 +51,8 @@ test('readTripLayout degrades to defaults for missing/corrupt state', () => {
 
 test('writeTripLayout persists per trip and preserves other trips', () => {
   const storage = new MemoryStorage()
-  writeTripLayout(storage, 'trip-1', { aiCollapsed: true, aiWidth: 480, canvasCollapsed: false, mapCollapsed: false })
-  writeTripLayout(storage, 'trip-2', { aiCollapsed: false, aiWidth: 300, canvasCollapsed: true, mapCollapsed: true })
+  writeTripLayout(storage, 'trip-1', { aiCollapsed: true, aiWidth: 480, canvasCollapsed: false, mapCollapsed: false, view: 'canvas' })
+  writeTripLayout(storage, 'trip-2', { aiCollapsed: false, aiWidth: 300, canvasCollapsed: true, mapCollapsed: true, view: 'canvas' })
 
   assert.equal(readTripLayout(storage, 'trip-1').aiCollapsed, true)
   assert.equal(readTripLayout(storage, 'trip-2').canvasCollapsed, true, 'trip-2 keeps its own state')
@@ -61,7 +61,7 @@ test('writeTripLayout persists per trip and preserves other trips', () => {
   assert.deepEqual(readTripLayout(storage, 'trip-3'), defaultLayout())
 
   // Re-writing one trip does not clobber the others.
-  writeTripLayout(storage, 'trip-1', { aiCollapsed: false, aiWidth: 420, canvasCollapsed: false, mapCollapsed: false })
+  writeTripLayout(storage, 'trip-1', { aiCollapsed: false, aiWidth: 420, canvasCollapsed: false, mapCollapsed: false, view: 'canvas' })
   assert.equal(readTripLayout(storage, 'trip-2').mapCollapsed, true)
   assert.equal(readTripLayout(storage, 'trip-1').aiWidth, 420)
 
