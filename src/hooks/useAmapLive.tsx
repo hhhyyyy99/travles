@@ -270,8 +270,8 @@ class AmapLiveController {
         trafficChecked: true,
         trafficDisabled: false,
       })
-      this.query()
       this.flushQueuedAccommodationDays()
+      this.query()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.patch({ amapStateText: '高德加载失败 · 当前为参考地图', connectLabel: '重试加载地图' })

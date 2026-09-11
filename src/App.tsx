@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -45,12 +45,20 @@ const OVERVIEW_LEGEND = '全程参考连线 · 非道路导航'
 export default function App() {
   const [selectedDay, setSelectedDay] = useState(0)
   const [overview, setOverview] = useState(true)
-  const [legend, setLegend] = useState(OVERVIEW_LEGEND)
   const [mapHandle, setMapHandle] = useState<RouteMapHandle | null>(null)
   const amap = useAmapLive()
-  const { state: accommodationState } = useAccommodation()
+  const { state: accommodationState, subscribe } = useAccommodation()
   const routeStates = useRouteStates()
   const accommodationCount = inUseBaseCount(accommodationState)
+  // trip.js:186 + refreshAccommodationView — the legend is DERIVED on every
+  // render (a stay change re-flips the selected day's copy without a click:
+  // 住宿已更换 · 路线未更新 → 高德路线已更新 as the re-query settles).
+  const legend = overview ? OVERVIEW_LEGEND : legendForDay(accommodationState, routeStates.states, selectedDay)
+
+  // Legacy `refreshAccommodationView` re-runs choose() on every change (day
+  // view returned, legend re-derived); here just leave the overview mode so the
+  // derived legend follows the route state (query wiring lives in AmapLive).
+  useEffect(() => subscribe(() => setOverview(false)), [subscribe])
 
   const mapHandleRef = useRef<RouteMapHandle | null>(null)
 
@@ -62,9 +70,6 @@ export default function App() {
       setOverview(false)
       const road = staticRouteGeometry(day)
       const coords = dayPointCoords(day)
-      // trip.js:186 — the legend follows the route state: 高德路线已更新 once a
-      // changed-endpoint day settles, 住宿已更换 · 路线未更新 while stale.
-      setLegend(legendForDay(accommodationState, routeStates.states, day))
       if (!options?.skipAmap) amap.select(day)
       const handle = mapHandleRef.current
       if (!handle) return
@@ -76,14 +81,13 @@ export default function App() {
         road && estimate ? [{ index: day, title: estimate.title, time: estimate.time, coordinates: road }] : [],
       )
     },
-    [amap.select, accommodationState, routeStates.states],
+    [amap.select],
   )
 
   const fit = useCallback(() => {
     // AMap whole-trip view takes precedence over the Leaflet fit (trip.js:193).
     if (amap.overview()) return
     setOverview(true)
-    setLegend(OVERVIEW_LEGEND)
     const handle = mapHandleRef.current
     if (!handle) return
     const geometries = allRouteGeometries()
