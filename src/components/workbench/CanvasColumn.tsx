@@ -242,7 +242,10 @@ export function CanvasCard({
           {CARD_TYPE_LABEL[item.type]}
         </span>
         {item.pending && (
-          <span className="ml-auto rounded-[4px] border border-[#b75342] px-[6px] py-[1px] text-[10px] text-[#b75342]">
+          <span
+            data-card-pending={item.id}
+            className="ml-auto rounded-[4px] border border-[#b75342] px-[6px] py-[1px] text-[10px] text-[#b75342]"
+          >
             待定
           </span>
         )}
