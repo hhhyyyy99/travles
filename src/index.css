@@ -2174,3 +2174,25 @@
   border-radius: 999px;
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
 }
+.wb-recommendation-marker {
+  background: transparent;
+  border: 0;
+}
+.wb-recommendation-marker-dot {
+  min-width: 34px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid #3f7d5c;
+  border-radius: 999px;
+  background: #fff;
+  color: #3f7d5c;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.25);
+  cursor: pointer;
+}
+.wb-recommendation-marker-saved .wb-recommendation-marker-dot {
+  border-color: #b75342;
+  color: #b75342;
+}

@@ -11,6 +11,8 @@ import { toLibsqlUrl } from './db/driver.js'
 import { createEmitRoundMetaTool } from './chat/round-meta.js'
 import { APPLY_TRIP_PATCH_TOOL_NAME, createApplyTripPatchTool } from './trip-patch/tool.js'
 import type { TripPatchStoreDriver } from './trip-patch/types.js'
+import { createSearchPoiTool } from './recommendations/tool.js'
+import type { PoiSearch } from './recommendations/types.js'
 
 /**
  * The backend's Mastra wiring (tickets 06/07).
@@ -103,6 +105,8 @@ export type CreateMastraOptions = {
    * app.ts wires the shared SQLite database; tests inject in-memory stores.
    */
   resolveTripPatchStore?: () => Promise<TripPatchStoreDriver>
+  /** Shared `search_poi` provider used by both HTTP and Mastra tool paths. */
+  searchPoi?: PoiSearch
 }
 
 /**
@@ -144,6 +148,7 @@ export function createMastra(options: CreateMastraOptions = {}): Mastra {
       [APPLY_TRIP_PATCH_TOOL_NAME]: createApplyTripPatchTool({
         resolveStore: options.resolveTripPatchStore,
       }),
+      search_poi: createSearchPoiTool(options.searchPoi),
     },
   })
 

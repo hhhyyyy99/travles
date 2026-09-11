@@ -32,6 +32,7 @@ import {
   type WorkbenchItem,
   type WorkbenchLeg,
 } from '../../domain/workbench'
+import type { RecommendationPoi, StashItem } from '../../domain/recommendations'
 import EditableTheme from './EditableTheme'
 import { CardMenu, DayPickerDialog, type CardMenuAction } from './CardMenu'
 
@@ -72,6 +73,8 @@ export type CanvasColumnProps = {
   onAddCard?: (dayId: string) => void
   onNoteSave?: (itemId: string, note: string) => void
   onImageAdd?: (itemId: string, url: string) => void
+  /** Ticket 15: drop a pending recommendation into a day column. */
+  onDropStash?: (stashId: string, poi: RecommendationPoi, dayId: string, index: number) => void
 }
 
 export default function CanvasColumn({
@@ -88,6 +91,7 @@ export default function CanvasColumn({
   onAddCard,
   onNoteSave,
   onImageAdd,
+  onDropStash,
 }: CanvasColumnProps) {
   const legLookup = legsByPair(legs)
   // Cross-column drag state: the id of the card currently being dragged.
@@ -173,6 +177,7 @@ export default function CanvasColumn({
             onAddCard={onAddCard}
             onNoteSave={onNoteSave}
             onImageAdd={onImageAdd}
+            onDropStash={onDropStash}
             draggingId={draggingId}
             setDraggingId={setDraggingId}
             menuFor={menuFor}
@@ -216,6 +221,7 @@ function DayColumn({
   onAddCard,
   onNoteSave,
   onImageAdd,
+  onDropStash,
   draggingId,
   setDraggingId,
   menuFor,
@@ -233,6 +239,7 @@ function DayColumn({
   onAddCard?: (dayId: string) => void
   onNoteSave?: (itemId: string, note: string) => void
   onImageAdd?: (itemId: string, url: string) => void
+  onDropStash?: (stashId: string, poi: RecommendationPoi, dayId: string, index: number) => void
   draggingId: string | null
   setDraggingId: (itemId: string | null) => void
   menuFor: string | null
@@ -253,6 +260,19 @@ function DayColumn({
     // A drop on a card also bubbles to the day container's drop zone — stop
     // it so the move isn't applied twice (card insert + container append).
     event.stopPropagation()
+    const stashPayload = event.dataTransfer.getData('application/x-stash')
+    if (stashPayload && onDropStash) {
+      try {
+        const stash = JSON.parse(stashPayload) as StashItem
+        if (stash?.id && stash.poi?.name) {
+          const index = targetItem === null ? day.items.length : day.items.findIndex((item) => item.id === targetItem.id)
+          onDropStash(stash.id, stash.poi, day.id, index < 0 ? day.items.length : index)
+          return
+        }
+      } catch {
+        // Malformed recommendation payloads fall through to card handling.
+      }
+    }
     const draggedId = draggingId ?? event.dataTransfer.getData('text/plain')
     if (!draggedId || !onMoveItem) return
     const index =
@@ -304,7 +324,7 @@ function DayColumn({
         data-day-items={day.id}
         className="flex flex-1 flex-col gap-[10px] overflow-y-auto p-[12px]"
         onDragOver={(event) => {
-          if (draggingId) event.preventDefault()
+          if (draggingId || onDropStash) event.preventDefault()
         }}
         onDrop={(event) => handleDrop(event, null)}
       >
@@ -326,7 +346,7 @@ function DayColumn({
               }}
               onDragEnd={() => setDraggingId(null)}
               onDragOver={(event) => {
-                if (draggingId) event.preventDefault()
+                if (draggingId || onDropStash) event.preventDefault()
               }}
               onDrop={(event) => handleDrop(event, item)}
               menuEnabled={Boolean(onMoveItem || onDeleteItem)}
