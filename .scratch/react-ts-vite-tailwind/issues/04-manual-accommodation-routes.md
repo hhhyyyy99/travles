@@ -4,16 +4,16 @@
 
 **Blocked by:** 03
 
-Status: claimed
+Status: resolved
 
-- [ ] 建立有类型的住宿基地、晚次引用和路线状态，以单一权威住宿状态派生详情、摘要、使用中基地数量及路线端点。
-- [ ] 读取并保持既有住宿存储键、版本及有效数据格式，同源刷新兼容旧基地和晚次选择；与出发清单存储独立。
-- [ ] React 住宿表单支持酒店或区域、必填名称和确认位置、选填地址及备注；地图点击和键盘确认位置均可操作，取消选点保留草稿。
-- [ ] 支持仅保存为备选、选择已有基地及应用一晚或多晚；备选不计入使用中基地数量，写入失败不报告成功或破坏当前有效安排。
-- [ ] 更换住宿只更新相关当天终点、次日出发点及驾车查询，保留景点顺序；区域基地说明按代表位置估算。
-- [ ] 呈现更新中、成功及未更新状态；失败保留住宿且不把旧估算显示为有效新路线，旧请求不得覆盖更新选择或改变当前选中日期。
-- [ ] 为后续搜索、管理、备份和打印提供显式业务模块接口与共享状态访问方式，不要求保留旧全局业务对象。
-- [ ] 复用住宿核心及路线测试场景，通过页面操作和 provider 请求契约验证多晚、刷新、旧数据、必填校验、键盘选点、存储失败和乱序；严格类型检查及构建通过。
+- [x] 建立有类型的住宿基地、晚次引用和路线状态，以单一权威住宿状态派生详情、摘要、使用中基地数量及路线端点。
+- [x] 读取并保持既有住宿存储键、版本及有效数据格式，同源刷新兼容旧基地和晚次选择；与出发清单存储独立。
+- [x] React 住宿表单支持酒店或区域、必填名称和确认位置、选填地址及备注；地图点击和键盘确认位置均可操作，取消选点保留草稿。
+- [x] 支持仅保存为备选、选择已有基地及应用一晚或多晚；备选不计入使用中基地数量，写入失败不报告成功或破坏当前有效安排。
+- [x] 更换住宿只更新相关当天终点、次日出发点及驾车查询，保留景点顺序；区域基地说明按代表位置估算。
+- [x] 呈现更新中、成功及未更新状态；失败保留住宿且不把旧估算显示为有效新路线，旧请求不得覆盖更新选择或改变当前选中日期。
+- [x] 为后续搜索、管理、备份和打印提供显式业务模块接口与共享状态访问方式，不要求保留旧全局业务对象。
+- [x] 复用住宿核心及路线测试场景，通过页面操作和 provider 请求契约验证多晚、刷新、旧数据、必填校验、键盘选点、存储失败和乱序；严格类型检查及构建通过。
 
 
 ---
@@ -62,3 +62,11 @@ Implemented (uncommitted agent work verified + committed by orchestrator after t
 - `tests/app/04-accommodation.app.browser.cjs` — 7 scenarios: create+apply+reload persistence, alternate excluded from count, choose-existing applies, validation message exact, keyboard pick + Escape keeps draft, storage failure exact string no false success, legacy-format seed renders + survives refresh.
 
 Evidence (orchestrator-run, all green): typecheck pass; build pass; `npm test` 44/44; `test:browser` 20/20; `test:app` 31/31; `test:app:prod` 31/31.
+
+## Answer (part C — route wiring, completed)
+
+C1 (implementer): accommodation change events (routeDays) → mark route days stale, renew query generation (in-flight queries from before a change are discarded), enqueue AMap driving queries for exactly the affected days with NEW endpoints from `getDayRoute` (day 0/6 airport edges, keyword-only vias, GCJ-02 at the AMap edge). Boot with legacy-format stays override re-queries affected days and settles. Status copy: pending/更新中, updated/已更新-family, unupdated/路线未更新; failures never roll back the stay and never surface the old estimate as current; stale responses can't change selectedDay. Suites pass: dev+prod 37/37.
+
+C2 (orchestrator, after C1 agent hit its turn limit): `#distance-summary` now = `summaryDistance(state, routeStates)` (unchanged days: hardcoded 约 1,000–1,100 km; changed endpoint: sum of updated days or 路线未更新); `choose`/`fit` now draw `routeGeometry`/`routeCoordsForDay`/`timeLabelForDay`/`allRouteGeometries(state, routeStates)` — updated WGS-84 coordinates render once a changed-endpoint route settles, reference legs otherwise, geometry dropped for stale/pending/unupdated days (routeView.ts). One dated test assertion updated (failed re-query summary now asserts 路线未更新 — the legacy behavior). Legend flows 住宿已更换 · 路线未更新 → 高德路线已更新 via route-state.
+
+Evidence (final): typecheck pass; build pass; npm test 44/44; test:browser 20/20; test:app 37/37; test:app:prod 37/37.
