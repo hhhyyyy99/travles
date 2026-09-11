@@ -532,6 +532,141 @@
     text-decoration: underline;
     font-size: 11px;
   }
+
+  /* --- accommodation backup dialog (trip.css L21, note D §1.2, ticket 07) --- */
+  .accommodation-backup-entry {
+    border-top: 1px solid var(--color-line);
+    padding-top: 15px;
+  }
+  #accommodation-backup-open {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid #b8c8be;
+    color: var(--color-green);
+    border-radius: 5px;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  #accommodation-backup-open svg {
+    width: 14px;
+  }
+  #accommodation-backup-dialog {
+    width: min(540px, calc(100% - 28px));
+    max-height: min(760px, calc(100% - 28px));
+    padding: 22px;
+    border: 1px solid var(--color-line);
+    border-radius: 8px;
+    color: var(--color-ink);
+    background: var(--color-paper);
+  }
+  #accommodation-backup-dialog::backdrop {
+    background: #152a2466;
+  }
+  #accommodation-backup-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .accommodation-backup-intro {
+    color: var(--color-muted);
+    font-size: 12px;
+    margin: 0;
+  }
+  .accommodation-backup-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 2px 0 4px;
+  }
+  .accommodation-backup-actions button,
+  .accommodation-backup-import {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border: 1px solid #b8c8be;
+    border-radius: 5px;
+    padding: 9px 12px;
+    color: var(--color-green);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .accommodation-backup-actions button svg,
+  .accommodation-backup-import svg {
+    width: 15px;
+  }
+  .accommodation-backup-import input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .accommodation-backup-preview {
+    border-top: 1px solid var(--color-line);
+    padding-top: 14px;
+    font-size: 12px;
+  }
+  .accommodation-backup-preview p {
+    color: var(--color-muted);
+  }
+  .accommodation-backup-preview ul {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 18px;
+    list-style: none;
+    padding: 10px 0;
+    margin: 0;
+    border-block: 1px solid var(--color-line);
+  }
+  .accommodation-backup-preview li {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11px;
+  }
+  .accommodation-backup-preview li span {
+    color: var(--color-muted);
+  }
+  .accommodation-backup-warning {
+    margin-top: 11px;
+    color: var(--color-red) !important;
+    font-weight: 600;
+  }
+  .accommodation-backup-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    border-top: 1px solid var(--color-line);
+    padding-top: 14px;
+  }
+  .accommodation-backup-confirm-actions button {
+    border-radius: 5px;
+    padding: 9px 13px;
+    font-size: 12px;
+  }
+  .accommodation-backup-confirm-actions button:first-child {
+    border: 1px solid #b8c8be;
+    color: var(--color-green);
+  }
+  .accommodation-backup-confirm-actions button:last-child {
+    background: var(--color-green);
+    color: #fff;
+  }
+  .accommodation-backup-confirm-actions button:disabled {
+    opacity: 0.45;
+  }
+  #accommodation-backup-status {
+    min-height: 18px;
+    color: var(--color-green);
+    font-size: 12px;
+  }
+  #accommodation-backup-status[data-tone="error"] {
+    color: var(--color-red);
+  }
   @media (max-width: 720px) {
     .stay-card {
       align-items: flex-start;
@@ -557,6 +692,25 @@
       flex-direction: column;
     }
     .accommodation-editor-actions button {
+      width: 100%;
+    }
+    #accommodation-backup-dialog {
+      padding: 18px;
+    }
+    .accommodation-backup-actions {
+      flex-direction: column;
+    }
+    .accommodation-backup-actions button,
+    .accommodation-backup-import {
+      width: 100%;
+    }
+    .accommodation-backup-preview ul {
+      grid-template-columns: 1fr;
+    }
+    .accommodation-backup-confirm-actions {
+      flex-direction: column;
+    }
+    .accommodation-backup-confirm-actions button {
       width: 100%;
     }
     #accommodation-map-picker {

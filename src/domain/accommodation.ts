@@ -583,6 +583,40 @@ export const saveAsAlternate = saveBase
  * backup, but replaceState is part of the authoritative core).
  * ------------------------------------------------------------------ */
 
+/**
+ * Export payload (L263–274 `getBackup`): every overnight night explicit
+ * (defaults resolved, so the file round-trips through `validateBackup`), the
+ * `isDefault`/`routeName` flags stripped, and nothing else — no amapKey, no
+ * app settings. Field order matches the stored custom-base literal so exports
+ * are byte-compatible with the legacy site.
+ */
+export function backupFor(state: AccommodationState): AccommodationBackup {
+  const stays: Record<number, string> = {}
+  overnightDays.forEach((index) => {
+    const stay = getDayStay(state, index)
+    stays[index] = stay?.id ?? defaultStayByDay[index] ?? ''
+  })
+  return {
+    format: ACCOMMODATION_BACKUP_FORMAT,
+    version: ACCOMMODATION_VERSION,
+    bases: state.bases.map((base) => ({
+      id: base.id,
+      name: base.name,
+      type: base.type,
+      lat: base.lat,
+      lng: base.lng,
+      address: base.address,
+      notes: base.notes,
+      createdAt: base.createdAt,
+    })),
+    stays,
+  }
+}
+
+/** Legacy names (`getBackup` / `exportBackup` in note B §3.1). */
+export const getBackup = backupFor
+export const exportBackup = backupFor
+
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const prototype = Object.getPrototypeOf(value)

@@ -94,7 +94,7 @@ async function startViteApp({ mode } = {}) {
  *   root file, so the no-config path needs explicit 404 in dev; preview 404s
  *   it naturally)
  */
-async function openApp({ mode, init, viewport, entry = '/app.html', amapConfig404 = false } = {}) {
+async function openApp({ mode, init, viewport, entry = '/app.html', amapConfig404 = false, acceptDownloads = false } = {}) {
   const server = await startViteApp({ mode });
   let browser;
   try {
@@ -102,7 +102,11 @@ async function openApp({ mode, init, viewport, entry = '/app.html', amapConfig40
       headless: true,
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined,
     });
-    const page = await browser.newPage({ viewport: viewport || { width: 1280, height: 900 } });
+    const page = await browser.newPage({
+      viewport: viewport || { width: 1280, height: 900 },
+      // Ticket 07 backup suite exercises real downloads (legacy helper variant)
+      acceptDownloads,
+    });
     page.setDefaultTimeout(8000);
     await page.route('**/*', (route) =>
       route.request().url().startsWith(server.url) ? route.continue() : route.abort(),

@@ -32,10 +32,11 @@ import {
   useState,
   type ChangeEvent,
 } from 'react'
-import { Crosshair, Plus, Search, SlidersHorizontal, X } from 'lucide-react'
+import { ArchiveRestore, Crosshair, Plus, Search, SlidersHorizontal, X } from 'lucide-react'
 import type { LeafletMouseEvent } from 'leaflet'
 import { useAccommodation } from '../hooks/useAccommodation'
 import { useAmapLive } from '../hooks/useAmapLive'
+import { AccommodationBackupDialog } from './AccommodationBackupDialog'
 import {
   findDuplicates,
   getBase,
@@ -122,6 +123,7 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
   const [pendingResult, setPendingResult] = useState<AmapPlaceResult | null>(null)
   /** Request token — rapid query changes / dialog close discard stale results. */
   const searchTokenRef = useRef(0)
+  const [backupOpen, setBackupOpen] = useState(false)
 
   const currentDayRef = useRef(currentDay)
   currentDayRef.current = currentDay
@@ -165,6 +167,13 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
     setOpen(false)
     setEditorVisible(false)
     setManagerOpen(true)
+  }
+
+  /** Ticket 07 entry: the backup dialog lives in the shared accommodation dialog. */
+  const openBackupDialog = (): void => {
+    setPicking(false)
+    setOpen(false)
+    setBackupOpen(true)
   }
 
   useEffect(() => {
@@ -647,7 +656,7 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
               恢复本晚默认住宿
             </button>
           </section>
-          <div className="accommodation-manager-entry">
+<div className="accommodation-manager-entry">
             <button type="button" id="accommodation-add-toggle" className="accommodation-add" onClick={addNew}>
               <Plus aria-hidden="true" />
               新增住宿基地
@@ -657,6 +666,18 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
               管理住宿基地
             </button>
           </div>
+          <section className="accommodation-backup-entry">
+            <button
+              type="button"
+              id="accommodation-backup-open"
+              title="导出或恢复住宿备份"
+              aria-label="导出或恢复住宿备份"
+              onClick={openBackupDialog}
+            >
+              <ArchiveRestore aria-hidden="true" />
+              导出或恢复住宿备份
+            </button>
+          </section>
           <section className="accommodation-editor" id="accommodation-editor" hidden={!editorVisible}>
             <div className="accommodation-section-heading">
               <h3>新增住宿基地</h3>
@@ -733,7 +754,7 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
           取消选点
         </button>
       </div>
-      <AccommodationManager
+<AccommodationManager
         open={managerOpen}
         onClose={() => setManagerOpen(false)}
         onReplace={(night) => {
@@ -741,6 +762,7 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
           openDialog(night)
         }}
       />
+      <AccommodationBackupDialog open={backupOpen} onRequestClose={() => setBackupOpen(false)} />
     </AccommodationDialogContext.Provider>
   )
 }
