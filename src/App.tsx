@@ -24,16 +24,9 @@ import { inUseBaseCount } from './domain/accommodation'
 import { legendForDay } from './domain/routeView'
 import { useRouteMap } from './hooks/useRouteMap'
 import type { RouteMapHandle } from './services/map'
-import { dayPointCoords, tripPlan } from './data/itinerary'
-import {
-  allRouteGeometries,
-  drawSelectedDay,
-  fitTrip,
-  focusDay,
-  renderFullRoute,
-  showTimeLabels,
-  staticRouteGeometry,
-} from './services/map'
+import { tripPlan } from './data/itinerary'
+import { allRouteGeometries, drawSelectedDay, fitTrip, focusDay, renderFullRoute, showTimeLabels } from './services/map'
+import { allRouteGeometries as allRouteGeometriesState, routeCoordsForDay, routeGeometry, summaryDistance, timeLabelForDay } from './domain/routeView'
 
 const OVERVIEW_LEGEND = '全程参考连线 · 非道路导航'
 
@@ -62,24 +55,31 @@ export default function App() {
 
   const mapHandleRef = useRef<RouteMapHandle | null>(null)
 
+  // The imperative map-drawing port keeps the latest accommodation/route state
+  // in a ref so `choose`/`fit` stay stable (recreating them on every route
+  // settle would re-trigger the map-ready callback and re-run the boot render).
+  const routeViewRef = useRef({ accommodationState, routeStates })
+  routeViewRef.current = { accommodationState, routeStates }
+
   // `options.skipAmap` mirrors trip.js choose(..., {skipAmap}) — the boot
   // render must not trigger a live AMap query (legacy boot order gotcha 1).
   const choose = useCallback(
     (day: number, focus = true, options?: { skipAmap?: boolean }) => {
       setSelectedDay(day)
       setOverview(false)
-      const road = staticRouteGeometry(day)
-      const coords = dayPointCoords(day)
+      const { accommodationState: acc, routeStates: rs } = routeViewRef.current
+      // trip.js:88/173 — the geometry + endpoint markers follow the
+      // accommodation route (updated coordinates when a changed endpoint has
+      // settled), falling back to the day's plan points.
+      const road = routeGeometry(acc, rs.states, day)
+      const coords = routeCoordsForDay(acc, day)
       if (!options?.skipAmap) amap.select(day)
       const handle = mapHandleRef.current
       if (!handle) return
       drawSelectedDay(handle, road, coords)
       if (focus) focusDay(handle, road ?? coords)
-      const estimate = tripPlan.estimates[day]
-      showTimeLabels(
-        handle,
-        road && estimate ? [{ index: day, title: estimate.title, time: estimate.time, coordinates: road }] : [],
-      )
+      const label = timeLabelForDay(acc, rs.states, day)
+      showTimeLabels(handle, label ? [label] : [])
     },
     [amap.select],
   )
@@ -90,7 +90,8 @@ export default function App() {
     setOverview(true)
     const handle = mapHandleRef.current
     if (!handle) return
-    const geometries = allRouteGeometries()
+    const { accommodationState: acc, routeStates: rs } = routeViewRef.current
+    const geometries = allRouteGeometriesState(acc, rs.states)
     renderFullRoute(handle, geometries)
     fitTrip(handle, geometries.flat())
     showTimeLabels(handle, [])
@@ -168,7 +169,7 @@ export default function App() {
           </span>
           <span className="flex items-center gap-[7px]">
             <CarFront aria-hidden="true" className="w-[17px] text-muted" />
-            <b id="distance-summary">约 1,000–1,100 km</b>
+            <b id="distance-summary">{summaryDistance(accommodationState, routeStates.states)}</b>
           </span>
           <span className="flex items-center gap-[7px]">
             <BedDouble aria-hidden="true" className="w-[17px] text-muted" />

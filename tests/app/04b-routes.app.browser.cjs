@@ -227,8 +227,9 @@ test('a failed accommodation re-query keeps the stay, shows 路线未更新 and 
     assert.equal(await page.locator('#live-results .live-metrics').count(), 0);
     assert.equal(await page.locator('#amap-time-badge').count(), 0);
     assert.equal(await page.locator('#live-status').textContent(), '未取得路线。请检查地点名称、Key 服务权限与配额，然后刷新重试。');
-    // distance-summary is C2 — stays at the hardcoded reference for now
-    assert.equal(await page.locator('#distance-summary').textContent(), '约 1,000–1,100 km');
+    // distance-summary (C2): the changed endpoint with a failed re-query shows
+    // 路线未更新 (trip.js updateAccommodationSummary), never a fabricated km
+    assert.equal(await page.locator('#distance-summary').textContent(), '路线未更新');
 
     // recovery: a following successful select retries the day to updated
     await page.evaluate(() => {
