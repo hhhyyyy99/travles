@@ -12,10 +12,13 @@ import { MessageCircle, Map as MapIcon, PanelLeftClose, Sparkles } from 'lucide-
 import { fetchTripCanvas, type TripCanvasData } from '../../domain/workbench'
 import { AI_WIDTH_MAX, AI_WIDTH_MIN } from '../../domain/workbenchLayout'
 import { useWorkbenchLayout } from '../../hooks/useWorkbenchLayout'
+import { useToolsPanel } from '../../hooks/useToolsPanel'
 import WorkbenchTopbar from './WorkbenchTopbar'
 import CanvasColumn from './CanvasColumn'
 import ChatPanelPlaceholder from './ChatPanelPlaceholder'
 import MapPanelPlaceholder from './MapPanelPlaceholder'
+import ToolsRail from './ToolsRail'
+import ToolsPanel from './ToolsPanel'
 
 type LoadState =
   | { status: 'loading' }
@@ -25,6 +28,7 @@ type LoadState =
 export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBack: () => void }) {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   const { layout, toggle, resizeAi } = useWorkbenchLayout(tripId)
+  const { open: toolsOpen, toggle: toggleTools, close: closeTools } = useToolsPanel(tripId)
 
   useEffect(() => {
     let cancelled = false
@@ -109,7 +113,14 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
               </button>
             </div>
             {state.status === 'ready' ? (
-              <CanvasColumn days={state.data.days} legs={state.data.legs} />
+              <div className="flex min-h-0 flex-1">
+                {/* 画布左缘「工具」入口 + 停靠面板（ticket 14） */}
+                <ToolsRail active={toolsOpen} onToggle={toggleTools} />
+                {toolsOpen !== null && (
+                  <ToolsPanel tripId={tripId} panel={toolsOpen} days={state.data.days} onClose={closeTools} />
+                )}
+                <CanvasColumn days={state.data.days} legs={state.data.legs} />
+              </div>
             ) : (
               <div className="grid flex-1 place-items-center text-[13px] text-muted">
                 {state.status === 'loading' ? '加载行程中…' : state.error}
