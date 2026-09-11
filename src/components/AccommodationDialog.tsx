@@ -32,7 +32,7 @@ import {
   useState,
   type ChangeEvent,
 } from 'react'
-import { Crosshair, Plus, Search, X } from 'lucide-react'
+import { Crosshair, Plus, Search, SlidersHorizontal, X } from 'lucide-react'
 import type { LeafletMouseEvent } from 'leaflet'
 import { useAccommodation } from '../hooks/useAccommodation'
 import { useAmapLive } from '../hooks/useAmapLive'
@@ -50,6 +50,7 @@ import { ACCOMMODATION_WRITE_FAILURE_STATUS } from '../domain/storage'
 import { tripPlan } from '../data/itinerary'
 import { renderAccommodationMarkers, type RouteMapHandle } from '../services/map'
 import type { AmapPlaceResult, AmapSearchError } from '../services/amap'
+import { AccommodationManager } from './AccommodationManager'
 
 export interface AccommodationDialogApi {
   /** Legacy `tibetAccommodation.open(dayIndex)` — day clamps to an overnight day. */
@@ -108,6 +109,7 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
   const [selectedBaseId, setSelectedBaseId] = useState<string | null>(null)
   const [checkedNights, setCheckedNights] = useState<number[]>([0])
   const [editorVisible, setEditorVisible] = useState(false)
+  const [managerOpen, setManagerOpen] = useState(false)
   const [picking, setPicking] = useState(false)
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT)
   const [locationSummary, setLocationSummary] = useState('尚未在地图上选择位置')
@@ -156,6 +158,13 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
     setPendingResult(null)
     setSearchStatus('')
     setOpen(false)
+  }
+
+  /** Legacy topbar 住宿基地 entry — the manager opens from this dialog. */
+  const openManager = (): void => {
+    setOpen(false)
+    setEditorVisible(false)
+    setManagerOpen(true)
   }
 
   useEffect(() => {
@@ -638,10 +647,16 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
               恢复本晚默认住宿
             </button>
           </section>
-          <button type="button" id="accommodation-add-toggle" className="accommodation-add" onClick={addNew}>
-            <Plus aria-hidden="true" />
-            新增住宿基地
-          </button>
+          <div className="accommodation-manager-entry">
+            <button type="button" id="accommodation-add-toggle" className="accommodation-add" onClick={addNew}>
+              <Plus aria-hidden="true" />
+              新增住宿基地
+            </button>
+            <button type="button" id="accommodation-manager-open" className="accommodation-add" onClick={openManager}>
+              <SlidersHorizontal aria-hidden="true" />
+              管理住宿基地
+            </button>
+          </div>
           <section className="accommodation-editor" id="accommodation-editor" hidden={!editorVisible}>
             <div className="accommodation-section-heading">
               <h3>新增住宿基地</h3>
@@ -718,6 +733,14 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
           取消选点
         </button>
       </div>
+      <AccommodationManager
+        open={managerOpen}
+        onClose={() => setManagerOpen(false)}
+        onReplace={(night) => {
+          setManagerOpen(false)
+          openDialog(night)
+        }}
+      />
     </AccommodationDialogContext.Provider>
   )
 }

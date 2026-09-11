@@ -568,6 +568,288 @@
     }
   }
 
+  .accommodation-manager-entry {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .accommodation-manager-entry .accommodation-add {
+    align-self: auto;
+  }
+
+  /* --- accommodation manager dialog (port of accommodation-manager.css) --- */
+  #accommodation-manager-dialog {
+    width: min(760px, calc(100% - 28px));
+    max-height: min(850px, calc(100% - 28px));
+    padding: 24px;
+    border: 1px solid var(--color-line);
+    border-radius: 8px;
+    color: var(--color-ink);
+    background: var(--color-paper);
+  }
+  #accommodation-manager-dialog::backdrop {
+    background: #152a2466;
+  }
+  .accommodation-manager-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  .accommodation-manager-heading h2 {
+    font-size: 26px;
+    font-weight: 550;
+  }
+  #accommodation-manager-close {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--color-line);
+    border-radius: 5px;
+    color: var(--color-muted);
+    background: var(--color-paper);
+  }
+  #accommodation-manager-close svg {
+    width: 17px;
+    height: 17px;
+  }
+  .accommodation-manager-intro {
+    color: var(--color-muted);
+    font-size: 12px;
+    margin: 8px 0 18px;
+  }
+  .accommodation-manager-section {
+    border-top: 1px solid var(--color-line);
+    padding-top: 16px;
+    margin-top: 18px;
+  }
+  .accommodation-manager-section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .accommodation-manager-section-heading h3 {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .accommodation-manager-section-heading span {
+    color: var(--color-muted);
+    font-size: 11px;
+  }
+  .accommodation-manager-card {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .accommodation-manager-card:last-child {
+    border-bottom: 0;
+  }
+  .accommodation-manager-card-main {
+    min-width: 0;
+    flex: 1;
+  }
+  .accommodation-manager-card-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    flex-wrap: wrap;
+  }
+  .accommodation-manager-card-heading h4 {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .accommodation-manager-card-heading span {
+    font-size: 10px;
+    color: var(--color-green);
+    background: #e9f0eb;
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+  .accommodation-manager-meta,
+  .accommodation-manager-coordinates,
+  .accommodation-manager-notes,
+  .accommodation-manager-unused {
+    font-size: 11px;
+    color: var(--color-muted);
+    margin-top: 3px;
+  }
+  .accommodation-manager-coordinates {
+    font-variant-numeric: tabular-nums;
+  }
+  .accommodation-manager-notes {
+    white-space: pre-wrap;
+  }
+  .accommodation-manager-actions {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .accommodation-manager-actions button,
+  .accommodation-manager-nights button,
+  .accommodation-manager-night-list button {
+    border: 1px solid #b8c8be;
+    color: var(--color-green);
+    background: var(--color-paper);
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .accommodation-manager-nights {
+    margin-top: 9px;
+  }
+  .accommodation-manager-nights > span {
+    font-size: 10px;
+    color: var(--color-muted);
+  }
+  .accommodation-manager-nights ul {
+    list-style: none;
+    padding: 0;
+    margin: 4px 0 0;
+  }
+  .accommodation-manager-nights li,
+  .accommodation-manager-night-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 5px 0;
+    font-size: 11px;
+  }
+  .accommodation-manager-nights li span {
+    color: var(--color-ink);
+  }
+  .accommodation-manager-empty {
+    font-size: 12px;
+    color: var(--color-muted);
+    padding: 4px 0;
+  }
+  .accommodation-manager-immutable {
+    font-size: 11px;
+    color: var(--color-muted);
+    white-space: nowrap;
+  }
+  .accommodation-manager-night-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .accommodation-manager-night-list li {
+    border-bottom: 1px solid var(--color-line);
+    padding: 8px 0;
+  }
+  .accommodation-manager-night-list li:last-child {
+    border-bottom: 0;
+  }
+  .accommodation-manager-night-list strong,
+  .accommodation-manager-night-list span {
+    display: block;
+  }
+  .accommodation-manager-night-list span {
+    color: var(--color-muted);
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  .accommodation-manager-editor {
+    border-top: 1px solid var(--color-line);
+    padding-top: 16px;
+    margin-top: 18px;
+  }
+  .accommodation-manager-editor[hidden] {
+    display: none;
+  }
+  #accommodation-manager-edit-form {
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+  }
+  #accommodation-manager-edit-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: var(--color-muted);
+    font-size: 12px;
+  }
+  #accommodation-manager-edit-form input,
+  #accommodation-manager-edit-form select,
+  #accommodation-manager-edit-form textarea {
+    width: 100%;
+    background: #fff;
+    border: 1px solid #bdccc3;
+    border-radius: 4px;
+    padding: 8px;
+    font: inherit;
+    color: var(--color-ink);
+    resize: vertical;
+  }
+  .accommodation-manager-coordinate-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .accommodation-manager-editor-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .accommodation-manager-editor-actions button {
+    border: 1px solid #b8c8be;
+    color: var(--color-green);
+    background: var(--color-paper);
+    border-radius: 4px;
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+  .accommodation-manager-editor-actions button[type='submit'] {
+    background: var(--color-green);
+    color: #fff;
+  }
+  #accommodation-manager-status {
+    min-height: 18px;
+    color: var(--color-green);
+    font-size: 12px;
+    margin-top: 12px;
+  }
+  #accommodation-manager-status[data-state='error'] {
+    color: var(--color-red);
+  }
+  @media (max-width: 720px) {
+    .accommodation-manager-card {
+      display: block;
+    }
+    .accommodation-manager-actions {
+      justify-content: flex-start;
+      margin-top: 10px;
+    }
+    .accommodation-manager-actions button {
+      flex: 1;
+    }
+    .accommodation-manager-nights li,
+    .accommodation-manager-night-list li {
+      align-items: flex-start;
+    }
+    .accommodation-manager-coordinate-grid {
+      grid-template-columns: 1fr;
+    }
+    .accommodation-manager-editor-actions {
+      flex-direction: column;
+    }
+    .accommodation-manager-editor-actions button {
+      width: 100%;
+    }
+    .accommodation-manager-nights button {
+      flex: none;
+    }
+  }
+
   /* --- map container + overlay stack (trip.css L1/L5–L7/L9/L10/L16) --- */
   .map-wrap {
     height: 375px;
