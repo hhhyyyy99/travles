@@ -14,6 +14,11 @@ Run `pnpm install --frozen-lockfile`, then `pnpm exec playwright install chromiu
   persistence after reload, and the external map provider request contract.
 - `pnpm run test:app:prod` — the same suites against the production build
   preview (`APP_MODE=preview`, builds first).
+- Port-4310 coupling (ticket 02): the app shell probes `GET /api/trips`
+  (through the dev/preview proxy) to pick its default view — trip list when
+  the backend answers, the standalone guide otherwise. The existing suites
+  therefore assume nothing is listening on 4310 while they run; `?view=trips`
+  / `?view=guide` force a view deterministically.
 
 Conventions (see `tests/helpers/vite-app.cjs`):
 - Chromium headless, 8s default timeout, every non-127.0.0.1 request aborted.
