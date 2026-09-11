@@ -59,6 +59,8 @@ export type WorkbenchLeg = {
   mode: string
   distanceKm: number
   durationMin: number
+  /** WGS-84 [lng, lat][] driving geometry from the server; null → straight-line fallback. */
+  polyline: [number, number][] | null
 }
 
 export type TripCanvasData = {
@@ -341,7 +343,22 @@ function normalizeLeg(value: unknown): WorkbenchLeg | null {
     mode: typeof record.mode === 'string' ? record.mode : 'drive',
     distanceKm: finiteNumber(record.distanceKm),
     durationMin: finiteNumber(record.durationMin),
+    polyline: normalizePolyline(record.polyline),
   }
+}
+
+/** [lng, lat][] pairs with finite numbers only; anything else → null (ticket 05). */
+function normalizePolyline(value: unknown): [number, number][] | null {
+  if (!Array.isArray(value)) return null
+  const points: [number, number][] = []
+  for (const entry of value) {
+    if (!Array.isArray(entry) || entry.length < 2) continue
+    const lng = typeof entry[0] === 'number' ? entry[0] : Number(entry[0])
+    const lat = typeof entry[1] === 'number' ? entry[1] : Number(entry[1])
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue
+    points.push([lng, lat])
+  }
+  return points.length >= 2 ? points : null
 }
 
 function finiteNumber(value: unknown): number {

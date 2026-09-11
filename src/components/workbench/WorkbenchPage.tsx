@@ -30,7 +30,7 @@ import CanvasColumn from './CanvasColumn'
 import ChatPanel from './ChatPanel'
 import ListViewColumn from './ListViewColumn'
 import ConfirmDialog from './ConfirmDialog'
-import MapPanelPlaceholder from './MapPanelPlaceholder'
+import MapPanel from './MapPanel'
 import ToolsRail from './ToolsRail'
 import ToolsPanel from './ToolsPanel'
 
@@ -41,6 +41,9 @@ type LoadState =
 
 export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBack: () => void }) {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
+  // Canvas ↔ map linkage (ticket 05): one shared selection — canvas card
+  // clicks focus the map POI, map marker clicks highlight + scroll the canvas.
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const { layout, toggle, resizeAi, setView } = useWorkbenchLayout(tripId)
   const { open: toolsOpen, toggle: toggleTools, close: closeTools } = useToolsPanel(tripId)
   const [actionError, setActionError] = useState('')
@@ -55,6 +58,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     let cancelled = false
     setState({ status: 'loading' })
     setActionError('')
+    setSelectedItemId(null)
     void fetchTripCanvas(tripId).then((result) => {
       if (cancelled) return
       if (result.ok) setState({ status: 'ready', data: result.data })
@@ -215,6 +219,8 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
                     onAddDay={handleAddDay}
                     onThemeSave={handleThemeSave}
                     onDeleteDay={handleDeleteDay}
+                    onCardClick={setSelectedItemId}
+                    highlightItemId={selectedItemId}
                   />
                 )}
               </div>
@@ -226,7 +232,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
           </div>
         )}
 
-        {/* 右栏 地图 —— 可收起（渲染留给 ticket 05） */}
+        {/* 右栏 地图 —— 可收起（ticket 05：真实路线投影 + 画布联动） */}
         {layout.mapCollapsed ? (
           <CollapsedRail
             id="workbench-rail-map"
@@ -239,7 +245,13 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
             id="workbench-column-map"
             className="flex w-[320px] shrink-0 flex-col border-l border-line bg-white"
           >
-            <MapPanelPlaceholder onCollapse={() => toggle('map')} />
+            <MapPanel
+              days={state.status === 'ready' ? state.data.days : []}
+              legs={state.status === 'ready' ? state.data.legs : []}
+              selectedItemId={selectedItemId}
+              onSelectItem={setSelectedItemId}
+              onCollapse={() => toggle('map')}
+            />
           </div>
         )}
       </div>

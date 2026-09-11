@@ -17,6 +17,16 @@ export interface UseRouteMapOptions {
   onMapReady: () => void
   /** Optional sink that receives the live handle so the owner can draw on it. */
   handleRef?: React.MutableRefObject<RouteMapHandle | null>
+  /**
+   * Extra createRouteMap options (ticket 05): the workbench map opts out of
+   * the guide's static markers / Leaflet zoom control and sets its own view.
+   */
+  createOptions?: {
+    staticMarkers?: boolean
+    zoomControl?: boolean
+    layersControl?: boolean
+    initialView?: { center: [number, number]; zoom: number }
+  }
 }
 
 export interface RouteMapController {
@@ -44,6 +54,7 @@ export function useRouteMap(options: UseRouteMapOptions): RouteMapController {
       handle = createRouteMap(container, {
         onDaySelect: (day) => onDaySelectRef.current(day),
         onTileError: setTileError,
+        ...options.createOptions,
       })
     } catch (error) {
       // Map must never break the itinerary: keep the page usable (legacy input
