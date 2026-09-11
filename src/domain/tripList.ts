@@ -183,7 +183,7 @@ function extractError(payload: unknown): string | null {
 }
 
 /** Tolerant row normalization: invalid entries → null (dropped). */
-function normalizeTrip(value: unknown): TripSummary | null {
+export function normalizeTrip(value: unknown): TripSummary | null {
   if (value === null || typeof value !== 'object') return null
   const record = value as Record<string, unknown>
   const id = typeof record.id === 'string' ? record.id.trim() : ''

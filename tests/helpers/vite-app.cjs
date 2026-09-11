@@ -93,8 +93,11 @@ async function startViteApp({ mode } = {}) {
  * - `amapConfig404`: force /amap-config.js to 404 (dev serves the gitignored
  *   root file, so the no-config path needs explicit 404 in dev; preview 404s
  *   it naturally)
+ * - `setup` (ticket 04): optional async hook `async ({ page, server }) => void`
+ *   awaited right BEFORE navigation — the seam API-mock suites use to install
+ *   `page.route` handlers (handlers registered before goto() win).
  */
-async function openApp({ mode, init, viewport, entry = '/', amapConfig404 = false, acceptDownloads = false } = {}) {
+async function openApp({ mode, init, viewport, entry = '/', amapConfig404 = false, acceptDownloads = false, setup } = {}) {
   let server;
   let browser;
   try {
@@ -117,6 +120,7 @@ async function openApp({ mode, init, viewport, entry = '/', amapConfig404 = fals
       await page.route('**/amap-config.js', (route) => route.fulfill({ status: 404, body: '' }));
     }
     if (init) await page.addInitScript(init);
+    if (setup) await setup({ page, server });
     await page.goto(`${server.url}${entry}`);
     return {
       page,
