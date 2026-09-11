@@ -11,6 +11,7 @@ import {
   deleteBase,
   getDayRoute,
   getDayStay,
+  getBackup,
   inUseBaseCount,
   listBases,
   normalizeBase,
@@ -612,6 +613,40 @@ test('validateBackup rejects invalid JSON, wrong format and non-object input', (
   wrongFormat.format = 'other'
   assert.deepEqual(validateBackup(wrongFormat as never).errors, ['备份格式不受支持。'])
   assert.deepEqual(validateBackup('[]').errors, ['备份文件必须是一个 JSON 对象。'])
+})
+
+test('getBackup exports the legacy payload: explicit stays, stripped flags, no settings', () => {
+  const created = createBase(EMPTY, baseInput({ id: 'custom-initial' }))
+  assert.ok(created.ok && created.committed)
+  const applied = applyStays(created.state, [1], 'custom-initial')
+  assert.ok(applied.ok && applied.committed)
+  const backup = getBackup(applied.state)
+  assert.deepEqual(Object.keys(backup).sort(), ['bases', 'format', 'stays', 'version'])
+  assert.equal(backup.format, 'hailar-slow-trip-accommodation')
+  assert.equal(backup.version, 1)
+  assert.deepEqual(backup.bases.map((base) => base.id), ['custom-initial'])
+  assert.equal('isDefault' in (backup.bases[0] ?? {}), false, 'isDefault stripped from exports')
+  assert.equal('routeName' in (backup.bases[0] ?? {}), false, 'routeName never exported')
+  // every overnight night explicit so the file re-validates (6 nights)
+  const exportedDays = Object.keys(backup.stays).map(Number).sort((a, b) => a - b)
+  assert.deepEqual(exportedDays, overnightDays)
+  assert.equal(backup.stays[1], 'custom-initial')
+  assert.equal(backup.stays[0], 'default-hailar')
+  // export round-trips through validateBackup (the import gate)
+  const validation = validateBackup(JSON.stringify(backup))
+  assert.ok(validation.ok)
+})
+
+test('export base object keeps the legacy byte-compatible field order', () => {
+  const created = createBase(EMPTY, { ...baseInput(), id: 'custom-ab12', address: '海拉尔区', notes: '独立暖气' })
+  assert.ok(created.ok && created.committed)
+  const applied = applyStays(created.state, [4], 'custom-ab12')
+  assert.ok(applied.ok && applied.committed)
+  const parsed = JSON.parse(JSON.stringify(getBackup(applied.state))) as { bases: Array<Record<string, unknown>> }
+  assert.deepEqual(Object.keys(parsed.bases[0] ?? {}), ['id', 'name', 'type', 'lat', 'lng', 'address', 'notes', 'createdAt'])
+  assert.equal(parsed.bases[0]?.name, '浏览器验收民宿')
+  assert.equal(parsed.bases[0]?.address, '海拉尔区')
+  assert.equal(parsed.bases[0]?.notes, '独立暖气')
 })
 
 test('routeSignature distinguishes changed endpoints for replaceState comparison', () => {
