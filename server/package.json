@@ -18,6 +18,8 @@
     "@libsql/client": "^0.18.0",
     "@mastra/core": "^1.66.0",
     "@mastra/hono": "^1.7.8",
+    "@mastra/libsql": "^1.22.5",
+    "@mastra/memory": "^1.29.0",
     "hono": "^4.12.8"
   },
   "devDependencies": {
