@@ -14,7 +14,7 @@ import { AI_WIDTH_MAX, AI_WIDTH_MIN } from '../../domain/workbenchLayout'
 import { useWorkbenchLayout } from '../../hooks/useWorkbenchLayout'
 import WorkbenchTopbar from './WorkbenchTopbar'
 import CanvasColumn from './CanvasColumn'
-import ChatPanelPlaceholder from './ChatPanelPlaceholder'
+import ChatPanel from './ChatPanel'
 import MapPanelPlaceholder from './MapPanelPlaceholder'
 
 type LoadState =
@@ -79,7 +79,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
               className="flex shrink-0 flex-col border-r border-line bg-white"
               style={{ width: layout.aiWidth }}
             >
-              <ChatPanelPlaceholder onCollapse={() => toggle('ai')} />
+              <ChatPanel tripId={tripId} onCollapse={() => toggle('ai')} />
             </div>
             <AiResizeHandle width={layout.aiWidth} onResize={resizeAi} />
           </>

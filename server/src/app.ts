@@ -1,7 +1,9 @@
 import { Hono } from 'hono'
 import { MastraServer, type HonoBindings, type HonoVariables } from '@mastra/hono'
 import { fileURLToPath } from 'node:url'
-import { mastra } from './mastra.js'
+import { createMastra, modelConfigFromEnv } from './mastra.js'
+import type { MastraModelConfig } from '@mastra/core/llm'
+import type { MastraMemory } from '@mastra/core/memory'
 import { readServerVersion } from './version.js'
 import { createSqliteTripRepository } from './trips/factory.js'
 import type { SqlDatabase } from './db/driver.js'
@@ -12,6 +14,12 @@ import { createSqliteWorkbenchStore } from './days/driver-sqlite.js'
 import { readTripCanvas } from './days/repository.js'
 import type { WorkbenchStoreDriver } from './days/types.js'
 import type { TripUpdate } from './trips/types.js'
+import { ChatMessageRepository } from './chat/repository.js'
+import { MemoryMessageStoreDriver } from './chat/driver-memory.js'
+import { SqliteMessageStoreDriver } from './chat/driver-sqlite.js'
+import type { MessageStoreDriver } from './chat/types.js'
+import { registerChatRoutes } from './chat/routes.js'
+import { readJsonBody } from './http/body.js'
 
 export type AppEnv = {
   Bindings: HonoBindings
@@ -43,6 +51,22 @@ export type CreateAppOptions = {
    * a database file.
    */
   workbenchStore?: WorkbenchStoreDriver
+  /**
+   * Injected language model for the planner agent (ticket 06; tests pass a
+   * mock model here per spec 测试接缝 #1). Defaults to the AI_* env routing.
+   */
+  plannerModel?: MastraModelConfig
+  /**
+   * Injected agent memory (ticket 06; tests pass a MastraMemory over an
+   * in-memory store). Defaults to Mastra Memory over the same SQLite
+   * database (default startup path only).
+   */
+  plannerMemory?: MastraMemory
+  /**
+   * Injected chat message store (ticket 06; tests use the in-memory driver).
+   * Defaults to the same SQLite database the trip repository opens.
+   */
+  messageStore?: MessageStoreDriver
 }
 
 /** Default SQLite location: <server>/data/trips.db (gitignored). */
@@ -60,6 +84,16 @@ function defaultDatabaseUrl(): string {
  */
 export async function createApp(options: CreateAppOptions = {}): Promise<Hono<AppEnv>> {
   const app = new Hono<AppEnv>()
+
+  const mastra = createMastra({
+    model: options.plannerModel,
+    memory: options.plannerMemory,
+    // The default memory store points at the app database — but only on the
+    // default (SQLite) startup path; pure in-memory test apps without an
+    // injected memory run the agent without recall instead of opening a file.
+    databaseUrl: options.tripRepository ? undefined : options.databaseUrl ?? process.env.TRIPS_DB_PATH ?? defaultDatabaseUrl(),
+  })
+  const memoryConfigured = options.plannerMemory !== undefined || !options.tripRepository
 
   const server = new MastraServer({ app, mastra })
   await server.init()
@@ -84,6 +118,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
 
   let tripRepository: TripRepository
   let contentRepository: TripContentRepository | undefined
+  let messageStore: MessageStoreDriver | null = options.messageStore ?? null
 
   if (options.tripRepository) {
     tripRepository = options.tripRepository
@@ -95,6 +130,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     tripRepository = sqlite.repository
     contentRepository = sqlite.contentRepository
     workbenchStore = createSqliteWorkbenchStore(sqlite.db)
+    messageStore = new SqliteMessageStoreDriver(sqlite.db)
     if (options.seedBuiltinTrip ?? (options.databaseUrl === undefined)) {
       await seedBuiltinTrip(sqlite.db)
     }
@@ -214,6 +250,26 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     })
   })
 
+  // ---- AI chat, qa round (ticket 06, additive) ------------------------------
+  // POST /api/trips/:id/messages streams the planner agent's reply over SSE
+  // and persists user+assistant turns in the messages table; GET returns the
+  // per-trip history. Injected-only setups without a message store fall back
+  // to the in-memory driver (process-lifetime persistence), which is enough
+  // for agent-driven tests that don't care about the messages table. Event
+  // schema is documented at the top of chat/routes.ts.
+  const messageRepository =
+    messageStore !== null
+      ? new ChatMessageRepository(messageStore)
+      : new ChatMessageRepository(new MemoryMessageStoreDriver())
+
+  registerChatRoutes(app, {
+    tripRepository,
+    messages: messageRepository,
+    planner: mastra.getAgent('planner'),
+    modelConfigured: options.plannerModel !== undefined || modelConfigFromEnv() !== null,
+    memoryConfigured,
+  })
+
   return app
 }
 
@@ -226,19 +282,6 @@ function tripError(c: { json(body: unknown, status?: number): Response }, error:
 /** Content routes need a content repository; injected-only setups may omit it. */
 function contentStorageMissing(c: { json(body: unknown, status?: number): Response }) {
   return c.json({ error: '服务器未配置内容存储' }, 500)
-}
-
-/** Parse a JSON request body; null when missing/invalid (caller → 400). */
-async function readJsonBody(c: { req: { json(): Promise<unknown> } }): Promise<Record<string, unknown> | null> {
-  let body: unknown
-  try {
-    body = await c.req.json()
-  } catch {
-    return null
-  }
-  return body !== null && typeof body === 'object' && !Array.isArray(body)
-    ? (body as Record<string, unknown>)
-    : null
 }
 
 /** Pick the known trip fields off a request body (values stay unvalidated). */
