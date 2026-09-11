@@ -15,11 +15,18 @@ import {
 /**
  * 行程列表页 (ticket 02) — default view of the app shell. Create / rename /
  * delete through the server API; every row shows the title plus the
- * "10.02至10.08 7天6晚" date-range badge. Opening a trip will navigate to the
- * workbench in ticket 04 — rows are inert until then; the built-in Hailar
- * guide stays reachable via the header button.
+ * "10.02至10.08 7天6晚" date-range badge. Ticket 04: clicking a row opens the
+ * workbench for that trip (`onOpenTrip`); the built-in Hailar guide stays
+ * reachable via the header button.
  */
-export default function TripListPage({ onOpenGuide }: { onOpenGuide: () => void }) {
+export default function TripListPage({
+  onOpenGuide,
+  onOpenTrip,
+}: {
+  onOpenGuide: () => void
+  /** Optional so the component stays usable without a workbench (tests). */
+  onOpenTrip?: (tripId: string) => void
+}) {
   const [trips, setTrips] = useState<TripSummary[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [form, setForm] = useState<TripFormInput>({ title: '', startDate: '', endDate: '' })
@@ -207,11 +214,15 @@ export default function TripListPage({ onOpenGuide }: { onOpenGuide: () => void 
             <li
               key={trip.id}
               data-trip-id={trip.id}
-              className="border border-line rounded-[8px] bg-white px-[22px] py-[18px] flex items-center gap-[18px] max-sm:flex-wrap max-sm:px-[16px] max-sm:py-[14px]"
+              onClick={onOpenTrip ? () => onOpenTrip(trip.id) : undefined}
+              className={`border border-line rounded-[8px] bg-white px-[22px] py-[18px] flex items-center gap-[18px] max-sm:flex-wrap max-sm:px-[16px] max-sm:py-[14px] ${
+                onOpenTrip ? 'cursor-pointer hover:border-green transition-colors' : ''
+              }`}
             >
               {editingId === trip.id ? (
                 <form
                   className="flex items-center gap-[10px] flex-1 min-w-0"
+                  onClick={(event) => event.stopPropagation()}
                   onSubmit={(event) => {
                     event.preventDefault()
                     void handleRenameSubmit(trip)
@@ -246,7 +257,10 @@ export default function TripListPage({ onOpenGuide }: { onOpenGuide: () => void 
                     type="button"
                     data-action="rename"
                     aria-label={`重命名 ${trip.title}`}
-                    onClick={() => startRename(trip)}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      startRename(trip)
+                    }}
                     className="grid h-[34px] w-[34px] place-items-center border border-line rounded-[5px] text-muted hover:text-green hover:border-green transition-colors"
                   >
                     <Pencil aria-hidden="true" className="w-[14px]" />
@@ -255,7 +269,8 @@ export default function TripListPage({ onOpenGuide }: { onOpenGuide: () => void 
                     type="button"
                     data-action="delete"
                     aria-label={`删除 ${trip.title}`}
-                    onClick={() => {
+                    onClick={(event) => {
+                      event.stopPropagation()
                       setActionError(null)
                       setDeleting(trip)
                     }}

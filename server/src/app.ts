@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url'
 import { mastra } from './mastra.js'
 import { readServerVersion } from './version.js'
 import { createSqliteTripRepository } from './trips/factory.js'
+import type { SqlDatabase } from './db/driver.js'
 import { TripRepository } from './trips/repository.js'
+import { createSqliteWorkbenchStore } from './days/driver-sqlite.js'
+import { readTripCanvas } from './days/repository.js'
+import type { WorkbenchStoreDriver } from './days/types.js'
 import type { TripUpdate } from './trips/types.js'
 
 export type AppEnv = {
@@ -17,6 +21,13 @@ export type CreateAppOptions = {
   tripRepository?: TripRepository
   /** SQLite file URL for the default repository (env: TRIPS_DB_PATH). */
   databaseUrl?: string
+  /**
+   * Injected read-only workbench store (ticket 04; tests use the in-memory
+   * driver). Defaults to the same SQLite database the trip repository opens,
+   * resolved lazily on first canvas read so pure in-memory apps never open
+   * a database file.
+   */
+  workbenchStore?: WorkbenchStoreDriver
 }
 
 /** Default SQLite location: <server>/data/trips.db (gitignored). */
@@ -41,6 +52,24 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
   const tripRepository =
     options.tripRepository ??
     (await createSqliteTripRepository(options.databaseUrl ?? process.env.TRIPS_DB_PATH ?? defaultDatabaseUrl())).repository
+
+  // ---- Workbench canvas read (ticket 04, additive) --------------------------
+  // Read-only day/item/leg reads for the three-column workbench. Resolved
+  // lazily so in-memory test apps never open SQLite; when the default is
+  // used it reuses the same database file the trip repository opened.
+  let workbenchStore = options.workbenchStore ?? null
+  let workbenchDb: SqlDatabase | null = null
+  const resolveWorkbenchStore = async (): Promise<WorkbenchStoreDriver> => {
+    if (workbenchStore) return workbenchStore
+    if (!workbenchDb) {
+      const created = await createSqliteTripRepository(
+        options.databaseUrl ?? process.env.TRIPS_DB_PATH ?? defaultDatabaseUrl(),
+      )
+      workbenchDb = created.db
+    }
+    workbenchStore = createSqliteWorkbenchStore(workbenchDb)
+    return workbenchStore
+  }
 
   // ---- Trip CRUD (ticket 02) ------------------------------------------------
   // Responses stay forward-compatible with later tickets: list/create/rename/
@@ -82,6 +111,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     const result = await tripRepository.remove(c.req.param('id'))
     if (!result.ok) return tripError(c, result.error, result.code)
     return c.json({ ok: true })
+  })
+
+  app.get('/api/trips/:id/canvas', async (c) => {
+    const trip = await tripRepository.get(c.req.param('id'))
+    if (trip === null) return c.json({ error: '行程不存在' }, 404)
+    const canvas = await readTripCanvas(await resolveWorkbenchStore(), c.req.param('id'))
+    return c.json({ trip, ...canvas })
   })
 
   app.get('/api/health', (c) => {
