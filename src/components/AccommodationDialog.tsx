@@ -32,10 +32,11 @@ import {
   useState,
   type ChangeEvent,
 } from 'react'
-import { Crosshair, Plus, X } from 'lucide-react'
+import { ArchiveRestore, Crosshair, Plus, X } from 'lucide-react'
 import type { LeafletMouseEvent } from 'leaflet'
 import { useAccommodation } from '../hooks/useAccommodation'
 import { useAmapLive } from '../hooks/useAmapLive'
+import { AccommodationBackupDialog } from './AccommodationBackupDialog'
 import {
   getBase,
   getDayStay,
@@ -110,6 +111,7 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT)
   const [locationSummary, setLocationSummary] = useState('尚未在地图上选择位置')
   const [status, setStatus] = useState('')
+  const [backupOpen, setBackupOpen] = useState(false)
 
   const currentDayRef = useRef(currentDay)
   currentDayRef.current = currentDay
@@ -136,6 +138,13 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
   const closeDialog = (): void => {
     setPicking(false)
     setOpen(false)
+  }
+
+  /** Ticket 07 entry: the backup dialog lives in the shared accommodation dialog. */
+  const openBackupDialog = (): void => {
+    setPicking(false)
+    setOpen(false)
+    setBackupOpen(true)
   }
 
   useEffect(() => {
@@ -475,6 +484,18 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
               恢复本晚默认住宿
             </button>
           </section>
+          <section className="accommodation-backup-entry">
+            <button
+              type="button"
+              id="accommodation-backup-open"
+              title="导出或恢复住宿备份"
+              aria-label="导出或恢复住宿备份"
+              onClick={openBackupDialog}
+            >
+              <ArchiveRestore aria-hidden="true" />
+              导出或恢复住宿备份
+            </button>
+          </section>
           <button type="button" id="accommodation-add-toggle" className="accommodation-add" onClick={addNew}>
             <Plus aria-hidden="true" />
             新增住宿基地
@@ -555,6 +576,7 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
           取消选点
         </button>
       </div>
+      <AccommodationBackupDialog open={backupOpen} onRequestClose={() => setBackupOpen(false)} />
     </AccommodationDialogContext.Provider>
   )
 }
