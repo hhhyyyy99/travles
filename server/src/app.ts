@@ -12,6 +12,9 @@ import { createSqliteWorkbenchStore } from './days/driver-sqlite.js'
 import { readTripCanvas } from './days/repository.js'
 import type { WorkbenchStoreDriver } from './days/types.js'
 import type { TripUpdate } from './trips/types.js'
+import { mountToolsRoutes } from './tools/routes.js'
+import { createSqliteToolsStore } from './tools/driver-sqlite.js'
+import type { ToolsStoreDriver } from './tools/types.js'
 
 export type AppEnv = {
   Bindings: HonoBindings
@@ -43,6 +46,12 @@ export type CreateAppOptions = {
    * a database file.
    */
   workbenchStore?: WorkbenchStoreDriver
+  /**
+   * Injected tools store (ticket 14; tests use the in-memory driver).
+   * Defaults to the same SQLite database the trip repository opens, resolved
+   * lazily on first tools read so pure in-memory apps never open a file.
+   */
+  toolsStore?: ToolsStoreDriver
 }
 
 /** Default SQLite location: <server>/data/trips.db (gitignored). */
@@ -203,6 +212,26 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     const canvas = await readTripCanvas(await resolveWorkbenchStore(), c.req.param('id'))
     return c.json({ trip, ...canvas })
   })
+
+  // ---- Tools panels: notes / checklist / gallery (ticket 14, additive) ------
+  // Dockable canvas-side panels (便签/清单/图库). The store is resolved like
+  // the workbench store: an injected driver in tests, else lazily over the
+  // same SQLite database. All routes live in server/src/tools/routes.ts so
+  // this file only carries this one hunk.
+  let toolsStore = options.toolsStore ?? null
+  let toolsDb: SqlDatabase | null = null
+  const resolveToolsStore = async (): Promise<ToolsStoreDriver> => {
+    if (toolsStore) return toolsStore
+    if (!toolsDb) {
+      const created = await createSqliteTripRepository(
+        options.databaseUrl ?? process.env.TRIPS_DB_PATH ?? defaultDatabaseUrl(),
+      )
+      toolsDb = created.db
+    }
+    toolsStore = createSqliteToolsStore(toolsDb)
+    return toolsStore
+  }
+  mountToolsRoutes(app, { tripRepository, resolveToolsStore })
 
   app.get('/api/health', (c) => {
     return c.json({
