@@ -317,7 +317,7 @@ export function AccommodationManager({ open, onClose, onReplace }: Accommodation
         </ul>
       </section>
 
-      <section className="accommodation-manager-editor" hidden={!editingId}>
+      <section id="accommodation-manager-editor" className="accommodation-manager-editor" hidden={!editingId}>
         <div className="accommodation-manager-section-heading">
           <h3>编辑住宿基地</h3>
           <button type="button" id="accommodation-manager-cancel-edit" onClick={hideEditor}>
