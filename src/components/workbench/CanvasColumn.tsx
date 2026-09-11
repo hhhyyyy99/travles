@@ -26,7 +26,9 @@ import {
   dayAccentColor,
   dayDateLabel,
   formatLegLabel,
+  isLongDriveLeg,
   legsByPair,
+  longDriveWarningText,
   weekdayLabel,
   type WorkbenchDay,
   type WorkbenchItem,
@@ -672,13 +674,19 @@ export function CanvasCard({
 function LegChip({ leg }: { leg: WorkbenchLeg | null }) {
   const label = formatLegLabel(leg)
   if (!label) return null
+  const longDrive = isLongDriveLeg(leg)
   return (
     <div
       data-leg-chip={leg?.id ?? ''}
-      className="flex items-center gap-[6px] rounded-[999px] border border-line bg-paper px-[10px] py-[3px] text-[11px] text-muted"
+      data-leg-warning={longDrive ? leg?.id : undefined}
+      title={longDrive ? longDriveWarningText(leg) : undefined}
+      className={`flex items-center gap-[6px] rounded-[999px] border px-[10px] py-[3px] text-[11px] ${
+        longDrive ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]' : 'border-line bg-paper text-muted'
+      }`}
     >
       <Car aria-hidden="true" className="w-[12px]" />
       {label}
+      {longDrive && <span data-leg-warning-label>超长，建议拆分</span>}
     </div>
   )
 }

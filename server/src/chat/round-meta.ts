@@ -39,6 +39,17 @@ export type RoundSource = {
   url: string
 }
 
+/** A boundary warning surfaced alongside a round (conflict or long drive). */
+export type RoundWarning = {
+  kind: 'time-conflict' | 'long-drive'
+  title: string
+  message: string
+  suggestion?: string
+  from?: string
+  to?: string
+  durationMin?: number
+}
+
 /**
  * Structured payload emitted by `emit_round_meta` (one call per turn).
  *
@@ -52,6 +63,8 @@ export type RoundSource = {
  * - `think` + `thinkComplete`: reasoning summary for the "思考完成" collapsible
  *   (empty/absent → the section is hidden).
  * - `sources`: citations for the "来源" collapsible (absent → hidden).
+ * - `impacts`/`conflicts`/`compromises`: structured patch-explain details.
+ * - `warnings`: deterministic boundary warnings such as a long drive.
  */
 export type RoundMetaPayload = {
   round: string
@@ -60,6 +73,11 @@ export type RoundMetaPayload = {
   think?: string
   thinkComplete?: boolean
   sources?: RoundSource[]
+  /** Patch-explain impact/conflict details; omitted on ordinary rounds. */
+  impacts?: string[]
+  conflicts?: string[]
+  compromises?: string[]
+  warnings?: RoundWarning[]
 }
 
 /** Zod schema of the tool input — doubles as the validation contract. */
@@ -99,6 +117,36 @@ export const roundMetaInputSchema = z.object({
     .max(10)
     .optional()
     .describe('引用来源，用于「来源」折叠区'),
+  impacts: z
+    .array(z.string().min(1).max(300))
+    .max(20)
+    .optional()
+    .describe('修改将影响的日期或安排，每条一句'),
+  conflicts: z
+    .array(z.string().min(1).max(300))
+    .max(12)
+    .optional()
+    .describe('识别出的冲突；patch-explain 回合必须明确列出'),
+  compromises: z
+    .array(z.string().min(1).max(300))
+    .max(12)
+    .optional()
+    .describe('执行修改后为满足约束做出的妥协说明'),
+  warnings: z
+    .array(
+      z.object({
+        kind: z.enum(['time-conflict', 'long-drive']),
+        title: z.string().min(1).max(120),
+        message: z.string().min(1).max(400),
+        suggestion: z.string().max(400).optional(),
+        from: z.string().max(120).optional(),
+        to: z.string().max(120).optional(),
+        durationMin: z.number().finite().min(0).optional(),
+      }),
+    )
+    .max(20)
+    .optional()
+    .describe('边界警示：时间约束冲突或超过 6 小时的驾驶段'),
 })
 
 export type EmitRoundMetaResult = {
@@ -115,7 +163,7 @@ export function createEmitRoundMetaTool() {
   return createTool({
     id: 'emit_round_meta',
     description:
-      '每轮回复必须调用一次：上报本轮回合类型与结构化元数据（澄清选项 chips、行内地点 POI 链接、思考摘要、来源）。正文之外的所有结构化信息只通过本工具输出，不要写进正文。',
+      '每轮回复必须调用一次：上报本轮回合类型与结构化元数据（澄清选项 chips、patch-explain 的影响/冲突/妥协、边界警示、行内地点 POI 链接、思考摘要、来源）。正文之外的所有结构化信息只通过本工具输出，不要写进正文。',
     inputSchema: roundMetaInputSchema,
     execute: async (input): Promise<EmitRoundMetaResult> => {
       const meta = normalizeRoundMeta(input)
@@ -138,6 +186,10 @@ export function normalizeRoundMeta(input: unknown): RoundMetaPayload {
     ...(data.think !== undefined && data.think !== '' ? { think: data.think } : {}),
     ...(data.thinkComplete !== undefined ? { thinkComplete: data.thinkComplete } : {}),
     ...(data.sources !== undefined && data.sources.length > 0 ? { sources: data.sources } : {}),
+    ...(data.impacts !== undefined && data.impacts.length > 0 ? { impacts: data.impacts } : {}),
+    ...(data.conflicts !== undefined && data.conflicts.length > 0 ? { conflicts: data.conflicts } : {}),
+    ...(data.compromises !== undefined && data.compromises.length > 0 ? { compromises: data.compromises } : {}),
+    ...(data.warnings !== undefined && data.warnings.length > 0 ? { warnings: data.warnings } : {}),
   }
 }
 

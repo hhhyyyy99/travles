@@ -46,6 +46,16 @@ export type ChatSource = {
   url: string
 }
 
+export type ChatRoundWarning = {
+  kind: 'time-conflict' | 'long-drive'
+  title: string
+  message: string
+  suggestion?: string
+  from?: string
+  to?: string
+  durationMin?: number
+}
+
 /**
  * Structured round metadata (ticket 07) — the `meta` SSE event payload and
  * the persisted `meta` field of an assistant message. `round` mirrors the
@@ -61,6 +71,10 @@ export type ChatMessageMeta = {
   think?: string
   thinkComplete?: boolean
   sources?: ChatSource[]
+  impacts?: string[]
+  conflicts?: string[]
+  compromises?: string[]
+  warnings?: ChatRoundWarning[]
 }
 
 /**
@@ -177,6 +191,35 @@ export function normalizeChatMeta(raw: unknown): ChatMessageMeta | null {
       }
     }
   }
+  const readTextList = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '') : []
+  const warnings: ChatRoundWarning[] = []
+  if (Array.isArray(m.warnings)) {
+    for (const entry of m.warnings) {
+      if (entry === null || typeof entry !== 'object') continue
+      const item = entry as Record<string, unknown>
+      const kind = item.kind
+      const title = item.title
+      const message = item.message
+      if (
+        (kind === 'time-conflict' || kind === 'long-drive') &&
+        typeof title === 'string' &&
+        title &&
+        typeof message === 'string' &&
+        message
+      ) {
+        warnings.push({
+          kind,
+          title,
+          message,
+          ...(typeof item.suggestion === 'string' && item.suggestion ? { suggestion: item.suggestion } : {}),
+          ...(typeof item.from === 'string' && item.from ? { from: item.from } : {}),
+          ...(typeof item.to === 'string' && item.to ? { to: item.to } : {}),
+          ...(typeof item.durationMin === 'number' && Number.isFinite(item.durationMin) ? { durationMin: item.durationMin } : {}),
+        })
+      }
+    }
+  }
   return {
     round,
     ...(chips.length > 0 ? { chips } : {}),
@@ -184,6 +227,10 @@ export function normalizeChatMeta(raw: unknown): ChatMessageMeta | null {
     ...(typeof m.think === 'string' && m.think ? { think: m.think } : {}),
     ...(typeof m.thinkComplete === 'boolean' ? { thinkComplete: m.thinkComplete } : {}),
     ...(sources.length > 0 ? { sources } : {}),
+    ...(readTextList(m.impacts).length > 0 ? { impacts: readTextList(m.impacts) } : {}),
+    ...(readTextList(m.conflicts).length > 0 ? { conflicts: readTextList(m.conflicts) } : {}),
+    ...(readTextList(m.compromises).length > 0 ? { compromises: readTextList(m.compromises) } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
   }
 }
 

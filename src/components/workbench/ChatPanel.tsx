@@ -21,7 +21,7 @@
  *   (spec 用户故事 25); the history stays untouched.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Check, Copy, FileText, ListChecks, MessageCircle, PanelLeftClose, SendHorizontal } from 'lucide-react'
+import { AlertTriangle, Check, Copy, FileText, ListChecks, MessageCircle, PanelLeftClose, SendHorizontal } from 'lucide-react'
 import {
   fetchChatHistory,
   sendChatMessage,
@@ -29,6 +29,7 @@ import {
   type ChatMessage,
   type ChatMessageMeta,
   type ChatPoiLink,
+  type ChatRoundWarning,
   type ChatStreamError,
 } from '../../domain/chat'
 import { parseAssistantContent, type InlineSpan } from '../../domain/chatMarkdown'
@@ -397,6 +398,7 @@ function ChatBubble({
   const think = message.think ?? roundMeta?.think ?? null
   const sources = message.sources ?? roundMeta?.sources ?? null
   const patch = appliedPatch ?? message.appliedPatch ?? null
+  const patchExplain = roundMeta?.round === 'patch-explain'
 
   if (isUser) {
     return (
@@ -443,10 +445,62 @@ function ChatBubble({
             ))}
           </div>
         )}
+        {(patchExplain || (roundMeta?.warnings?.length ?? 0) > 0) && roundMeta !== null && (
+          <PatchExplainDetails meta={roundMeta} />
+        )}
         {patch !== null && <AppliedPatchCard record={patch} />}
         {sources !== null && sources.length > 0 && <SourcesSection sources={sources} />}
         {!streaming && <CopyButton content={message.content} />}
       </div>
+    </div>
+  )
+}
+
+/** Structured impact/conflict/compromise details for a patch-explain round. */
+function PatchExplainDetails({ meta }: { meta: ChatMessageMeta }) {
+  const warnings = meta.warnings ?? []
+  const sections: { label: string; values: string[]; tone?: 'danger' | 'muted' }[] = [
+    { label: '影响范围', values: meta.impacts ?? [] },
+    { label: '需要先处理的冲突', values: meta.conflicts ?? [], tone: 'danger' },
+    { label: '执行后的妥协', values: meta.compromises ?? [], tone: 'muted' },
+  ]
+  const hasDetails = sections.some((section) => section.values.length > 0) || warnings.length > 0
+  if (!hasDetails) return null
+  return (
+    <div data-chat-patch-explain className="flex flex-col gap-[6px] rounded-[6px] border border-[#d9c49b] bg-[#fffaf0] px-[8px] py-[7px] text-[12px]">
+      {sections.map((section) =>
+        section.values.length > 0 ? (
+          <div key={section.label}>
+            <p
+              data-chat-patch-section={section.label}
+              className={`font-[550] ${section.tone === 'danger' ? 'text-[#b75342]' : 'text-ink'}`}
+            >
+              {section.label}
+            </p>
+            <ul className="mt-[2px] list-disc pl-[16px] text-muted">
+              {section.values.map((value) => <li key={value}>{value}</li>)}
+            </ul>
+          </div>
+        ) : null,
+      )}
+      {warnings.length > 0 && <RoundWarnings warnings={warnings} />}
+    </div>
+  )
+}
+
+function RoundWarnings({ warnings }: { warnings: ChatRoundWarning[] }) {
+  return (
+    <div data-chat-warnings className="flex flex-col gap-[4px]">
+      {warnings.map((warning, index) => (
+        <div key={`${warning.kind}-${warning.title}-${index}`} className="flex gap-[5px] text-[#b75342]">
+          <AlertTriangle aria-hidden="true" className="mt-[3px] w-[13px] shrink-0" />
+          <div>
+            <p className="font-[550]">{warning.title}</p>
+            <p>{warning.message}</p>
+            {warning.suggestion && <p className="text-muted">{warning.suggestion}</p>}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
