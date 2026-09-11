@@ -6,6 +6,7 @@
  * Ticket 07 adds round-metadata persistence on assistant rows: `think`
  * (text), `sources` (JSON) and `meta` (JSON RoundMetaPayload). Corrupt JSON
  * is dropped field-by-field — a bad `sources` blob never hides the message.
+ * Ticket 08 adds `applied_patch` (JSON TripPatchRecord) the same way.
  */
 import { randomUUID } from 'node:crypto'
 import type { RoundSource } from './round-meta.js'
@@ -52,6 +53,7 @@ export class ChatMessageRepository {
             think: meta.think ?? null,
             sources: meta.sources ? JSON.stringify(meta.sources) : null,
             meta: meta.meta ? JSON.stringify(meta.meta) : null,
+            applied_patch: meta.appliedPatch ? JSON.stringify(meta.appliedPatch) : null,
           }
         : {}),
     }
@@ -103,6 +105,7 @@ function mapRowToMessage(row: MessageRow, tripId: string): ChatMessage | null {
     message.think = typeof row.think === 'string' && row.think !== '' ? row.think : null
     message.sources = parseSources(row.sources)
     message.meta = parseRoundMeta(row.meta)
+    message.appliedPatch = parseAppliedPatch(row.applied_patch)
   }
   return message
 }
@@ -137,6 +140,23 @@ function parseRoundMeta(raw: string | null | undefined): ChatMessage['meta'] {
     const round = (parsed as { round?: unknown }).round
     if (typeof round !== 'string' || round === '') return null
     return parsed as NonNullable<ChatMessage['meta']>
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Parse the applied-patch JSON column (ticket 08); null unless the record
+ * carries a summary — a corrupt blob never hides the message itself.
+ */
+function parseAppliedPatch(raw: string | null | undefined): ChatMessage['appliedPatch'] {
+  if (typeof raw !== 'string' || raw === '') return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed === null || typeof parsed !== 'object') return null
+    const summary = (parsed as { summary?: unknown }).summary
+    if (typeof summary !== 'string' || summary === '') return null
+    return parsed as NonNullable<ChatMessage['appliedPatch']>
   } catch {
     return null
   }

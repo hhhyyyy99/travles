@@ -1,17 +1,20 @@
 /**
- * SQLite MessageStoreDriver (tickets 06/07) — libsql-backed chat persistence
- * over the same `SqlDatabase` seam as the other drivers. Reads are ordered by
- * created_at then rowid so same-timestamp messages keep insertion order.
+ * SQLite MessageStoreDriver (tickets 06/07/08) — libsql-backed chat
+ * persistence over the same `SqlDatabase` seam as the other drivers. Reads
+ * are ordered by created_at then rowid so same-timestamp messages keep
+ * insertion order.
  *
- * Ticket 07 also persists the round-metadata columns (think/sources/meta).
- * Pre-ticket-07 databases gain the `meta` column through the tolerant ALTER
- * in db/schema.ts; the SELECT falls back to the narrow column list when it
- * is missing, so reads never fail on an old file.
+ * Ticket 07 persists the round-metadata columns (think/sources/meta); ticket
+ * 08 adds `applied_patch` (JSON TripPatchRecord — the column existed as a
+ * reservation since ticket 02). Pre-ticket-07 databases gain the `meta`
+ * column through the tolerant ALTER in db/schema.ts; the SELECT falls back
+ * to the narrow column list when it is missing, so reads never fail on an
+ * old file.
  */
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { MessageRow, MessageStoreDriver } from './types.js'
 
-const INSERT_COLUMNS = 'id, trip_id, role, content, think, sources, meta, created_at'
+const INSERT_COLUMNS = 'id, trip_id, role, content, think, sources, meta, applied_patch, created_at'
 
 export class SqliteMessageStoreDriver implements MessageStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
@@ -19,7 +22,7 @@ export class SqliteMessageStoreDriver implements MessageStoreDriver {
   async listMessageRows(tripId: string): Promise<MessageRow[]> {
     try {
       const { rows } = await this.db.run(
-        'SELECT id, trip_id, role, content, think, sources, meta, created_at FROM messages WHERE trip_id = ? ORDER BY created_at ASC, rowid ASC',
+        'SELECT id, trip_id, role, content, think, sources, meta, applied_patch, created_at FROM messages WHERE trip_id = ? ORDER BY created_at ASC, rowid ASC',
         [tripId],
       )
       return rows as unknown as MessageRow[]
@@ -42,10 +45,11 @@ export class SqliteMessageStoreDriver implements MessageStoreDriver {
       row.think ?? null,
       row.sources ?? null,
       row.meta ?? null,
+      row.applied_patch ?? null,
       row.created_at,
     ] as SqlValue[]
     try {
-      await this.db.run(`INSERT INTO messages (${INSERT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, withMeta)
+      await this.db.run(`INSERT INTO messages (${INSERT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, withMeta)
     } catch {
       // Older database without the ticket-07 columns — drop the metadata and
       // persist the base row (the conversation is never lost to a schema lag).

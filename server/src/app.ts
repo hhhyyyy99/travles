@@ -29,6 +29,9 @@ import { SqliteMessageStoreDriver } from './chat/driver-sqlite.js'
 import type { MessageStoreDriver } from './chat/types.js'
 import { registerChatRoutes } from './chat/routes.js'
 import { readJsonBody } from './http/body.js'
+// ---- TripPatch writes (ticket 08, additive) --------------------------------
+import { createSqliteTripPatchStore } from './trip-patch/store-sqlite.js'
+import type { TripPatchStoreDriver } from './trip-patch/types.js'
 
 export type AppEnv = {
   Bindings: HonoBindings
@@ -95,6 +98,13 @@ export type CreateAppOptions = {
    * resolved lazily like `daysAdminStore`.
    */
   itemsAdminStore?: ItemsAdminStoreDriver
+  /**
+   * Injected TripPatch write store (ticket 08; tests use the in-memory
+   * driver). Backs the `apply_trip_patch` tool — the planner model's only
+   * write channel to trip data. Defaults to the same SQLite database the
+   * trip repository opens, resolved lazily like `workbenchStore`.
+   */
+  tripPatchStore?: TripPatchStoreDriver
 }
 
 /** Default SQLite location: <server>/data/trips.db (gitignored). */
@@ -120,6 +130,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     // default (SQLite) startup path; pure in-memory test apps without an
     // injected memory run the agent without recall instead of opening a file.
     databaseUrl: options.tripRepository ? undefined : options.databaseUrl ?? process.env.TRIPS_DB_PATH ?? defaultDatabaseUrl(),
+    // Ticket 08: the apply_trip_patch tool resolves its store lazily on first
+    // patch (the SQLite path opens the shared database only when actually hit).
+    resolveTripPatchStore: resolveTripPatchStore,
   })
   const memoryConfigured = options.plannerMemory !== undefined || !options.tripRepository
 
@@ -164,6 +177,29 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     }
     daysAdminStore = createSqliteDaysAdminStore(workbenchDb as NonNullable<typeof workbenchDb>)
     return daysAdminStore
+  }
+
+  // ---- TripPatch writes (ticket 08, additive) -------------------------------
+  // Store behind the apply_trip_patch tool (the model's only write channel to
+  // trip data). Resolved like the workbench store: an injected driver in
+  // tests, else lazily over the same SQLite database. No TripPatch code runs
+  // unless a model actually calls the tool.
+  let tripPatchStore = options.tripPatchStore ?? null
+  let tripPatchDb: SqlDatabase | null = null
+  async function resolveTripPatchStore(): Promise<TripPatchStoreDriver> {
+    if (tripPatchStore) return tripPatchStore
+    if (!tripPatchDb) {
+      if (workbenchDb) {
+        tripPatchDb = workbenchDb
+      } else {
+        const created = await createSqliteTripRepository(
+          options.databaseUrl ?? process.env.TRIPS_DB_PATH ?? defaultDatabaseUrl(),
+        )
+        tripPatchDb = created.db
+      }
+    }
+    tripPatchStore = createSqliteTripPatchStore(tripPatchDb)
+    return tripPatchStore
   }
 
   let tripRepository: TripRepository
@@ -491,6 +527,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     planner: mastra.getAgent('planner'),
     modelConfigured: options.plannerModel !== undefined || modelConfigFromEnv() !== null,
     memoryConfigured,
+    resolveTripPatchStore,
   })
 
   return app

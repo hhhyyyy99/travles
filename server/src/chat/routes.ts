@@ -39,7 +39,20 @@
  *    option chips (clicking a chip sends `value` as the user's next reply),
  *    `poiLinks` the inline POI links (click → map focus), `think`/`sources`
  *    the collapsible sections (hidden when absent).
- * 4. `done`   → `{ "userMessage": ChatMessage, "assistantMessage": ChatMessage }`
+ * 4. `applied_patch` → `{ "summary", "stats", "patch" }` (ticket 08, optional
+ *    — present iff the model's `apply_trip_patch` call succeeded this turn):
+ *
+ *        {
+ *          "summary": "已写入行程：新增 2 天、6 张卡片",
+ *          "stats":   { "daysAdded": 2, "itemsAdded": 6, "legsWritten": 3, … },
+ *          "patch":   { "ops": [ …the applied TripPatch… ] }
+ *        }
+ *
+ *    Slots where `meta` sits (after deltas, before `done`). The client shows
+ *    a "已写入行程" summary card and refetches /canvas so the three columns
+ *    and the map redraw live. The same record persists on the assistant
+ *    message (`appliedPatch`) for reloads.
+ * 5. `done`   → `{ "userMessage": ChatMessage, "assistantMessage": ChatMessage }`
  *    Terminal. Both messages are persisted (messages table, keyed by trip)
  *    and echoed back with their server-side ids/createdAt so the client can
  *    replace its optimistic bubbles. On ticket 07 the assistant message also
@@ -60,8 +73,18 @@
  * before writing prose. The route consumes the agent's full stream:
  * `tool-call` chunks (name `emit_round_meta`) decide the `start` round;
  * `tool-result` chunks carry the validated `RoundMetaPayload` echoed in the
- * `meta` event and persisted on the assistant row. This is the same pattern
- * ticket 08's `apply_trip_patch` will build on.
+ * `meta` event and persisted on the assistant row.
+ *
+ * ## TripPatch writes (ticket 08)
+ * The plan round's `apply_trip_patch` tool executes server-side through the
+ * same stream: the route seeds a per-turn `RequestContext` (trip id + retry
+ * state) before `planner.stream`, and the tool's execute reads it. A rejected
+ * patch returns an error TO THE MODEL (tool result), which retries up to
+ * `PATCH_TURN_MAX_ATTEMPTS` total calls; a successful apply is recorded on
+ * the turn state, emitted as `applied_patch` and persisted on the assistant
+ * message. If every attempt is rejected, the route emits an `error` event
+ * (code `patch_invalid`) + `close` instead of `done` and persists nothing —
+ * the stream itself never crashes on patch problems.
  *
  * ## Agent memory
  * One memory thread per trip (`thread: trip-<tripId>`, `resource: <tripId>`);
@@ -71,6 +94,7 @@
  */
 import { streamSSE } from 'hono/streaming'
 import type { Hono } from 'hono'
+import { RequestContext } from '@mastra/core/request-context'
 import type { Agent } from '@mastra/core/agent'
 import type { TripRepository } from '../trips/repository.js'
 import type { TripSummary } from '../trips/types.js'
@@ -79,6 +103,12 @@ import type { AppEnv } from '../app.js'
 import { readJsonBody } from '../http/body.js'
 import type { RoundMetaPayload } from './round-meta.js'
 import { readRoundFromToolArgs } from './round-meta.js'
+import {
+  PATCH_TRIP_ID_KEY,
+  PATCH_TURN_STATE_KEY,
+  createPatchTurnState,
+} from '../trip-patch/tool.js'
+import type { TripPatchStoreDriver } from '../trip-patch/types.js'
 
 export type ChatRouteOptions = {
   tripRepository: TripRepository
@@ -88,7 +118,15 @@ export type ChatRouteOptions = {
   modelConfigured: boolean
   /** False when the agent runs without memory (pure injected test setups). */
   memoryConfigured: boolean
+  /**
+   * Ticket 08: resolves the store `apply_trip_patch` writes through. When
+   * absent the tool answers "storage unavailable" instead of writing.
+   */
+  resolveTripPatchStore?: () => Promise<TripPatchStoreDriver>
 }
+
+/** Total `apply_trip_patch` calls allowed per turn (initial + 2 retries). */
+const PATCH_TURN_MAX_ATTEMPTS = 3
 
 export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions): void {
   const { tripRepository, messages, planner } = options
@@ -126,14 +164,21 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
     // Start the agent run before committing to SSE so failures at run
     // construction can still fall back to a plain HTTP error.
     let output: Awaited<ReturnType<typeof planner.stream>>
+    // Ticket 08: per-turn RequestContext seeds the apply_trip_patch tool with
+    // the trip id and the retry state the route owns (read back after the run).
+    const requestContext = new RequestContext()
+    const patchTurn = createPatchTurnState(PATCH_TURN_MAX_ATTEMPTS)
+    requestContext.set(PATCH_TRIP_ID_KEY, trip.id)
+    requestContext.set(PATCH_TURN_STATE_KEY, patchTurn)
     try {
       output = await planner.stream(content, {
         ...(options.memoryConfigured
           ? { memory: { thread: `trip-${trip.id}`, resource: trip.id } }
           : {}),
-        // Ticket 07: the instructed pattern is tool call first, prose after;
-        // allow the loop to come back to the model after the tool executes.
-        maxSteps: 5,
+        requestContext,
+        // Ticket 07: tool call first, prose after; ticket 08: leave loop
+        // budget for patch validation retries (tool calls, then final prose).
+        maxSteps: 8,
       })
     } catch {
       return c.json(
@@ -184,6 +229,8 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
           if (type === 'tool-result') {
             const payload = (chunk as { payload?: { toolName?: unknown; result?: unknown } }).payload
             if (payload?.toolName !== 'emit_round_meta') continue
+            // (apply_trip_patch results are read from the turn state below —
+            // they already did their server-side write when they got here.)
             const result = payload.result as { ok?: unknown; meta?: unknown } | null | undefined
             if (result && result.ok === true && result.meta && typeof result.meta === 'object') {
               meta = result.meta as RoundMetaPayload
@@ -219,10 +266,33 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         return
       }
 
+      // Ticket 08: the model kept submitting invalid patches until its retry
+      // budget ran out. Nothing was written; answer with an explicit error
+      // instead of `done` and persist nothing (never a half-applied turn).
+      if (patchTurn.exhausted) {
+        await stream.writeSSE({
+          event: 'error',
+          data: JSON.stringify({
+            code: 'patch_invalid',
+            message: 'AI 提交的行程修改多次未通过服务端校验，本次写入已取消。',
+            guidance: '请重试或换个说法描述你的计划；行程数据未被改动，你也可以手动编辑。',
+          }),
+        })
+        await stream.writeSSE({ event: 'close', data: '{}' })
+        return
+      }
+
       // Ticket 07: persist the round metadata on the assistant row (think /
       // sources / meta columns) and echo it as a `meta` event before done.
       if (meta !== null) {
         await stream.writeSSE({ event: 'meta', data: JSON.stringify(meta) })
+      }
+
+      // Ticket 08: the plan round wrote through apply_trip_patch — echo the
+      // applied patch record so the client can show a summary card and
+      // refetch /canvas, and persist it on the assistant message.
+      if (patchTurn.applied !== null) {
+        await stream.writeSSE({ event: 'applied_patch', data: JSON.stringify(patchTurn.applied) })
       }
 
       const userSaved = await messages.append(tripId, 'user', content)
@@ -230,6 +300,7 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         ...(meta?.think !== undefined ? { think: meta.think } : {}),
         ...(meta?.sources !== undefined ? { sources: meta.sources } : {}),
         ...(meta !== null ? { meta } : {}),
+        ...(patchTurn.applied !== null ? { appliedPatch: patchTurn.applied } : {}),
       })
       if (!userSaved.ok || !assistantSaved.ok) {
         await stream.writeSSE({

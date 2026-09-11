@@ -470,7 +470,10 @@ export function CanvasCard({
         </span>
         <span className="ml-auto flex items-center gap-[6px]">
           {item.pending && (
-            <span className="rounded-[4px] border border-[#b75342] px-[6px] py-[1px] text-[10px] text-[#b75342]">
+            <span
+              data-card-pending={item.id}
+              className="rounded-[4px] border border-[#b75342] px-[6px] py-[1px] text-[10px] text-[#b75342]"
+            >
               待定
             </span>
           )}

@@ -1,6 +1,6 @@
 /**
- * AI chat API client (tickets 06/07) — the conversation loop over the
- * four-round protocol (qa baseline + clarify rounds).
+ * AI chat API client (tickets 06/07/08) — the conversation loop over the
+ * four-round protocol (qa baseline + clarify rounds + plan round).
  *
  * Same codec convention as src/domain/tripList.ts / workbench.ts: tolerant
  * reads that never throw, an injectable FetchLike for Node tests, and
@@ -10,12 +10,13 @@
  * POST /api/trips/:id/messages answers `text/event-stream` with
  * `start {round}` → `delta {text}…` → `meta` (ticket 07, optional — the
  * round's structured payload: chips, poiLinks, think, thinkComplete,
- * sources) → `done {userMessage, assistantMessage}`, or an in-stream
- * `error {code, message, guidance}` + `close {}` pair. Unknown events are
- * ignored (forward compatibility with tickets 08/11), so the parser skips
- * anything it does not recognize. Stream errors are delivered to the caller
- * through the `onError(code, message, guidance)` callback (the spec's
- * 用户故事 25 banner), while transport-level failures resolve as
+ * sources) → `applied_patch` (ticket 08, optional — the TripPatch the plan
+ * round wrote: summary, stats, patch) → `done {userMessage, assistantMessage}`,
+ * or an in-stream `error {code, message, guidance}` + `close {}` pair.
+ * Unknown events are ignored (forward compatibility with ticket 11), so the
+ * parser skips anything it does not recognize. Stream errors are delivered
+ * to the caller through the `onError(code, message, guidance)` callback (the
+ * spec's 用户故事 25 banner), while transport-level failures resolve as
  * `{ok:false,error}`.
  */
 
@@ -62,6 +63,29 @@ export type ChatMessageMeta = {
   sources?: ChatSource[]
 }
 
+/**
+ * Structured record of a successful `apply_trip_patch` (ticket 08) — the
+ * `applied_patch` SSE event payload and the persisted `appliedPatch` field
+ * of an assistant message. `summary` is the human-readable one-liner,
+ * `stats` the coarse change counters, `patch` the raw applied TripPatch
+ * (kept opaque here — the server owns its schema).
+ */
+export type AppliedPatchStats = {
+  daysAdded?: number
+  daysUpdated?: number
+  daysRemoved?: number
+  itemsAdded?: number
+  itemsUpdated?: number
+  itemsRemoved?: number
+  legsWritten?: number
+}
+
+export type AppliedPatchRecord = {
+  summary: string
+  stats?: AppliedPatchStats
+  patch?: unknown
+}
+
 export type ChatMessage = {
   id: string
   tripId: string
@@ -74,6 +98,8 @@ export type ChatMessage = {
   sources?: ChatSource[] | null
   /** Assistant messages: parsed round metadata (round, chips, poiLinks). */
   meta?: ChatMessageMeta | null
+  /** Assistant messages: the applied TripPatch record (plan round, ticket 08). */
+  appliedPatch?: AppliedPatchRecord | null
 }
 
 export type ChatStreamError = {
@@ -89,6 +115,8 @@ export type SendChatHandlers = {
   onDelta?: (text: string) => void
   /** Called (ticket 07) when the round's structured metadata arrives. */
   onMeta?: (meta: ChatMessageMeta) => void
+  /** Called (ticket 08) when the plan round wrote the trip successfully. */
+  onAppliedPatch?: (record: AppliedPatchRecord) => void
   /** Called on an in-stream model/storage error (guidance for the banner). */
   onError?: (error: ChatStreamError) => void
 }
@@ -159,6 +187,38 @@ export function normalizeChatMeta(raw: unknown): ChatMessageMeta | null {
   }
 }
 
+/** Tolerant normalizer for the applied-patch record; null unless a summary survives. */
+export function normalizeAppliedPatch(raw: unknown): AppliedPatchRecord | null {
+  if (raw === null || typeof raw !== 'object') return null
+  const record = raw as Record<string, unknown>
+  const summary = typeof record.summary === 'string' && record.summary ? record.summary : null
+  if (summary === null) return null
+  const rawStats = record.stats
+  const stats: AppliedPatchStats = {}
+  if (rawStats !== null && typeof rawStats === 'object') {
+    for (const key of Object.keys(AppliedPatchStatKeys) as (keyof AppliedPatchStats)[]) {
+      const value = (rawStats as Record<string, unknown>)[key]
+      if (typeof value === 'number' && Number.isFinite(value)) stats[key] = value
+    }
+  }
+  return {
+    summary,
+    ...(Object.keys(stats).length > 0 ? { stats } : {}),
+    ...(record.patch !== undefined ? { patch: record.patch } : {}),
+  }
+}
+
+/** Keys accepted in the stats block (tolerant: unknown keys are dropped). */
+const AppliedPatchStatKeys = {
+  daysAdded: true,
+  daysUpdated: true,
+  daysRemoved: true,
+  itemsAdded: true,
+  itemsUpdated: true,
+  itemsRemoved: true,
+  legsWritten: true,
+} as const
+
 function normalizeSources(raw: unknown): ChatSource[] | null {
   if (!Array.isArray(raw)) return null
   const sources: ChatSource[] = []
@@ -189,6 +249,7 @@ function normalizeMessage(raw: unknown): ChatMessage | null {
           think: typeof m.think === 'string' && m.think ? m.think : null,
           sources: normalizeSources(m.sources),
           meta: normalizeChatMeta(m.meta),
+          appliedPatch: normalizeAppliedPatch(m.appliedPatch),
         }
       : {}),
   }
@@ -283,6 +344,13 @@ export async function sendChatMessage(
       // sources). Malformed payloads are ignored, not fatal.
       const meta = normalizeChatMeta(parsed)
       if (meta) handlers.onMeta?.(meta)
+      return
+    }
+    if (event === 'applied_patch' && parsed !== null && typeof parsed === 'object') {
+      // Ticket 08: the plan round wrote the trip — the client shows a summary
+      // card and refetches /canvas. Malformed payloads are ignored, not fatal.
+      const record = normalizeAppliedPatch(parsed)
+      if (record) handlers.onAppliedPatch?.(record)
       return
     }
     if (event === 'error' && parsed !== null && typeof parsed === 'object') {

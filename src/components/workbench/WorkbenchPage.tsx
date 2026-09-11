@@ -100,6 +100,17 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     )
   }
 
+  // ---- AI plan round (ticket 08) ---------------------------------------------
+  // The chat panel calls this when an `applied_patch` SSE event arrives: the
+  // trip changed server-side, so refetch /canvas and reproject all columns.
+  const handleTripPatched = () => {
+    void fetchTripCanvas(tripId).then((result) => {
+      if (result.ok) setState({ status: 'ready', data: result.data })
+      // Refetch failures keep the current canvas — the chat card still reports
+      // the write; a manual refresh recovers.
+    })
+  }
+
   // ---- Day management (ticket 10) -------------------------------------------
 
   /** Append a day; the server answers with the created day (next date). */
@@ -299,7 +310,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
               className="flex shrink-0 flex-col border-r border-line bg-white"
               style={{ width: layout.aiWidth }}
             >
-              <ChatPanel tripId={tripId} onCollapse={() => toggle('ai')} onFocusPoi={setMapFocus} />
+              <ChatPanel tripId={tripId} onCollapse={() => toggle('ai')} onFocusPoi={setMapFocus} onTripPatched={handleTripPatched} />
             </div>
             <AiResizeHandle width={layout.aiWidth} onResize={resizeAi} />
           </>

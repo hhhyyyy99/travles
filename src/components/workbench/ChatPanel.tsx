@@ -9,6 +9,10 @@
  *   its `value` as the user's reply through the same SSE endpoint.
  * - "思考完成" (think) and "来源" (sources) collapsibles render on assistant
  *   messages when present, hidden otherwise; AI messages have a copy button.
+ * - Ticket 08: plan rounds that write through apply_trip_patch surface an
+ *   inline "已写入行程" summary card (expandable to the change counters);
+ *   onAppliedPatch also calls `onTripPatched` so the workbench refetches
+ *   /canvas and the three columns + map redraw live.
  * - History is loaded from GET /api/trips/:id/messages on mount (refresh-safe)
  *   and includes the persisted meta fields; sending POSTs
  *   /api/trips/:id/messages and renders the SSE reply incrementally
@@ -17,10 +21,11 @@
  *   (spec 用户故事 25); the history stays untouched.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Check, Copy, MessageCircle, PanelLeftClose, SendHorizontal } from 'lucide-react'
+import { Check, Copy, ListChecks, MessageCircle, PanelLeftClose, SendHorizontal } from 'lucide-react'
 import {
   fetchChatHistory,
   sendChatMessage,
+  type AppliedPatchRecord,
   type ChatMessage,
   type ChatMessageMeta,
   type ChatPoiLink,
@@ -37,11 +42,17 @@ export default function ChatPanel({
   tripId,
   onCollapse,
   onFocusPoi,
+  onTripPatched,
 }: {
   tripId: string
   onCollapse: () => void
   /** Clicking an inline POI link in an AI message (ticket 07, map linkage). */
   onFocusPoi?: (poi: ChatPoiLink) => void
+  /**
+   * Ticket 08: the plan round just wrote the trip — the workbench refetches
+   * /canvas so the middle column and the map redraw live.
+   */
+  onTripPatched?: () => void
 }) {
   const [history, setHistory] = useState<ChatMessage[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -49,6 +60,10 @@ export default function ChatPanel({
   const [sendState, setSendState] = useState<SendState>({ status: 'idle' })
   const [streamText, setStreamText] = useState<string | null>(null)
   const [streamMeta, setStreamMeta] = useState<ChatMessageMeta | null>(null)
+  const [streamPatch, setStreamPatch] = useState<AppliedPatchRecord | null>(null)
+  // Latest onTripPatched for the async send handler (avoid stale closures).
+  const onTripPatchedRef = useRef(onTripPatched)
+  onTripPatchedRef.current = onTripPatched
   const listRef = useRef<HTMLDivElement>(null)
   const scrollToEnd = () => {
     const list = listRef.current
@@ -80,6 +95,7 @@ export default function ChatPanel({
     setSendState({ status: 'sending' })
     setStreamText('')
     setStreamMeta(null)
+    setStreamPatch(null)
 
     // Optimistic user bubble (id prefixed local-, replaced on done).
     const optimistic: ChatMessage = {
@@ -94,6 +110,11 @@ export default function ChatPanel({
     const result = await sendChatMessage(tripId, trimmed, {
       onDelta: (text) => setStreamText((prev) => (prev ?? '') + text),
       onMeta: (meta) => setStreamMeta((prev) => ({ ...(prev ?? {}), ...meta })),
+      onAppliedPatch: (record) => {
+        setStreamPatch(record)
+        // The trip changed server-side — redraw the canvas + map live.
+        onTripPatchedRef.current?.()
+      },
       onError: (error) => setSendState({ status: 'error', error }),
     })
 
@@ -111,6 +132,7 @@ export default function ChatPanel({
     }
     setStreamText(null)
     setStreamMeta(null)
+    setStreamPatch(null)
   }
 
   return (
@@ -146,6 +168,7 @@ export default function ChatPanel({
           <ChatBubble
             message={{ id: 'streaming', tripId, role: 'assistant', content: streamText, createdAt: '' }}
             meta={streamMeta}
+            appliedPatch={streamPatch}
             streaming
             sending={sending}
             onSend={handleSend}
@@ -191,6 +214,7 @@ export default function ChatPanel({
 function ChatBubble({
   message,
   meta,
+  appliedPatch,
   streaming = false,
   sending = false,
   onSend,
@@ -198,6 +222,8 @@ function ChatBubble({
 }: {
   message: ChatMessage
   meta?: ChatMessageMeta | null
+  /** Live applied-patch record while streaming (persisted one comes via message.appliedPatch). */
+  appliedPatch?: AppliedPatchRecord | null
   streaming?: boolean
   sending?: boolean
   onSend: (content: string) => void
@@ -222,6 +248,7 @@ function ChatBubble({
   const chips = roundMeta?.chips ?? []
   const think = message.think ?? roundMeta?.think ?? null
   const sources = message.sources ?? roundMeta?.sources ?? null
+  const patch = appliedPatch ?? message.appliedPatch ?? null
 
   if (isUser) {
     return (
@@ -268,10 +295,44 @@ function ChatBubble({
             ))}
           </div>
         )}
+        {patch !== null && <AppliedPatchCard record={patch} />}
         {sources !== null && sources.length > 0 && <SourcesSection sources={sources} />}
         {!streaming && <CopyButton content={message.content} />}
       </div>
     </div>
+  )
+}
+
+/**
+ * "已写入行程" 摘要卡（ticket 08）—— renders after the plan round applied a
+ * TripPatch; expandable to the coarse change counters. The workbench has
+ * already refetched /canvas by the time this renders.
+ */
+function AppliedPatchCard({ record }: { record: AppliedPatchRecord }) {
+  const stats = record.stats ?? {}
+  const statEntries: [string, number | undefined][] = [
+    ['新增天', stats.daysAdded],
+    ['更新天', stats.daysUpdated],
+    ['删除天', stats.daysRemoved],
+    ['新增卡片', stats.itemsAdded],
+    ['更新卡片', stats.itemsUpdated],
+    ['删除卡片', stats.itemsRemoved],
+    ['交通段', stats.legsWritten],
+  ]
+  const useful = statEntries.filter(([, value]) => typeof value === 'number' && value !== 0)
+  return (
+    <details data-chat-applied-patch className="rounded-[6px] border border-green/30 bg-white/70 px-[8px] py-[5px] text-[12px]">
+      <summary className="flex cursor-pointer select-none items-center gap-[5px] font-[550] text-green">
+        <ListChecks aria-hidden="true" className="w-[13px]" />
+        已写入行程
+      </summary>
+      <p className="mt-[4px] text-muted">{record.summary}</p>
+      {useful.length > 0 && (
+        <p className="mt-[2px] text-muted">
+          {useful.map(([label, value]) => `${label} ${value}`).join(' · ')}
+        </p>
+      )}
+    </details>
   )
 }
 
