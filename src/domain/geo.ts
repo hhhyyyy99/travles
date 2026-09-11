@@ -45,4 +45,37 @@ export function hasCoordinates(point: { lat?: number | null; lng?: number | null
   return Number.isFinite(Number(point?.lat)) && Number.isFinite(Number(point?.lng))
 }
 
+/* ------------------------------------------------------------------ *
+ * Duplicate-base radius + haversine (accommodation-search.js:2, `distanceMeters`).
+ * ------------------------------------------------------------------ */
+
+/** Same normalized name AND <= this distance in meters -> duplicate candidate. */
+export const DUPLICATE_DISTANCE_METERS = 1500
+
+/**
+ * Haversine distance in meters between two WGS-84 points
+ * (accommodation-search.js `distanceMeters`: radius 6371008.8, `Infinity`
+ * when either point lacks finite coordinates).
+ */
+export function distanceMeters(
+  first: { lat?: number | null; lng?: number | null } | null | undefined,
+  second: { lat?: number | null; lng?: number | null } | null | undefined,
+): number {
+  const aLat = Number(first?.lat)
+  const aLng = Number(first?.lng)
+  const bLat = Number(second?.lat)
+  const bLng = Number(second?.lng)
+  if (!Number.isFinite(aLat) || !Number.isFinite(aLng) || !Number.isFinite(bLat) || !Number.isFinite(bLng)) {
+    return Infinity
+  }
+  const radius = 6371008.8
+  const toRadians = (value: number): number => (value * Math.PI) / 180
+  const dLat = toRadians(bLat - aLat)
+  const dLng = toRadians(bLng - aLng)
+  const latA = toRadians(aLat)
+  const latB = toRadians(bLat)
+  const haversine = Math.sin(dLat / 2) ** 2 + Math.cos(latA) * Math.cos(latB) * Math.sin(dLng / 2) ** 2
+  return 2 * radius * Math.asin(Math.sqrt(Math.min(1, haversine)))
+}
+
 export {}

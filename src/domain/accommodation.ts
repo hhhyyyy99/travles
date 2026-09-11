@@ -12,6 +12,7 @@
  * §2 storage/backup, §3.1–3.3 function contracts, §4 business rules.
  */
 import { tripPlan } from '../data/itinerary'
+import { DUPLICATE_DISTANCE_METERS, distanceMeters } from './geo'
 import type {
   AccommodationBackup,
   AccommodationBackupBase,
@@ -99,6 +100,38 @@ export function validCoordinate(lat: number, lng: number): boolean {
 export function customBaseId(): string {
   if (typeof globalThis.crypto?.randomUUID === 'function') return `custom-${globalThis.crypto.randomUUID()}`
   return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * Trim + strip inner whitespace + lowercase for the duplicate-name rule
+ * (accommodation-search.js `normalizedName`).
+ */
+export function normalizedName(value: unknown): string {
+  return String(value || '').trim().replace(/\s+/g, '').toLocaleLowerCase()
+}
+
+/** A candidate location with an optional name — duplicate inputs (search results). */
+export interface DuplicateCandidate {
+  name?: unknown
+  lat?: number | null
+  lng?: number | null
+}
+
+/**
+ * Same-normalized-name bases within the duplicate radius
+ * (accommodation-search.js `findDuplicates`). Empty candidate name → no
+ * duplicates; non-array inputs → empty list.
+ */
+export function findDuplicates(
+  candidate: DuplicateCandidate | null | undefined,
+  bases: readonly AccommodationBase[] | unknown,
+  threshold: number = DUPLICATE_DISTANCE_METERS,
+): AccommodationBase[] {
+  const name = normalizedName(candidate?.name)
+  if (!name) return []
+  return (Array.isArray(bases) ? bases : []).filter(
+    (base) => normalizedName(base?.name) === name && distanceMeters(candidate, base) <= threshold,
+  )
 }
 
 /**

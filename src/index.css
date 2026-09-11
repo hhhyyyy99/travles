@@ -1340,3 +1340,121 @@
     }
   }
 }
+/* ------------------------------------------------------------------ *
+ * Ticket 05 — accommodation place search (port of accommodation-search.css,
+ * vars renamed to the --color-* scale used by the ticket-04 port).
+ * ------------------------------------------------------------------ */
+.accommodation-search {
+  border-top: 1px solid var(--color-line);
+  padding-top: 15px;
+}
+.accommodation-search > label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.accommodation-search input {
+  width: 100%;
+  background: white;
+  border: 1px solid #bdccc3;
+  border-radius: 4px;
+  padding: 9px;
+  font: inherit;
+  color: var(--color-ink);
+}
+.accommodation-search-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  background: var(--color-green);
+  color: white;
+  border-radius: 5px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.accommodation-search-submit svg {
+  width: 14px;
+}
+.accommodation-search-submit:disabled {
+  cursor: wait;
+}
+.accommodation-search p {
+  min-height: 18px;
+  margin: 8px 0 0;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+.accommodation-search-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-line);
+  padding: 10px 0;
+}
+.accommodation-search-result strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+.accommodation-search-result small {
+  display: block;
+  max-width: 340px;
+  margin-top: 2px;
+  color: var(--color-muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.accommodation-search-result button,
+.accommodation-search-duplicates button {
+  border: 1px solid #b8c8be;
+  border-radius: 4px;
+  color: var(--color-green);
+  padding: 6px 10px;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.accommodation-search-duplicates {
+  margin-top: 12px;
+  padding: 11px 12px;
+  border: 1px solid #d2b37f;
+  border-radius: 5px;
+  background: #fff9ec;
+  color: var(--color-ink);
+  font-size: 11px;
+}
+.accommodation-search-duplicates strong {
+  display: block;
+  font-size: 12px;
+}
+.accommodation-search-duplicates p {
+  margin: 5px 0 8px;
+}
+.accommodation-search-duplicates button {
+  margin: 0 6px 6px 0;
+  background: white;
+}
+.accommodation-search-duplicates button:last-child {
+  background: var(--color-green);
+  color: white;
+}
+@media (max-width: 720px) {
+  .accommodation-search-result {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .accommodation-search-result button {
+    width: 100%;
+  }
+  .accommodation-search-duplicates button {
+    display: block;
+    width: 100%;
+    margin-right: 0;
+  }
+  .accommodation-search-duplicates button + button {
+    margin-top: 7px;
+  }
+}

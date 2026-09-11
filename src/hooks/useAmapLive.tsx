@@ -43,13 +43,16 @@ import {
   loadAMapSdk,
   pointLngLat,
   routePathWgs84,
+  searchPlaces as searchPlacesService,
   searchRoute,
   type AmapMapInstance,
   type AmapPathPoint,
   type AmapRoute,
   type AmapRouteResult,
   type AmapStopInput,
+  type AmapPlaceResult,
   type AmapTrafficLayer,
+  type SearchPlacesOptions,
 } from '../services/amap'
 import { useRouteStates } from './useRouteStates'
 
@@ -101,6 +104,12 @@ export interface AmapLiveContextValue extends AmapLiveSnapshot {
   retry(): void
   /** Swap AMap ↔ reference map for the accommodation map-pick (legacy `tibetAMap.useReferenceMapForPicker`). */
   useReferenceMapForPicker(picking: boolean): boolean
+  /**
+   * Place search (ticket 05) — typed adapter surface: WGS-84 results at the
+   * boundary, exact legacy failure codes. The dialog owns the request-token
+   * stale guard on top of this seam.
+   */
+  searchPlaces(query: string, options?: SearchPlacesOptions): Promise<AmapPlaceResult[]>
 }
 
 const INITIAL_SNAPSHOT: AmapLiveSnapshot = {
@@ -679,6 +688,14 @@ class AmapLiveController {
     this.routes?.markRouteStatus([day], status, { navigation: undefined, ...details })
   }
 
+  /**
+   * Place search — delegates to the typed adapter service with the connected
+   * SDK instance; results are already normalized to WGS-84.
+   */
+  searchPlaces(query: string, options: SearchPlacesOptions = {}): Promise<AmapPlaceResult[]> {
+    return searchPlacesService(query, { ...options, AMap: options.AMap ?? this.amap ?? getAMapStatic() })
+  }
+
   /* ------------------------------------------------------------ *
    * Result rendering (amap-integration.js `showRoute` :139–178)
    * ------------------------------------------------------------ */
@@ -916,6 +933,7 @@ export function AmapLiveProvider({ children }: { children: ReactNode }) {
       submitEndpoints: (from, to) => controller.submitEndpoints(from, to),
       retry: () => controller.retry(),
       useReferenceMapForPicker: (picking) => controller.useReferenceMapForPicker(picking),
+      searchPlaces: (query, options) => controller.searchPlaces(query, options),
     }),
     [snapshot, controller],
   )

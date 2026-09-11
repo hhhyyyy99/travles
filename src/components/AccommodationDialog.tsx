@@ -32,11 +32,12 @@ import {
   useState,
   type ChangeEvent,
 } from 'react'
-import { Crosshair, Plus, X } from 'lucide-react'
+import { Crosshair, Plus, Search, X } from 'lucide-react'
 import type { LeafletMouseEvent } from 'leaflet'
 import { useAccommodation } from '../hooks/useAccommodation'
 import { useAmapLive } from '../hooks/useAmapLive'
 import {
+  findDuplicates,
   getBase,
   getDayStay,
   listBases,
@@ -44,10 +45,11 @@ import {
   overnightDays,
   validCoordinate,
 } from '../domain/accommodation'
-import type { AccommodationBaseType } from '../domain/types'
+import type { AccommodationBase, AccommodationBaseType } from '../domain/types'
 import { ACCOMMODATION_WRITE_FAILURE_STATUS } from '../domain/storage'
 import { tripPlan } from '../data/itinerary'
 import { renderAccommodationMarkers, type RouteMapHandle } from '../services/map'
+import type { AmapPlaceResult, AmapSearchError } from '../services/amap'
 
 export interface AccommodationDialogApi {
   /** Legacy `tibetAccommodation.open(dayIndex)` — day clamps to an overnight day. */
@@ -110,6 +112,14 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT)
   const [locationSummary, setLocationSummary] = useState('尚未在地图上选择位置')
   const [status, setStatus] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchStatus, setSearchStatus] = useState('')
+  const [searchResults, setSearchResults] = useState<AmapPlaceResult[]>([])
+  const [searchRunning, setSearchRunning] = useState(false)
+  const [duplicates, setDuplicates] = useState<AccommodationBase[]>([])
+  const [pendingResult, setPendingResult] = useState<AmapPlaceResult | null>(null)
+  /** Request token — rapid query changes / dialog close discard stale results. */
+  const searchTokenRef = useRef(0)
 
   const currentDayRef = useRef(currentDay)
   currentDayRef.current = currentDay
@@ -130,11 +140,21 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
     setEditorVisible(false)
     setStatus('')
     setPicking(false)
+    setSearchStatus('')
+    setSearchResults([])
+    setDuplicates([])
+    setPendingResult(null)
+    searchTokenRef.current += 1
     setOpen(true)
   }
 
   const closeDialog = (): void => {
     setPicking(false)
+    searchTokenRef.current += 1
+    setSearchResults([])
+    setDuplicates([])
+    setPendingResult(null)
+    setSearchStatus('')
     setOpen(false)
   }
 
@@ -355,6 +375,93 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
     return { ok: true }
   }
 
+  /* ------------------------------------------------------------------ *
+   * Search flow (ticket 05 — port of accommodation-search.js `mount`).
+   * A confirmed result only PREFILLS the create editor (legacy
+   * `prepareNewBase`); nothing persists until the shared save flow runs.
+   * ------------------------------------------------------------------ */
+  const showManualFallback = (message: string, query: string): void => {
+    prepareNewBase({
+      name: draft.name || query,
+      type: draft.type,
+      address: draft.address,
+      notes: draft.notes,
+      lat: draft.lat,
+      lng: draft.lng,
+      locationLabel: locationSummary,
+    })
+    setSearchStatus(`${message} 可继续在地图上选点，已填写的内容不会丢失。`)
+  }
+
+  const runSearch = async (): Promise<void> => {
+    const query = searchQuery.trim()
+    if (!query) {
+      setSearchStatus('请输入住宿名称或区域。')
+      window.setTimeout(() => document.getElementById('accommodation-search-query')?.focus(), 0)
+      return
+    }
+    const token = ++searchTokenRef.current
+    setSearchRunning(true)
+    setDuplicates([])
+    setPendingResult(null)
+    setSearchResults([])
+    setSearchStatus('正在搜索高德地点…')
+    try {
+      const results = await amap.searchPlaces(query)
+      if (token !== searchTokenRef.current) return
+      if (!results.length) {
+        setSearchStatus('没有找到匹配地点。请修改关键词，或继续在地图上选点。')
+        return
+      }
+      setSearchResults(results)
+      setSearchStatus(`找到 ${results.length} 个地点，请确认位置后再保存。`)
+    } catch (error) {
+      if (token !== searchTokenRef.current) return
+      setSearchResults([])
+      const searchError = error as AmapSearchError
+      if (searchError.code === 'empty') setSearchStatus(searchError.message)
+      else if (searchError.code === 'unavailable') showManualFallback('地点搜索需要先连接高德地图。', query)
+      else if (searchError.code === 'no-results') setSearchStatus('没有找到匹配地点。请修改关键词，或继续在地图上选点。')
+      else showManualFallback('地点搜索暂时不可用。', query)
+    } finally {
+      if (token === searchTokenRef.current) setSearchRunning(false)
+    }
+  }
+
+  /** Legacy `confirmResult` — duplicate candidates prompt reuse vs continue-new. */
+  const confirmResult = (result: AmapPlaceResult): void => {
+    const found = findDuplicates(result, listBases(state))
+    if (found.length) {
+      setPendingResult(result)
+      setDuplicates(found)
+      setSearchStatus('请确认是使用已有基地，还是继续新增。')
+      return
+    }
+    continueWithResult(result)
+  }
+
+  /** Legacy `continueWithResult` — confirmed position prefills the create editor. */
+  const continueWithResult = (result: AmapPlaceResult): void => {
+    setDuplicates([])
+    prepareNewBase({
+      name: result.name,
+      type: result.type,
+      address: result.address,
+      lat: result.lat,
+      lng: result.lng,
+      locationLabel: `已确认高德地点 · ${result.address || `${result.lat.toFixed(6)}, ${result.lng.toFixed(6)}`}`,
+    })
+    setSearchStatus('地点已确认，核对名称和住宿晚次后保存。')
+  }
+
+  /** Legacy reuse — pre-selects the existing base; apply uses the shared flow. */
+  const reuseBase = (id: string): void => {
+    if (!getBase(state, id)) return
+    selectBase(id)
+    setDuplicates([])
+    setSearchStatus('已选择已有基地，请选择住宿晚次并应用。')
+  }
+
   const saveNew = (applyToNights: boolean): void => {
     const base = normalizeBase({ ...draft })
     if (!base) {
@@ -403,6 +510,62 @@ export function AccommodationDialog({ mapHandle }: { mapHandle: RouteMapHandle |
         }}
       >
         <form id="accommodation-form" onSubmit={(event) => event.preventDefault()}>
+          <section className="accommodation-search" id="accommodation-search">
+            <div className="accommodation-section-heading">
+              <h3>搜索住宿地点</h3>
+              <span>高德地点</span>
+            </div>
+            <label htmlFor="accommodation-search-query">
+              名称或区域
+              <input
+                id="accommodation-search-query"
+                type="search"
+                maxLength={120}
+                autoComplete="off"
+                placeholder="例如：额尔古纳湿地附近"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void runSearch()
+                  }
+                }}
+              />
+            </label>
+            <button type="button" id="accommodation-search-submit" className="accommodation-search-submit" disabled={searchRunning} onClick={() => void runSearch()}>
+              <Search aria-hidden="true" />
+              搜索地点
+            </button>
+            <p id="accommodation-search-status" role="status" aria-live="polite">
+              {searchStatus}
+            </p>
+            <div id="accommodation-search-results" aria-live="polite">
+              {searchResults.map((result, index) => (
+                <article key={`${result.id}-${index}`} className="accommodation-search-result">
+                  <div>
+                    <strong>{result.name}</strong>
+                    <small>{result.address || '已返回地图位置'}</small>
+                  </div>
+                  <button type="button" data-accommodation-search-confirm={index} onClick={() => confirmResult(result)}>
+                    确认此地点
+                  </button>
+                </article>
+              ))}
+            </div>
+            <div id="accommodation-search-duplicates" role="alert" hidden={duplicates.length === 0}>
+              <strong>发现可能重复的住宿基地</strong>
+              <p>名称相同且位置相近。可以使用已有基地，也可以继续新增以保留不同酒店。</p>
+              {duplicates.map((base) => (
+                <button key={base.id} type="button" data-accommodation-search-reuse={base.id} onClick={() => reuseBase(base.id)}>
+                  使用已有：{base.name}
+                </button>
+              ))}
+              <button type="button" data-accommodation-search-continue="true" onClick={() => pendingResult && continueWithResult(pendingResult)}>
+                继续新增「{pendingResult?.name ?? ''}」
+              </button>
+            </div>
+          </section>
           <div className="dialog-heading">
             <h2 id="accommodation-dialog-title">第 {currentDay + 1} 天 · 更换住宿</h2>
             <button type="button" id="accommodation-close" title="关闭" aria-label="关闭" onClick={closeDialog}>
