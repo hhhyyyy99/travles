@@ -274,6 +274,251 @@ function trimNumber(value: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Card-editing writes (ticket 09) — same result convention as the reads:
+// {ok:true,data} | {ok:false,error}, injectable FetchLike, never throws.
+// Every layout mutation response carries the recomputed legs so the map
+// updates without a second canvas read.
+// ---------------------------------------------------------------------------
+
+/** Payload for creating a card (free text: poi omitted/null; POI card: poi set). */
+export type WorkbenchItemCreateInput = {
+  dayId: string
+  title: string
+  type?: ItemType
+  note?: string
+  poi?: PoiRef | null
+  images?: ItemImage[]
+  index?: number
+}
+
+/** Field-edit patch for an existing card. */
+export type WorkbenchItemPatch = { title?: string; note?: string; images?: ItemImage[] }
+
+/** Move/copy target: dayId omitted keeps the day; index omitted appends. */
+export type WorkbenchItemTarget = { dayId?: string; index?: number }
+
+export type ItemMutationData = { item: WorkbenchItem; legs: WorkbenchLeg[] }
+
+function parseItemMutation(data: unknown): ApiResult<ItemMutationData> {
+  const record = (data ?? {}) as { item?: unknown; legs?: unknown }
+  const item = normalizeItem(record.item)
+  if (item === null) return { ok: false, error: '服务器返回的卡片数据无法解析。' }
+  const legs = Array.isArray(record.legs) ? record.legs.map(normalizeLeg).filter((leg): leg is WorkbenchLeg => leg !== null) : []
+  return { ok: true, data: { item, legs } }
+}
+
+/** POST /api/trips/:id/items — create a card; the server assigns the id. */
+export async function createWorkbenchItem(
+  tripId: string,
+  input: WorkbenchItemCreateInput,
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<ItemMutationData>> {
+  const result = await dayRequest(
+    `/api/trips/${encodeURIComponent(tripId)}/items`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+    fetchLike,
+  )
+  if (!result.ok) return result
+  return parseItemMutation(result.data)
+}
+
+/** POST /api/trips/:id/items/:itemId/move — reorder within / across days. */
+export async function moveWorkbenchItem(
+  tripId: string,
+  itemId: string,
+  target: WorkbenchItemTarget,
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<ItemMutationData>> {
+  const result = await dayRequest(
+    `/api/trips/${encodeURIComponent(tripId)}/items/${encodeURIComponent(itemId)}/move`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(target),
+    },
+    fetchLike,
+  )
+  if (!result.ok) return result
+  return parseItemMutation(result.data)
+}
+
+/** POST /api/trips/:id/items/:itemId/copy — duplicate into a (new) day. */
+export async function copyWorkbenchItem(
+  tripId: string,
+  itemId: string,
+  target: WorkbenchItemTarget,
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<ItemMutationData>> {
+  const result = await dayRequest(
+    `/api/trips/${encodeURIComponent(tripId)}/items/${encodeURIComponent(itemId)}/copy`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(target),
+    },
+    fetchLike,
+  )
+  if (!result.ok) return result
+  return parseItemMutation(result.data)
+}
+
+/** PATCH /api/trips/:id/items/:itemId — edit title / note / images. */
+export async function updateWorkbenchItem(
+  tripId: string,
+  itemId: string,
+  patch: WorkbenchItemPatch,
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<WorkbenchItem>> {
+  const result = await dayRequest(
+    `/api/trips/${encodeURIComponent(tripId)}/items/${encodeURIComponent(itemId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    },
+    fetchLike,
+  )
+  if (!result.ok) return result
+  const item = normalizeItem((result.data as { item?: unknown }).item)
+  if (item === null) return { ok: false, error: '服务器返回的卡片数据无法解析。' }
+  return { ok: true, data: item }
+}
+
+/** DELETE /api/trips/:id/items/:itemId — remove the card. */
+export async function deleteWorkbenchItem(
+  tripId: string,
+  itemId: string,
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<{ legs: WorkbenchLeg[] }>> {
+  const result = await dayRequest(
+    `/api/trips/${encodeURIComponent(tripId)}/items/${encodeURIComponent(itemId)}`,
+    { method: 'DELETE' },
+    fetchLike,
+  )
+  if (!result.ok) return result
+  const legs = Array.isArray((result.data as { legs?: unknown }).legs)
+    ? ((result.data as { legs: unknown[] }).legs.map(normalizeLeg).filter((leg): leg is WorkbenchLeg => leg !== null))
+    : []
+  return { ok: true, data: { legs } }
+}
+
+// ---------------------------------------------------------------------------
+// Pure optimistic-layout helpers (unit-tested) — the server clamps the same
+// way, so a successful response needs no second reconciliation.
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure: move `itemId` to `toDayId` at `toIndex` (final position after
+ * removal, clamped) and renumber the affected days 0..n-1. Returns the same
+ * array reference when nothing matched.
+ */
+export function applyItemMove(days: WorkbenchDay[], itemId: string, toDayId: string, toIndex: number): WorkbenchDay[] {
+  const moving = days.flatMap((day) => day.items).find((item) => item.id === itemId)
+  if (!moving) return days
+  return days.map((day) => {
+    const without = day.items.filter((item) => item.id !== itemId)
+    if (day.id !== toDayId) {
+      return without.length === day.items.length
+        ? day
+        : { ...day, items: without.map((item, order) => ({ ...item, order })) }
+    }
+    const index = Math.max(0, Math.min(without.length, Number.isInteger(toIndex) ? toIndex : without.length))
+    const items = [...without.slice(0, index), { ...moving, dayId: toDayId }, ...without.slice(index)]
+    return { ...day, items: items.map((item, order) => ({ ...item, order })) }
+  })
+}
+
+/**
+ * Pure: insert an item (new card / copy) into `dayId` at `index` (clamped;
+ * default: end) and renumber that day.
+ */
+export function applyItemInsert(
+  days: WorkbenchDay[],
+  item: WorkbenchItem,
+  dayId: string,
+  index?: number,
+): WorkbenchDay[] {
+  return days.map((day) => {
+    if (day.id !== dayId) return day
+    const at = Math.max(0, Math.min(day.items.length, index ?? day.items.length))
+    const items = [...day.items.slice(0, at), { ...item, dayId, order: 0 }, ...day.items.slice(at)]
+    return { ...day, items: items.map((entry, order) => ({ ...entry, order })) }
+  })
+}
+
+/** Pure: remove an item and renumber its day; no-op when the id is unknown. */
+export function applyItemRemove(days: WorkbenchDay[], itemId: string): WorkbenchDay[] {
+  const exists = days.some((day) => day.items.some((item) => item.id === itemId))
+  if (!exists) return days
+  return days.map((day) => {
+    const items = day.items.filter((item) => item.id !== itemId)
+    return items.length === day.items.length
+      ? day
+      : { ...day, items: items.map((item, order) => ({ ...item, order })) }
+  })
+}
+
+/** Pure: patch one item's fields in place (note / images / title / identity swap). */
+export function applyItemPatch(days: WorkbenchDay[], itemId: string, patch: Partial<WorkbenchItem>): WorkbenchDay[] {
+  const exists = days.some((day) => day.items.some((item) => item.id === itemId))
+  if (!exists) return days
+  return days.map((day) => ({
+    ...day,
+    items: day.items.map((item) => (item.id === itemId ? { ...item, ...patch } : item)),
+  }))
+}
+
+/** Pure: replace the temp optimistic item with its persisted server version. */
+export function applyItemReplace(days: WorkbenchDay[], tempId: string, serverItem: WorkbenchItem): WorkbenchDay[] {
+  return applyItemPatch(days, tempId, {
+    id: serverItem.id,
+    title: serverItem.title,
+    note: serverItem.note,
+    poi: serverItem.poi,
+    images: serverItem.images,
+    type: serverItem.type,
+    pending: serverItem.pending,
+  })
+}
+
+/**
+ * Pure: AmapPlaceResult (src/services/amap.ts, already WGS-84) → PoiRef for
+ * the add-card POI mode. Keeps the structural shape loose so tests can feed
+ * fixtures without importing the SDK surface.
+ */
+export function poiFromPlace(place: {
+  id?: string
+  name?: string
+  lat?: number
+  lng?: number
+  address?: string
+  city?: string
+}): PoiRef | null {
+  const name = typeof place?.name === 'string' ? place.name.trim() : ''
+  if (!name) return null
+  const lat = typeof place.lat === 'number' ? place.lat : Number(place.lat)
+  const lng = typeof place.lng === 'number' ? place.lng : Number(place.lng)
+  return {
+    amapId: typeof place.id === 'string' ? place.id : '',
+    name,
+    lat: Number.isFinite(lat) ? lat : 0,
+    lng: Number.isFinite(lng) ? lng : 0,
+    category: typeof place.city === 'string' ? place.city : '',
+    rating: 0,
+    introSummary: typeof place.address === 'string' ? place.address : '',
+  }
+}
+
+/** Pure: a temp id for optimistic copies / adds (replaced on success). */
+export function tempItemId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
+}
+
+// ---------------------------------------------------------------------------
 // Tolerant normalization (mirror of the server's; guards against a drifted API)
 // ---------------------------------------------------------------------------
 

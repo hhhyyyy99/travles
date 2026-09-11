@@ -63,13 +63,34 @@ export class ChatMessageRepository {
     const message = mapRowToMessage(row, tripId)
     return message === null ? { ok: false, error: '保存失败', code: 'storage' } : { ok: true, message }
   }
+
+  /**
+   * Lightweight system note in the trip's thread (ticket 09) — recorded when
+   * the user manually edits the itinerary so later AI rounds see the latest
+   * plan. Tolerant and no-throw by contract: a failing chat store never
+   * blocks or fails the edit UX that triggered it.
+   */
+  async recordSystemMessage(tripId: string, content: string): Promise<void> {
+    if (!content.trim()) return
+    try {
+      await this.driver.appendMessageRow({
+        id: randomUUID(),
+        trip_id: tripId,
+        role: 'system',
+        content,
+        created_at: new Date().toISOString(),
+      })
+    } catch {
+      // Intentionally swallowed: edit UX never depends on chat storage.
+    }
+  }
 }
 
 /** Tolerant row → ChatMessage; null when the row is unusable. */
 function mapRowToMessage(row: MessageRow, tripId: string): ChatMessage | null {
   if (row === null || typeof row !== 'object') return null
   if (typeof row.id !== 'string' || row.id === '') return null
-  if (row.role !== 'assistant' && row.role !== 'user') return null
+  if (row.role !== 'assistant' && row.role !== 'user' && row.role !== 'system') return null
   const role: ChatRole = row.role
   const message: ChatMessage = {
     id: row.id,

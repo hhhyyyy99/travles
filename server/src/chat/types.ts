@@ -12,12 +12,19 @@
  *   thinkComplete). Column added additively by ticket 07 (ensureSchema issues
  *   a tolerant ALTER for pre-existing databases).
  *
+ * Ticket 09 adds the `system` role: lightweight, no-throw notes the workbench
+ * appends when the user manually edits the trip (reorder/move/copy/add/
+ * delete), so later AI rounds (tickets 08/11/13) read an up-to-date
+ * itinerary from the same thread. System rows render as muted center lines
+ * in the chat panel and never participate in the SSE round loop.
+ *
  * The SSE protocol carries the same payload live (see chat/routes.ts); the
- * persisted rows are the reload-time projection of it.
+ * persisted rows stay plain role/content pairs so later rounds can extend
+ * the stream schema without a migration.
  */
 import type { RoundMetaPayload, RoundSource } from './round-meta.js'
 
-export type ChatRole = 'user' | 'assistant'
+export type ChatRole = 'user' | 'assistant' | 'system'
 
 /** A persisted chat message, as returned by the history endpoint. */
 export type ChatMessage = {

@@ -16,6 +16,9 @@ import type { WorkbenchStoreDriver } from './days/types.js'
 import { DaysAdminRepository } from './days-admin/repository.js'
 import { createSqliteDaysAdminStore } from './days-admin/driver-sqlite.js'
 import type { DaysAdminStoreDriver } from './days-admin/types.js'
+import { ItemsAdminRepository } from './items-admin/repository.js'
+import { createSqliteItemsAdminStore } from './items-admin/driver-sqlite.js'
+import type { ItemsAdminStoreDriver } from './items-admin/types.js'
 import type { TripUpdate } from './trips/types.js'
 import { mountToolsRoutes } from './tools/routes.js'
 import { createSqliteToolsStore } from './tools/driver-sqlite.js'
@@ -86,6 +89,12 @@ export type CreateAppOptions = {
    * a database file.
    */
   daysAdminStore?: DaysAdminStoreDriver
+  /**
+   * Injected card-editing write store (ticket 09; tests use the in-memory
+   * driver). Defaults to the same SQLite database the trip repository opens,
+   * resolved lazily like `daysAdminStore`.
+   */
+  itemsAdminStore?: ItemsAdminStoreDriver
 }
 
 /** Default SQLite location: <server>/data/trips.db (gitignored). */
@@ -345,6 +354,113 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     )
     if (!result.ok) return tripError(c, result.error, result.code)
     return c.json({ ok: true, removedItems: result.removedItems })
+  })
+
+  // ---- Card editing writes (ticket 09, additive) ----------------------------
+  // POST   /api/trips/:id/items                 create a card (free text or POI)
+  // POST   /api/trips/:id/items/:itemId/move    reorder within / across days
+  // POST   /api/trips/:id/items/:itemId/copy    duplicate into a (new) day
+  // PATCH  /api/trips/:id/items/:itemId         edit title / note / images
+  // DELETE /api/trips/:id/items/:itemId         remove the card
+  //
+  // Every layout mutation recomputes the trip's legs server-side
+  // (items-admin/legs.ts: reuse stored pair legs, else haversine × 1.2
+  // straight-line estimates, else an empty 0/0 leg) and answers with the new
+  // leg list so the workbench map updates without a second canvas read.
+  // Successful manual edits append a lightweight 'system' message to the
+  // trip's chat thread via ChatMessageRepository.recordSystemMessage —
+  // no-throw, so the edit UX never depends on chat storage.
+  let itemsAdminStore = options.itemsAdminStore ?? null
+  const resolveItemsAdminStore = async (): Promise<ItemsAdminStoreDriver> => {
+    if (itemsAdminStore) return itemsAdminStore
+    if (!workbenchDb) {
+      if (options.workbenchStore) {
+        const created = await createSqliteTripRepository(
+          options.databaseUrl ?? process.env.TRIPS_DB_PATH ?? defaultDatabaseUrl(),
+        )
+        workbenchDb = created.db
+      } else {
+        await resolveWorkbenchStore()
+      }
+    }
+    itemsAdminStore = createSqliteItemsAdminStore(workbenchDb as NonNullable<typeof workbenchDb>)
+    return itemsAdminStore
+  }
+  // Tolerant system-message seam; injected-only setups without a message
+  // store fall back to the same process-lifetime memory driver chat uses.
+  const systemMessages = new ChatMessageRepository(messageStore ?? new MemoryMessageStoreDriver())
+
+  app.post('/api/trips/:id/items', async (c) => {
+    const tripId = c.req.param('id')
+    if (await tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
+    const body = await readJsonBody(c)
+    if (body === null) return c.json({ error: '请求体必须是有效的 JSON' }, 400)
+    const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).createItem(tripId, body)
+    if (!result.ok) return tripError(c, result.error, result.code)
+    await systemMessages.recordSystemMessage(tripId, `手动添加卡片「${result.item.title}」`)
+    return c.json({ item: result.item, legs: result.legs }, 201)
+  })
+
+  app.post('/api/trips/:id/items/:itemId/move', async (c) => {
+    const tripId = c.req.param('id')
+    if (await tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
+    const body = (await readJsonBody(c)) ?? {}
+    const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).moveItem(
+      tripId,
+      c.req.param('itemId'),
+      body,
+    )
+    if (!result.ok) return tripError(c, result.error, result.code)
+    await systemMessages.recordSystemMessage(tripId, `手动调整顺序：移动卡片「${result.item.title}」`)
+    return c.json({ item: result.item, legs: result.legs })
+  })
+
+  app.post('/api/trips/:id/items/:itemId/copy', async (c) => {
+    const tripId = c.req.param('id')
+    if (await tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
+    const body = (await readJsonBody(c)) ?? {}
+    const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).copyItem(
+      tripId,
+      c.req.param('itemId'),
+      body,
+    )
+    if (!result.ok) return tripError(c, result.error, result.code)
+    await systemMessages.recordSystemMessage(tripId, `手动复制卡片「${result.item.title}」`)
+    return c.json({ item: result.item, legs: result.legs }, 201)
+  })
+
+  app.patch('/api/trips/:id/items/:itemId', async (c) => {
+    const tripId = c.req.param('id')
+    if (await tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
+    const body = await readJsonBody(c)
+    if (body === null) return c.json({ error: '请求体必须是有效的 JSON' }, 400)
+    const patch: { title?: unknown; note?: unknown; images?: unknown } = {}
+    if ('title' in body) patch.title = body.title
+    if ('note' in body) patch.note = body.note
+    if ('images' in body) patch.images = body.images
+    if (patch.title === undefined && patch.note === undefined && patch.images === undefined) {
+      return c.json({ error: '没有可更新的字段' }, 400)
+    }
+    const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).updateItem(
+      tripId,
+      c.req.param('itemId'),
+      patch,
+    )
+    if (!result.ok) return tripError(c, result.error, result.code)
+    await systemMessages.recordSystemMessage(tripId, `手动编辑卡片「${result.item.title}」`)
+    return c.json({ item: result.item })
+  })
+
+  app.delete('/api/trips/:id/items/:itemId', async (c) => {
+    const tripId = c.req.param('id')
+    if (await tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
+    const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).deleteItem(
+      tripId,
+      c.req.param('itemId'),
+    )
+    if (!result.ok) return tripError(c, result.error, result.code)
+    await systemMessages.recordSystemMessage(tripId, `手动删除卡片`)
+    return c.json({ ok: true, legs: result.legs })
   })
 
   app.get('/api/health', (c) => {
