@@ -1,10 +1,15 @@
 /**
- * Chat message repository (ticket 06) — validation + tolerant mapping over
+ * Chat message repository (tickets 06/07) — validation + tolerant mapping over
  * any MessageStoreDriver (spec 测试接缝 #2), following the TripRepository
  * convention: reads never throw, writes return `{ok,...} | {ok:false,error}`.
+ *
+ * Ticket 07 adds round-metadata persistence on assistant rows: `think`
+ * (text), `sources` (JSON) and `meta` (JSON RoundMetaPayload). Corrupt JSON
+ * is dropped field-by-field — a bad `sources` blob never hides the message.
  */
 import { randomUUID } from 'node:crypto'
-import type { ChatMessage, ChatRole, MessageRow, MessageStoreDriver } from './types.js'
+import type { RoundSource } from './round-meta.js'
+import type { AssistantMessageMeta, ChatMessage, ChatRole, MessageRow, MessageStoreDriver } from './types.js'
 
 export type ChatAppendResult =
   | { ok: true; message: ChatMessage }
@@ -25,14 +30,30 @@ export class ChatMessageRepository {
     return rows.map((row) => mapRowToMessage(row, tripId)).filter((m): m is ChatMessage => m !== null)
   }
 
-  /** Persist one user/assistant message row. */
-  async append(tripId: string, role: ChatRole, content: string): Promise<ChatAppendResult> {
+  /**
+   * Persist one user/assistant message row. Assistant rows may carry the
+   * round metadata (think summary, sources, round meta payload) emitted by
+   * the turn's `emit_round_meta` tool call.
+   */
+  async append(
+    tripId: string,
+    role: ChatRole,
+    content: string,
+    meta?: AssistantMessageMeta,
+  ): Promise<ChatAppendResult> {
     const row: MessageRow = {
       id: randomUUID(),
       trip_id: tripId,
       role,
       content,
       created_at: new Date().toISOString(),
+      ...(role === 'assistant' && meta
+        ? {
+            think: meta.think ?? null,
+            sources: meta.sources ? JSON.stringify(meta.sources) : null,
+            meta: meta.meta ? JSON.stringify(meta.meta) : null,
+          }
+        : {}),
     }
     try {
       await this.driver.appendMessageRow(row)
@@ -50,11 +71,52 @@ function mapRowToMessage(row: MessageRow, tripId: string): ChatMessage | null {
   if (typeof row.id !== 'string' || row.id === '') return null
   if (row.role !== 'assistant' && row.role !== 'user') return null
   const role: ChatRole = row.role
-  return {
+  const message: ChatMessage = {
     id: row.id,
     tripId: typeof row.trip_id === 'string' ? row.trip_id : tripId,
     role,
     content: typeof row.content === 'string' ? row.content : '',
     createdAt: typeof row.created_at === 'string' ? row.created_at : '',
+  }
+  if (role === 'assistant') {
+    message.think = typeof row.think === 'string' && row.think !== '' ? row.think : null
+    message.sources = parseSources(row.sources)
+    message.meta = parseRoundMeta(row.meta)
+  }
+  return message
+}
+
+/** Parse the sources JSON column; null unless every entry is usable. */
+function parseSources(raw: string | null | undefined): RoundSource[] | null {
+  if (typeof raw !== 'string' || raw === '') return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return null
+    const sources: RoundSource[] = []
+    for (const entry of parsed) {
+      if (entry === null || typeof entry !== 'object') continue
+      const title = (entry as { title?: unknown }).title
+      const url = (entry as { url?: unknown }).url
+      if (typeof title === 'string' && title && typeof url === 'string' && url) {
+        sources.push({ title, url })
+      }
+    }
+    return sources.length > 0 ? sources : null
+  } catch {
+    return null
+  }
+}
+
+/** Parse the round-meta JSON column; null on anything unusable. */
+function parseRoundMeta(raw: string | null | undefined): ChatMessage['meta'] {
+  if (typeof raw !== 'string' || raw === '') return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed === null || typeof parsed !== 'object') return null
+    const round = (parsed as { round?: unknown }).round
+    if (typeof round !== 'string' || round === '') return null
+    return parsed as NonNullable<ChatMessage['meta']>
+  } catch {
+    return null
   }
 }

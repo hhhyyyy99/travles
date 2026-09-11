@@ -1,5 +1,7 @@
 /**
- * Chat routes (ticket 06) — the minimal qa-round conversation loop over SSE.
+ * Chat routes (tickets 06/07) — the SSE conversation loop over the four-round
+ * protocol (qa baseline; clarify rounds arrive with ticket 07's
+ * `emit_round_meta` tool; plan / patch-explain land with tickets 08/11).
  *
  * ## HTTP surface
  * - `GET /api/trips/:id/messages` → `{ messages: ChatMessage[] }` (oldest
@@ -7,19 +9,42 @@
  * - `POST /api/trips/:id/messages` body `{ content: string }` → SSE stream
  *   (text/event-stream).
  *
- * ## SSE event schema (ticket 06; tickets 07/08 extend it)
+ * ## SSE event schema (ticket 06 + ticket 07 extensions)
  * Every event is `event: <name>\ndata: <JSON>\n\n`. Order for a successful
- * qa round:
+ * round:
  *
- * 1. `start`  → `{ "round": "qa" }`
+ * 1. `start`  → `{ "round": "<round>" }`
  *    Stream opened, agent run accepted. `round` is the protocol round type
- *    (only `qa` in this ticket).
+ *    (PRD 附录 B): `"qa"` for plain Q&A, `"clarify"` for a clarify round
+ *    (framework first, then one key-variable question with option chips),
+ *    `"plan"` / `"patch-explain"` reserved for tickets 08/11. The round is
+ *    read from the turn's `emit_round_meta` tool call when that lands before
+ *    the first text delta (the instructed pattern); otherwise it defaults to
+ *    `"qa"` — the `meta` event below remains the authoritative statement.
  * 2. `delta`  → `{ "text": "<chunk>" }`   (0..n events, agent tokens as they
  *    arrive; the frontend appends them to the streaming assistant bubble)
- * 3. `done`   → `{ "userMessage": ChatMessage, "assistantMessage": ChatMessage }`
+ * 3. `meta`   → `RoundMetaPayload` (ticket 07, optional — present iff the
+ *    model called `emit_round_meta` this turn):
+ *
+ *        {
+ *          "round": "clarify" | "qa" | "plan" | "patch-explain",
+ *          "chips"?:    [{ "label": "🚗 自驾/租车自驾", "value": "自驾出行" }, …],
+ *          "poiLinks"?: [{ "name": "莫尔格勒河", "lat": 49.4, "lng": 119.7, "amapId"?: "B0…" }, …],
+ *          "think"?:    "<reasoning summary for the 思考完成 collapsible>",
+ *          "thinkComplete"?: true,
+ *          "sources"?:  [{ "title": "…", "url": "…" }, …]
+ *        }
+ *
+ *    Emitted after the deltas, just before `done`. `chips` drive the clarify
+ *    option chips (clicking a chip sends `value` as the user's next reply),
+ *    `poiLinks` the inline POI links (click → map focus), `think`/`sources`
+ *    the collapsible sections (hidden when absent).
+ * 4. `done`   → `{ "userMessage": ChatMessage, "assistantMessage": ChatMessage }`
  *    Terminal. Both messages are persisted (messages table, keyed by trip)
  *    and echoed back with their server-side ids/createdAt so the client can
- *    replace its optimistic bubbles.
+ *    replace its optimistic bubbles. On ticket 07 the assistant message also
+ *    carries `think` / `sources` / `meta` (the same RoundMetaPayload), so a
+ *    reload restores chips, POI links and collapsibles from history.
  *
  * Error paths:
  * - Before the stream: JSON errors (not SSE) — 400 invalid body, 404 unknown
@@ -29,6 +54,14 @@
  *   provider), `model_unavailable` (network/5xx), `stream` (anything else).
  *   Spec 用户故事 25: the guidance tells the user what to check (settings
  *   page arrives with ticket 12).
+ *
+ * ## Round-metadata emission (tool call, ticket 07)
+ * The model is instructed to call the `emit_round_meta` tool once per turn,
+ * before writing prose. The route consumes the agent's full stream:
+ * `tool-call` chunks (name `emit_round_meta`) decide the `start` round;
+ * `tool-result` chunks carry the validated `RoundMetaPayload` echoed in the
+ * `meta` event and persisted on the assistant row. This is the same pattern
+ * ticket 08's `apply_trip_patch` will build on.
  *
  * ## Agent memory
  * One memory thread per trip (`thread: trip-<tripId>`, `resource: <tripId>`);
@@ -44,6 +77,8 @@ import type { TripSummary } from '../trips/types.js'
 import { ChatMessageRepository } from './repository.js'
 import type { AppEnv } from '../app.js'
 import { readJsonBody } from '../http/body.js'
+import type { RoundMetaPayload } from './round-meta.js'
+import { readRoundFromToolArgs } from './round-meta.js'
 
 export type ChatRouteOptions = {
   tripRepository: TripRepository
@@ -96,6 +131,9 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         ...(options.memoryConfigured
           ? { memory: { thread: `trip-${trip.id}`, resource: trip.id } }
           : {}),
+        // Ticket 07: the instructed pattern is tool call first, prose after;
+        // allow the loop to come back to the model after the tool executes.
+        maxSteps: 5,
       })
     } catch {
       return c.json(
@@ -109,18 +147,65 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
 
     const tripId = trip.id
     return streamSSE(c, async (stream) => {
-      await stream.writeSSE({ event: 'start', data: JSON.stringify({ round: 'qa' }) })
       let full = ''
       let failed = false
+      let streamError: unknown = null
+      let started = false
+      let round: string | null = null
+      // Last validated payload from the turn's emit_round_meta tool result.
+      let meta: RoundMetaPayload | null = null
+
+      const writeStart = async (): Promise<void> => {
+        started = true
+        await stream.writeSSE({ event: 'start', data: JSON.stringify({ round: round ?? 'qa' }) })
+      }
+
       try {
-        for await (const delta of output.textStream) {
-          if (typeof delta !== 'string' || delta === '') continue
-          full += delta
-          await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: delta }) })
+        for await (const chunk of output.fullStream) {
+          const type = (chunk as { type?: unknown }).type
+          if (type === 'text-delta') {
+            const text = (chunk as { payload?: { text?: unknown } }).payload?.text
+            if (typeof text !== 'string' || text === '') continue
+            if (!started) await writeStart()
+            full += text
+            await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text }) })
+            continue
+          }
+          if (type === 'tool-call') {
+            const payload = (chunk as { payload?: { toolName?: unknown; args?: unknown } }).payload
+            if (payload?.toolName !== 'emit_round_meta') continue
+            // The instructed pattern puts the tool call before the prose, so
+            // the round type can still pin the start event here.
+            if (!round && !started) {
+              round = readRoundFromToolArgs(payload.args)
+            }
+            continue
+          }
+          if (type === 'tool-result') {
+            const payload = (chunk as { payload?: { toolName?: unknown; result?: unknown } }).payload
+            if (payload?.toolName !== 'emit_round_meta') continue
+            const result = payload.result as { ok?: unknown; meta?: unknown } | null | undefined
+            if (result && result.ok === true && result.meta && typeof result.meta === 'object') {
+              meta = result.meta as RoundMetaPayload
+              if (!round || round === 'qa') round = meta.round
+            }
+            continue
+          }
+          if (type === 'error') {
+            failed = true
+            streamError = (chunk as { payload?: { error?: unknown } }).payload?.error ?? 'unknown stream error'
+            break
+          }
         }
       } catch (error) {
         failed = true
-        await stream.writeSSE({ event: 'error', data: JSON.stringify(classifyModelError(error)) })
+        streamError = error
+      }
+      if (!started) await writeStart()
+      if (failed) {
+        await stream.writeSSE({ event: 'error', data: JSON.stringify(classifyModelError(streamError)) })
+        await stream.writeSSE({ event: 'close', data: '{}' })
+        return
       }
       // Mastra's loop does not always throw model failures out of the text
       // stream — it records them on the run output instead. Treat a recorded
@@ -134,8 +219,18 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         return
       }
 
+      // Ticket 07: persist the round metadata on the assistant row (think /
+      // sources / meta columns) and echo it as a `meta` event before done.
+      if (meta !== null) {
+        await stream.writeSSE({ event: 'meta', data: JSON.stringify(meta) })
+      }
+
       const userSaved = await messages.append(tripId, 'user', content)
-      const assistantSaved = await messages.append(tripId, 'assistant', full)
+      const assistantSaved = await messages.append(tripId, 'assistant', full, {
+        ...(meta?.think !== undefined ? { think: meta.think } : {}),
+        ...(meta?.sources !== undefined ? { sources: meta.sources } : {}),
+        ...(meta !== null ? { meta } : {}),
+      })
       if (!userSaved.ok || !assistantSaved.ok) {
         await stream.writeSSE({
           event: 'error',

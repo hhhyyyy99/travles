@@ -1,33 +1,54 @@
 /**
- * 左栏 AI 对话 (ticket 06) — the qa-round chat loop against the backend
- * planner agent.
+ * 左栏 AI 对话 (tickets 06/07) — the chat loop against the backend planner
+ * agent, now rendering the clarify-round protocol:
  *
- * - History is loaded from GET /api/trips/:id/messages on mount (refresh-safe).
- * - Sending POSTs /api/trips/:id/messages and renders the SSE reply
- *   incrementally (start → delta… → done); the optimistic bubbles are
- *   replaced by the persisted server messages when the stream completes.
+ * - Framework/prose text renders as a small markdown subset (headings, bold,
+ *   lists) with inline POI links; clicking a POI link calls `onFocusPoi` so
+ *   the workbench focuses the map (placeholder logs it until ticket 05).
+ * - Clarify rounds carry option chips (`meta.chips`); clicking a chip sends
+ *   its `value` as the user's reply through the same SSE endpoint.
+ * - "思考完成" (think) and "来源" (sources) collapsibles render on assistant
+ *   messages when present, hidden otherwise; AI messages have a copy button.
+ * - History is loaded from GET /api/trips/:id/messages on mount (refresh-safe)
+ *   and includes the persisted meta fields; sending POSTs
+ *   /api/trips/:id/messages and renders the SSE reply incrementally
+ *   (start → delta… → meta → done).
  * - Stream/HTTP errors surface as a banner with per-failure guidance
  *   (spec 用户故事 25); the history stays untouched.
- *
- * Message styling follows the PRD's AI 对话栏: user messages right-aligned,
- * AI messages left-aligned. Richer rounds (clarify chips, TripPatch cards,
- * markdown) arrive with tickets 07/08.
  */
-import { useEffect, useRef, useState } from 'react'
-import { MessageCircle, PanelLeftClose, SendHorizontal } from 'lucide-react'
-import { fetchChatHistory, sendChatMessage, type ChatMessage, type ChatStreamError } from '../../domain/chat'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Check, Copy, MessageCircle, PanelLeftClose, SendHorizontal } from 'lucide-react'
+import {
+  fetchChatHistory,
+  sendChatMessage,
+  type ChatMessage,
+  type ChatMessageMeta,
+  type ChatPoiLink,
+  type ChatStreamError,
+} from '../../domain/chat'
+import { parseAssistantContent, type InlineSpan } from '../../domain/chatMarkdown'
 
 type SendState =
   | { status: 'idle' }
   | { status: 'sending' }
   | { status: 'error'; error: ChatStreamError | string }
 
-export default function ChatPanel({ tripId, onCollapse }: { tripId: string; onCollapse: () => void }) {
+export default function ChatPanel({
+  tripId,
+  onCollapse,
+  onFocusPoi,
+}: {
+  tripId: string
+  onCollapse: () => void
+  /** Clicking an inline POI link in an AI message (ticket 07, map linkage). */
+  onFocusPoi?: (poi: ChatPoiLink) => void
+}) {
   const [history, setHistory] = useState<ChatMessage[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [sendState, setSendState] = useState<SendState>({ status: 'idle' })
   const [streamText, setStreamText] = useState<string | null>(null)
+  const [streamMeta, setStreamMeta] = useState<ChatMessageMeta | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const scrollToEnd = () => {
     const list = listRef.current
@@ -52,25 +73,27 @@ export default function ChatPanel({ tripId, onCollapse }: { tripId: string; onCo
 
   const sending = sendState.status === 'sending'
 
-  async function handleSend() {
-    const content = input.trim()
-    if (content === '' || sending) return
+  async function handleSend(content: string) {
+    const trimmed = content.trim()
+    if (trimmed === '' || sending) return
     setInput('')
     setSendState({ status: 'sending' })
     setStreamText('')
+    setStreamMeta(null)
 
     // Optimistic user bubble (id prefixed local-, replaced on done).
     const optimistic: ChatMessage = {
       id: `local-${Date.now()}`,
       tripId,
       role: 'user',
-      content,
+      content: trimmed,
       createdAt: new Date().toISOString(),
     }
     setHistory((prev) => [...prev, optimistic])
 
-    const result = await sendChatMessage(tripId, content, {
+    const result = await sendChatMessage(tripId, trimmed, {
       onDelta: (text) => setStreamText((prev) => (prev ?? '') + text),
+      onMeta: (meta) => setStreamMeta((prev) => ({ ...(prev ?? {}), ...meta })),
       onError: (error) => setSendState({ status: 'error', error }),
     })
 
@@ -87,6 +110,7 @@ export default function ChatPanel({ tripId, onCollapse }: { tripId: string; onCo
       )
     }
     setStreamText(null)
+    setStreamMeta(null)
   }
 
   return (
@@ -116,12 +140,16 @@ export default function ChatPanel({ tripId, onCollapse }: { tripId: string; onCo
           </p>
         )}
         {history.map((message) => (
-          <ChatBubble key={message.id} message={message} />
+          <ChatBubble key={message.id} message={message} sending={sending} onSend={handleSend} onFocusPoi={onFocusPoi} />
         ))}
         {streamText !== null && (
           <ChatBubble
             message={{ id: 'streaming', tripId, role: 'assistant', content: streamText, createdAt: '' }}
+            meta={streamMeta}
             streaming
+            sending={sending}
+            onSend={handleSend}
+            onFocusPoi={onFocusPoi}
           />
         )}
       </div>
@@ -132,7 +160,7 @@ export default function ChatPanel({ tripId, onCollapse }: { tripId: string; onCo
         className="flex items-end gap-[8px] border-t border-line px-[12px] py-[10px]"
         onSubmit={(event) => {
           event.preventDefault()
-          void handleSend()
+          void handleSend(input)
         }}
       >
         <input
@@ -160,23 +188,198 @@ export default function ChatPanel({ tripId, onCollapse }: { tripId: string; onCo
   )
 }
 
-function ChatBubble({ message, streaming = false }: { message: ChatMessage; streaming?: boolean }) {
+function ChatBubble({
+  message,
+  meta,
+  streaming = false,
+  sending = false,
+  onSend,
+  onFocusPoi,
+}: {
+  message: ChatMessage
+  meta?: ChatMessageMeta | null
+  streaming?: boolean
+  sending?: boolean
+  onSend: (content: string) => void
+  onFocusPoi?: (poi: ChatPoiLink) => void
+}) {
   const isUser = message.role === 'user'
+  const roundMeta = meta ?? message.meta ?? null
+  const poiLinks = roundMeta?.poiLinks ?? []
+  const chips = roundMeta?.chips ?? []
+  const think = message.think ?? roundMeta?.think ?? null
+  const sources = message.sources ?? roundMeta?.sources ?? null
+
+  if (isUser) {
+    return (
+      <div className="flex justify-end">
+        <div
+          data-chat-message
+          data-chat-role={message.role}
+          className="max-w-[85%] whitespace-pre-wrap rounded-[10px] rounded-br-[3px] bg-green px-[11px] py-[7px] text-[13px] leading-[1.7] text-white"
+        >
+          {message.content}
+        </div>
+      </div>
+    )
+  }
+
+  const blocks = parseAssistantContent(message.content, poiLinks)
+  const renderSpans = (spans: InlineSpan[]) => spans.map((span, index) => renderSpan(span, index, onFocusPoi))
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className="flex justify-start">
       <div
         data-chat-message
         data-chat-role={message.role}
+        {...(roundMeta?.round ? { 'data-chat-round': roundMeta.round } : {})}
         {...(streaming ? { 'data-chat-streaming': 'true' } : {})}
-        className={
-          isUser
-            ? 'max-w-[85%] whitespace-pre-wrap rounded-[10px] rounded-br-[3px] bg-green px-[11px] py-[7px] text-[13px] leading-[1.7] text-white'
-            : 'max-w-[85%] whitespace-pre-wrap rounded-[10px] rounded-bl-[3px] border border-line bg-paper px-[11px] py-[7px] text-[13px] leading-[1.7] text-ink'
-        }
+        className="flex max-w-[85%] flex-col gap-[6px] rounded-[10px] rounded-bl-[3px] border border-line bg-paper px-[11px] py-[7px] text-[13px] leading-[1.7] text-ink"
       >
-        {message.content === '' && streaming ? <span className="text-muted">思考中…</span> : message.content}
+        {think !== null && !streaming && <ThinkSection think={think} complete={roundMeta?.thinkComplete ?? true} />}
+        <div className="whitespace-pre-wrap">
+          {blocks.length === 0 && streaming ? <span className="text-muted">思考中…</span> : blocks.map((block, index) => renderBlock(block, index, renderSpans))}
+        </div>
+        {chips.length > 0 && (
+          <div data-chat-chips className="flex flex-wrap gap-[6px]">
+            {chips.map((chip) => (
+              <button
+                key={`${chip.label}:${chip.value}`}
+                type="button"
+                data-chat-chip={chip.value}
+                disabled={sending}
+                onClick={() => onSend(chip.value)}
+                className="rounded-full border border-green/40 bg-white px-[10px] py-[3px] text-[12px] text-green transition-colors hover:bg-green hover:text-white disabled:opacity-40"
+              >
+                {chip.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {sources !== null && sources.length > 0 && <SourcesSection sources={sources} />}
+        {!streaming && <CopyButton content={message.content} />}
       </div>
     </div>
+  )
+}
+
+function renderBlock(
+  block: ReturnType<typeof parseAssistantContent>[number],
+  index: number,
+  renderSpans: (spans: InlineSpan[]) => ReactNode[],
+) {
+  if (block.kind === 'heading') {
+    const Tag = block.level === 1 ? 'h3' : block.level === 2 ? 'h4' : 'h5'
+    return (
+      <Tag key={index} className="font-[600]">
+        {renderSpans(block.spans)}
+      </Tag>
+    )
+  }
+  if (block.kind === 'list-item') {
+    return (
+      <div key={index} className="flex gap-[6px] pl-[2px]">
+        <span className="shrink-0 text-muted">{block.marker}</span>
+        <span>{renderSpans(block.spans)}</span>
+      </div>
+    )
+  }
+  return <p key={index}>{renderSpans(block.spans)}</p>
+}
+
+function renderSpan(span: InlineSpan, index: number, onFocusPoi?: (poi: ChatPoiLink) => void) {
+  if (span.kind === 'bold') {
+    return (
+      <strong key={index} className="font-[600]">
+        {span.text}
+      </strong>
+    )
+  }
+  if (span.kind === 'poi') {
+    return (
+      <button
+        key={index}
+        type="button"
+        data-chat-poi-link={span.poi.name}
+        title="在地图上查看"
+        onClick={() => onFocusPoi?.(span.poi)}
+        className="text-green underline decoration-green/40 underline-offset-[2px] transition-colors hover:decoration-green"
+      >
+        {span.text}
+      </button>
+    )
+  }
+  return <span key={index}>{span.text}</span>
+}
+
+/** "思考完成" 折叠推理段 (spec 用户故事 17); hidden when absent. */
+function ThinkSection({ think, complete }: { think: string; complete: boolean }) {
+  return (
+    <details data-chat-think className="rounded-[6px] bg-white/60 px-[8px] py-[5px] text-[12px] text-muted">
+      <summary className="cursor-pointer select-none font-[550] text-ink">
+        思考完成{complete ? '' : '（部分）'}
+      </summary>
+      <p className="mt-[4px] whitespace-pre-wrap leading-[1.7]">{think}</p>
+    </details>
+  )
+}
+
+/** "来源" 折叠引用列表 (spec 用户故事 17); hidden when absent. */
+function SourcesSection({ sources }: { sources: NonNullable<ChatMessage['sources']> }) {
+  return (
+    <details data-chat-sources className="rounded-[6px] bg-white/60 px-[8px] py-[5px] text-[12px]">
+      <summary className="cursor-pointer select-none font-[550] text-ink">来源 · {sources.length}</summary>
+      <ul className="mt-[4px] space-y-[2px]">
+        {sources.map((source) => (
+          <li key={source.url}>
+            <a
+              href={source.url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-green underline decoration-green/40 underline-offset-[2px]"
+            >
+              {source.title}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+/** "复制" 按钮 (PRD AI 对话栏) — copies the raw markdown text. */
+function CopyButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<number | null>(null)
+  useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current)
+    },
+    [],
+  )
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopied(true)
+      if (timer.current !== null) window.clearTimeout(timer.current)
+      timer.current = window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      // Clipboard unavailable (permissions/insecure context) — nothing to do.
+    }
+  }
+  return (
+    <button
+      type="button"
+      data-action="chat-copy"
+      title="复制内容"
+      aria-label="复制内容"
+      onClick={() => void copy()}
+      className={`flex items-center gap-[3px] self-start text-[11px] transition-colors ${
+        copied ? 'text-green' : 'text-muted hover:text-green'
+      }`}
+    >
+      {copied ? <Check aria-hidden="true" className="w-[12px]" /> : <Copy aria-hidden="true" className="w-[12px]" />}
+      {copied ? '已复制' : '复制'}
+    </button>
   )
 }
 

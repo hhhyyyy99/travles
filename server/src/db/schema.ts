@@ -68,6 +68,9 @@ export const SCHEMA_STATEMENTS: string[] = [
     think TEXT,
     sources TEXT,
     applied_patch TEXT,
+    -- Ticket 07: round metadata JSON (round/chips/poiLinks/thinkComplete).
+    -- Nullable + added via the tolerant ALTER below for pre-07 databases.
+    meta TEXT,
     created_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS checklist (
@@ -140,5 +143,13 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
   await db.run('PRAGMA foreign_keys = ON')
   for (const statement of SCHEMA_STATEMENTS) {
     await db.run(statement)
+  }
+  // Ticket 07: pre-existing databases created before the messages.meta column
+  // existed get it additively here. SQLite has no ADD COLUMN IF NOT EXISTS,
+  // so the duplicate-column error on fresh databases is expected and ignored.
+  try {
+    await db.run('ALTER TABLE messages ADD COLUMN meta TEXT')
+  } catch {
+    // Column already exists (fresh database or a previous run) — fine.
   }
 }
