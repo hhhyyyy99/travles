@@ -1,31 +1,47 @@
 /**
  * 工作台三栏骨架 (ticket 04; ticket 10 adds the canvas/list view toggle and
- * day management) — left AI chat (placeholder), center trip canvas or
- * single-day list, right map (placeholder). Each column collapses
- * independently; the AI column is drag-resizable via the edge handle; all
- * collapse/width state — and now the center view choice — is remembered per
- * trip through useWorkbenchLayout.
+ * day management; ticket 09 adds card editing) — left AI chat, center trip
+ * canvas or single-day list, right map. Each column collapses independently;
+ * the AI column is drag-resizable via the edge handle; all collapse/width
+ * state — and the center view choice — is remembered per trip through
+ * useWorkbenchLayout.
  *
  * Both center views are a pure projection of GET /api/trips/:id/canvas.
- * Day add/delete/theme-edit write through the ticket-10 day-admin routes;
- * theme edits and deletes update the local state optimistically and roll
- * back on failure (spec user story 41).
+ * Day management (ticket 10) and card editing (ticket 09) write through the
+ * item-admin / day-admin routes with optimistic local updates: edits apply
+ * immediately, the mutation response carries the recomputed legs (so the map
+ * follows without a second read), and any failure restores the pre-edit
+ * snapshot and surfaces the error (spec user stories 40/41).
  */
 import { useEffect, useRef, useState } from 'react'
 import { LayoutGrid, List, MessageCircle, Map as MapIcon, PanelLeftClose, Sparkles } from 'lucide-react'
 import {
+  applyItemInsert,
+  applyItemMove,
+  applyItemPatch,
+  applyItemRemove,
+  applyItemReplace,
+  copyWorkbenchItem,
   createWorkbenchDay,
+  createWorkbenchItem,
   deleteWorkbenchDay,
+  deleteWorkbenchItem,
   fetchTripCanvas,
+  moveWorkbenchItem,
+  tempItemId,
   updateWorkbenchDay,
+  updateWorkbenchItem,
   type TripCanvasData,
   type WorkbenchDay,
+  type WorkbenchItem,
+  type WorkbenchItemCreateInput,
 } from '../../domain/workbench'
 import { AI_WIDTH_MAX, AI_WIDTH_MIN } from '../../domain/workbenchLayout'
 import type { WorkbenchView } from '../../domain/workbenchLayout'
 import { useWorkbenchLayout } from '../../hooks/useWorkbenchLayout'
 import { useToolsPanel } from '../../hooks/useToolsPanel'
 import WorkbenchTopbar from './WorkbenchTopbar'
+import AddCardDialog from './AddCardDialog'
 import CanvasColumn from './CanvasColumn'
 import ChatPanel from './ChatPanel'
 import ListViewColumn from './ListViewColumn'
@@ -48,6 +64,9 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   const { open: toolsOpen, toggle: toggleTools, close: closeTools } = useToolsPanel(tripId)
   const [actionError, setActionError] = useState('')
   const [pendingDelete, setPendingDelete] = useState<WorkbenchDay | null>(null)
+  // 添加卡片弹窗 (ticket 09) — open for a specific day (day-column "+" or the
+  // selected card's toolbar "添加").
+  const [addCardDay, setAddCardDay] = useState<string | null>(null)
 
   // Latest ready data for async handlers (avoids stale-closure rollbacks).
   const readyData = state.status === 'ready' ? state.data : null
@@ -121,6 +140,119 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   const pendingDeleteLabel = pendingDelete
     ? `${pendingDelete.date ? pendingDelete.date : `D${pendingDelete.index + 1}`}${pendingDelete.theme ? ` ${pendingDelete.theme}` : ''}`
     : ''
+
+  // ---- Card editing (ticket 09) ---------------------------------------------
+  // Every edit is optimistic (spec user story 41): patch the local days
+  // first, send the request, and on success adopt the recomputed legs from
+  // the response (map follows without a second canvas read). Any failure
+  // restores the pre-edit snapshot and shows the error — no silent loss.
+
+  /** Replace the legs list on the ready state (map redraws from it). */
+  const patchLegs = (legs: TripCanvasData['legs']) => {
+    setState((prev) => (prev.status === 'ready' ? { ...prev, data: { ...prev.data, legs } } : prev))
+  }
+
+  /** Shared rollback: restore the snapshot and surface the server error. */
+  const rollback = (snapshot: TripCanvasData | null, error: string) => {
+    if (snapshot) setState({ status: 'ready', data: snapshot })
+    setActionError(error)
+  }
+
+  const findItem = (days: WorkbenchDay[], itemId: string): WorkbenchItem | undefined =>
+    days.flatMap((day) => day.items).find((item) => item.id === itemId)
+
+  const handleMoveItem = async (itemId: string, toDayId: string, toIndex: number) => {
+    const snapshot = dataRef.current
+    setActionError('')
+    patchDays((days) => applyItemMove(days, itemId, toDayId, toIndex))
+    const result = await moveWorkbenchItem(tripId, itemId, { dayId: toDayId, index: toIndex })
+    if (!result.ok) {
+      rollback(snapshot, result.error)
+      return
+    }
+    patchLegs(result.data.legs)
+  }
+
+  const handleCopyItem = async (itemId: string, toDayId: string, toIndex?: number) => {
+    const snapshot = dataRef.current
+    const source = snapshot ? findItem(snapshot.days, itemId) : undefined
+    if (!source) return
+    const temp: WorkbenchItem = { ...source, id: tempItemId('pending-copy'), dayId: toDayId, pending: true }
+    setActionError('')
+    patchDays((days) => applyItemInsert(days, temp, toDayId, toIndex))
+    const result = await copyWorkbenchItem(tripId, itemId, { dayId: toDayId, index: toIndex })
+    if (!result.ok) {
+      rollback(snapshot, result.error)
+      return
+    }
+    patchDays((days) => applyItemReplace(days, temp.id, result.data.item))
+    patchLegs(result.data.legs)
+  }
+
+  const handleCreateCard = async (input: WorkbenchItemCreateInput) => {
+    const snapshot = dataRef.current
+    setAddCardDay(null)
+    const temp: WorkbenchItem = {
+      id: tempItemId('pending-add'),
+      dayId: input.dayId,
+      order: 0,
+      type: input.type ?? 'other',
+      title: input.title,
+      note: input.note ?? '',
+      poi: input.poi ?? null,
+      images: input.images ?? [],
+      pending: true,
+    }
+    setActionError('')
+    patchDays((days) => applyItemInsert(days, temp, input.dayId, input.index))
+    const result = await createWorkbenchItem(tripId, input)
+    if (!result.ok) {
+      rollback(snapshot, result.error)
+      return
+    }
+    patchDays((days) => applyItemReplace(days, temp.id, result.data.item))
+    patchLegs(result.data.legs)
+  }
+
+  const handleDeleteItem = async (itemId: string) => {
+    const snapshot = dataRef.current
+    setActionError('')
+    patchDays((days) => applyItemRemove(days, itemId))
+    const result = await deleteWorkbenchItem(tripId, itemId)
+    if (!result.ok) {
+      rollback(snapshot, result.error)
+      return
+    }
+    patchLegs(result.data.legs)
+  }
+
+  const handleNoteSave = async (itemId: string, note: string) => {
+    const snapshot = dataRef.current
+    setActionError('')
+    patchDays((days) => applyItemPatch(days, itemId, { note }))
+    const result = await updateWorkbenchItem(tripId, itemId, { note })
+    if (!result.ok) {
+      rollback(snapshot, result.error)
+      return
+    }
+    // Server normalization (e.g. image captions) wins on field edits.
+    patchDays((days) => applyItemPatch(days, itemId, result.data))
+  }
+
+  const handleImageAdd = async (itemId: string, url: string) => {
+    const snapshot = dataRef.current
+    const current = snapshot ? findItem(snapshot.days, itemId) : undefined
+    if (!current) return
+    const images = [...current.images, { url, caption: '' }]
+    setActionError('')
+    patchDays((days) => applyItemPatch(days, itemId, { images }))
+    const result = await updateWorkbenchItem(tripId, itemId, { images })
+    if (!result.ok) {
+      rollback(snapshot, result.error)
+      return
+    }
+    patchDays((days) => applyItemPatch(days, itemId, result.data))
+  }
 
   return (
     <div className="flex h-screen min-h-0 flex-col bg-paper text-ink">
@@ -221,6 +353,12 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
                     onDeleteDay={handleDeleteDay}
                     onCardClick={setSelectedItemId}
                     highlightItemId={selectedItemId}
+                    onMoveItem={handleMoveItem}
+                    onCopyItem={handleCopyItem}
+                    onDeleteItem={handleDeleteItem}
+                    onAddCard={setAddCardDay}
+                    onNoteSave={handleNoteSave}
+                    onImageAdd={handleImageAdd}
                   />
                 )}
               </div>
@@ -255,6 +393,16 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
           </div>
         )}
       </div>
+
+      {/* 添加卡片（ticket 09）——搜索 POI 或自由文本，两种模式 */}
+      {state.status === 'ready' && addCardDay !== null && (
+        <AddCardDialog
+          days={state.data.days}
+          defaultDayId={addCardDay}
+          onSubmit={(input) => void handleCreateCard(input)}
+          onClose={() => setAddCardDay(null)}
+        />
+      )}
 
       {/* 删天确认（ticket 10）——明确提示该天的卡片会一并删除 */}
       <ConfirmDialog

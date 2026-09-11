@@ -161,6 +161,19 @@ export default function ChatPanel({ tripId, onCollapse }: { tripId: string; onCo
 }
 
 function ChatBubble({ message, streaming = false }: { message: ChatMessage; streaming?: boolean }) {
+  // Ticket 09: manual-edit system notes render as muted center lines — they
+  // keep the thread aware of the latest itinerary without mimicking a turn.
+  if (message.role === 'system') {
+    return (
+      <p
+        data-chat-message
+        data-chat-role="system"
+        className="mx-auto max-w-[92%] text-center text-[11px] leading-[1.7] text-muted"
+      >
+        {message.content}
+      </p>
+    )
+  }
   const isUser = message.role === 'user'
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>

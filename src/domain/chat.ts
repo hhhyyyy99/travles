@@ -17,7 +17,8 @@
 import type { ApiResult, FetchLike } from './tripList'
 import { defaultFetch } from './tripList'
 
-export type ChatRole = 'user' | 'assistant'
+/** 'system' rows are the lightweight manual-edit notes from ticket 09. */
+export type ChatRole = 'user' | 'assistant' | 'system'
 
 export type ChatMessage = {
   id: string
@@ -52,7 +53,7 @@ function normalizeMessage(raw: unknown): ChatMessage | null {
   if (raw === null || typeof raw !== 'object') return null
   const m = raw as Record<string, unknown>
   if (typeof m.id !== 'string' || m.id === '') return null
-  const role: ChatRole = m.role === 'assistant' ? 'assistant' : 'user'
+  const role: ChatRole = m.role === 'assistant' ? 'assistant' : m.role === 'system' ? 'system' : 'user'
   return {
     id: m.id,
     tripId: typeof m.tripId === 'string' ? m.tripId : '',
