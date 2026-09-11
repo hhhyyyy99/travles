@@ -4,7 +4,13 @@
  * with cover image, order number and note; adjacent cards are joined by a
  * transport leg chip ("30.3 千米 · 31 分钟") rendered from server data only
  * (recomputation is ticket 09's job).
+ *
+ * Ticket 05 (additive): optional `onCardClick` / `highlightItemId` — the
+ * map-panel linkage. Clicking a card asks the map to focus its POI; a marker
+ * click highlights a card and scrolls its day column into view. Both props
+ * are optional so the read-only canvas behavior is unchanged without them.
  */
+import { useEffect } from 'react'
 import { Car } from 'lucide-react'
 import {
   CARD_TYPE_LABEL,
@@ -38,8 +44,36 @@ const VISUAL_CLASSES = {
   },
 } as const
 
-export default function CanvasColumn({ days, legs }: { days: WorkbenchDay[]; legs: WorkbenchLeg[] }) {
+export default function CanvasColumn({
+  days,
+  legs,
+  onCardClick,
+  highlightItemId,
+}: {
+  days: WorkbenchDay[]
+  legs: WorkbenchLeg[]
+  /** Card click → the map focuses the card's POI (ticket 05). */
+  onCardClick?: (itemId: string) => void
+  /** Highlighted card (marker click / detail card) + scroll into view. */
+  highlightItemId?: string | null
+}) {
   const legLookup = legsByPair(legs)
+
+  // Marker click → scroll the highlighted card's day column into view.
+  useEffect(() => {
+    if (!highlightItemId) return
+    for (const day of days) {
+      if (!day.items.some((item) => item.id === highlightItemId)) continue
+      document
+        .querySelector(`[data-canvas-day="${day.id}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+      document
+        .querySelector(`[data-canvas-card="${highlightItemId}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
+      return
+    }
+  }, [highlightItemId, days])
+
   return (
     <div id="workbench-canvas" className="h-full overflow-x-auto overflow-y-hidden bg-paper">
       <div className="flex h-full items-stretch gap-[16px] px-[16px] py-[16px]">
@@ -52,14 +86,24 @@ export default function CanvasColumn({ days, legs }: { days: WorkbenchDay[]; leg
           </p>
         )}
         {days.map((day) => (
-          <DayColumn key={day.id} day={day} legLookup={legLookup} />
+          <DayColumn key={day.id} day={day} legLookup={legLookup} onCardClick={onCardClick} highlightItemId={highlightItemId} />
         ))}
       </div>
     </div>
   )
 }
 
-function DayColumn({ day, legLookup }: { day: WorkbenchDay; legLookup: Map<string, WorkbenchLeg> }) {
+function DayColumn({
+  day,
+  legLookup,
+  onCardClick,
+  highlightItemId,
+}: {
+  day: WorkbenchDay
+  legLookup: Map<string, WorkbenchLeg>
+  onCardClick?: (itemId: string) => void
+  highlightItemId?: string | null
+}) {
   const accent = dayAccentColor(day.color, day.index)
   return (
     <section
@@ -85,7 +129,13 @@ function DayColumn({ day, legLookup }: { day: WorkbenchDay; legLookup: Map<strin
         {day.items.map((item, i) => (
           <div key={item.id} className="flex flex-col gap-[10px]">
             {i > 0 && <LegChip leg={legLookup.get(`${day.items[i - 1]?.id}|${item.id}`) ?? null} />}
-            <CanvasCard item={item} order={i + 1} accent={accent} />
+            <CanvasCard
+              item={item}
+              order={i + 1}
+              accent={accent}
+              onClick={onCardClick ? () => onCardClick(item.id) : undefined}
+              highlighted={highlightItemId === item.id}
+            />
           </div>
         ))}
       </div>
@@ -93,7 +143,19 @@ function DayColumn({ day, legLookup }: { day: WorkbenchDay; legLookup: Map<strin
   )
 }
 
-function CanvasCard({ item, order, accent }: { item: WorkbenchItem; order: number; accent: string }) {
+function CanvasCard({
+  item,
+  order,
+  accent,
+  onClick,
+  highlighted,
+}: {
+  item: WorkbenchItem
+  order: number
+  accent: string
+  onClick?: () => void
+  highlighted?: boolean
+}) {
   const visual = VISUAL_CLASSES[cardVisual(item.type)]
   const cover = item.images[0]?.url ?? null
   const isPlainText = item.poi === null && cover === null
@@ -102,9 +164,19 @@ function CanvasCard({ item, order, accent }: { item: WorkbenchItem; order: numbe
       data-canvas-card={item.id}
       data-card-type={item.type}
       data-card-plain-text={isPlainText || undefined}
+      data-card-highlight={highlighted || undefined}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (onClick && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault()
+          onClick()
+        }
+      }}
+      tabIndex={onClick ? 0 : undefined}
+      style={highlighted ? { boxShadow: `0 0 0 2px ${accent}` } : undefined}
       className={`overflow-hidden rounded-[6px] border border-line border-l-[3px] bg-white shadow-sm ${visual.bar} ${
         isPlainText ? 'border-dashed' : ''
-      }`}
+      } ${onClick ? 'cursor-pointer' : ''}`}
     >
       <div className="flex items-center gap-[8px] px-[10px] pt-[8px]">
         <span

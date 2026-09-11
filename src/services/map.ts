@@ -25,6 +25,10 @@ export interface RouteMapHandle {
   selectedLayer: L.LayerGroup
   /** Custom-base markers (accommodation.js `renderMarkers` L640–647) — re-drawn by the dialog. */
   accommodationMarkers: L.LayerGroup
+  /** Workbench panel layers (ticket 05) — per-day routes, mileage labels, POI markers. */
+  workbenchRouteLayer: L.LayerGroup
+  workbenchLabelLayer: L.LayerGroup
+  workbenchPoiLayer: L.LayerGroup
   destroy(): void
 }
 
@@ -33,6 +37,14 @@ export interface RouteMapOptions {
   onDaySelect: (day: number) => void
   /** 3 consecutive tileerrors → true; any tileload → false (trip.js:194). */
   onTileError: (visible: boolean) => void
+  /** Render the guide's static trip points (default true; workbench map opts out). */
+  staticMarkers?: boolean
+  /** Leaflet zoom control (default true; the workbench renders its own). */
+  zoomControl?: boolean
+  /** Leaflet layers control (default true; the workbench renders its own header). */
+  layersControl?: boolean
+  /** Initial view (default 海拉尔 49.5, 119.5 @ 7). */
+  initialView?: { center: LatLng; zoom: number }
 }
 
 /** Static marker key → day index (legacy trip.js:138 hardcoded map). */
@@ -71,12 +83,13 @@ export function renderAccommodationMarkers(handle: RouteMapHandle, bases: Accomm
 }
 
 export function createRouteMap(container: HTMLElement, options: RouteMapOptions): RouteMapHandle {
+  const view = options.initialView ?? { center: [49.5, 119.5] as LatLng, zoom: 7 }
   const map = L.map(container, {
     zoomControl: false,
     scrollWheelZoom: false,
     minZoom: 5,
     maxZoom: 16,
-  }).setView([49.5, 119.5], 7)
+  }).setView(view.center, view.zoom)
 
   const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution:
@@ -89,22 +102,30 @@ export function createRouteMap(container: HTMLElement, options: RouteMapOptions)
     { attribution: 'Imagery © Esri, Maxar, Earthstar Geographics', maxNativeZoom: 17 },
   )
 
-  L.control.layers({ 道路地图: tiles, 卫星地图: satellite }, undefined, { position: 'topright' }).addTo(map)
-  L.control.zoom({ position: 'bottomright' }).addTo(map)
+  if (options.layersControl !== false) {
+    L.control.layers({ 道路地图: tiles, 卫星地图: satellite }, undefined, { position: 'topright' }).addTo(map)
+  }
+  if (options.zoomControl !== false) L.control.zoom({ position: 'bottomright' }).addTo(map)
 
   const fullRouteLayer = L.layerGroup().addTo(map)
   const timeLabelLayer = L.layerGroup().addTo(map)
   const selectedLayer = L.layerGroup().addTo(map)
   const accommodationMarkers = L.layerGroup().addTo(map)
+  const workbenchRouteLayer = L.layerGroup().addTo(map)
+  const workbenchLabelLayer = L.layerGroup().addTo(map)
+  const workbenchPoiLayer = L.layerGroup().addTo(map)
 
-  // Static reference markers, one per point key (trip.js:137–138).
-  for (const key of POINT_KEYS) {
-    const point = tripPlan.points[key]
-    if (!point) continue
-    L.circleMarker(point.xy, { radius: 6, color: '#fff', weight: 2, fillColor: '#c36a4f', fillOpacity: 1 })
-      .addTo(map)
-      .bindTooltip(point.name, { permanent: false, direction: 'top' })
-      .on('click', () => options.onDaySelect(MARKER_DAY[key] ?? 0))
+  // Static reference markers, one per point key (trip.js:137–138). The
+  // workbench map (ticket 05) renders trip data instead and opts out.
+  if (options.staticMarkers !== false) {
+    for (const key of POINT_KEYS) {
+      const point = tripPlan.points[key]
+      if (!point) continue
+      L.circleMarker(point.xy, { radius: 6, color: '#fff', weight: 2, fillColor: '#c36a4f', fillOpacity: 1 })
+        .addTo(map)
+        .bindTooltip(point.name, { permanent: false, direction: 'top' })
+        .on('click', () => options.onDaySelect(MARKER_DAY[key] ?? 0))
+    }
   }
 
   // Tile-error fallback: 3 consecutive tileerrors → #map-error, reset on load.
@@ -134,6 +155,9 @@ export function createRouteMap(container: HTMLElement, options: RouteMapOptions)
     timeLabelLayer,
     selectedLayer,
     accommodationMarkers,
+    workbenchRouteLayer,
+    workbenchLabelLayer,
+    workbenchPoiLayer,
     destroy() {
       if (destroyed) return
       destroyed = true
