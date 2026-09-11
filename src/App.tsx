@@ -27,8 +27,7 @@ import { legendForDay } from './domain/routeView'
 import { useRouteMap } from './hooks/useRouteMap'
 import { usePrint } from './hooks/usePrint'
 import type { RouteMapHandle } from './services/map'
-import { tripPlan } from './data/itinerary'
-import { allRouteGeometries, drawSelectedDay, fitTrip, focusDay, renderFullRoute, showTimeLabels } from './services/map'
+import { drawSelectedDay, fitTrip, focusDay, renderFullRoute, showTimeLabels } from './services/map'
 import { allRouteGeometries as allRouteGeometriesState, routeCoordsForDay, routeGeometry, summaryDistance, timeLabelForDay } from './domain/routeView'
 
 const OVERVIEW_LEGEND = '全程参考连线 · 非道路导航'
@@ -51,11 +50,6 @@ export default function App() {
   // render (a stay change re-flips the selected day's copy without a click:
   // 住宿已更换 · 路线未更新 → 高德路线已更新 as the re-query settles).
   const legend = overview ? OVERVIEW_LEGEND : legendForDay(accommodationState, routeStates.states, selectedDay)
-
-  // Legacy `refreshAccommodationView` re-runs choose() on every change (day
-  // view returned, legend re-derived); here just leave the overview mode so the
-  // derived legend follows the route state (query wiring lives in AmapLive).
-  useEffect(() => subscribe(() => setOverview(false)), [subscribe])
 
   const mapHandleRef = useRef<RouteMapHandle | null>(null)
 
@@ -88,10 +82,29 @@ export default function App() {
     [amap.select],
   )
 
+  // Legacy `refreshAccommodationView` re-runs choose() on every accommodation
+  // change (day view returned + map redrawn from the new route geometry,
+  // legend re-derived). The AMap side re-queries via the AmapLive
+  // controller's own subscription. `choose` is memoized on the stable
+  // `amap.select` and `selectedDayRef` tracks the current day, so the
+  // redraw can't go stale.
+  const selectedDayRef = useRef(selectedDay)
+  selectedDayRef.current = selectedDay
+  useEffect(
+    () =>
+      subscribe(() => {
+        setOverview(false)
+        choose(selectedDayRef.current, false, { skipAmap: true })
+      }),
+    [subscribe, choose],
+  )
+
   const fit = useCallback(() => {
-    // AMap whole-trip view takes precedence over the Leaflet fit (trip.js:193).
-    if (amap.overview()) return
+    // AMap whole-trip view takes precedence over the Leaflet fit (trip.js:193)
+    // — but the overview LEGEND applies in both modes (amap-integration's
+    // whole-trip view shows 全程参考连线 too), so flip the flag first.
     setOverview(true)
+    if (amap.overview()) return
     const handle = mapHandleRef.current
     if (!handle) return
     const { accommodationState: acc, routeStates: rs } = routeViewRef.current

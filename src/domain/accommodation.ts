@@ -378,11 +378,13 @@ export interface AccommodationCommittedResult {
   previousBase?: AccommodationBase
 }
 
-/** No-op (legacy `{ok:true, changed:[]}` — nothing persisted, nothing notified). */
+/** No-op (legacy `{ok:true, changed:[], dayIndices:[], routeDays:[]}` — nothing persisted, nothing notified). */
 export interface AccommodationNoopResult {
   ok: true
   committed: false
   changed: []
+  dayIndices: []
+  routeDays: []
 }
 
 export interface AccommodationErrorResult {
@@ -410,7 +412,7 @@ export function applyStays(state: AccommodationState, dayIndices: number[], base
     else nextStays[index] = baseId
   })
   const changed = indices.filter((index) => getDayStay(state, index)?.id !== baseId)
-  if (!changed.length) return { ok: true, committed: false, changed: [] }
+  if (!changed.length) return { ok: true, committed: false, changed: [], dayIndices: [], routeDays: [] }
   const next: AccommodationState = { version: 1, bases: state.bases, stays: nextStays }
   const routeDays = affectedRoutes(changed)
   return {
@@ -502,7 +504,10 @@ export function restoreDay(state: AccommodationState, dayIndex: number): Accommo
   if (!overnightDays.includes(index)) return { ok: false, error: '该日没有住宿安排' }
   const current = getDayStay(state, index)
   const defaultId = defaultStayByDay[index]
-  if (!current || current.id === defaultId) return { ok: true, committed: false, changed: [] }
+  if (!current || current.id === defaultId) {
+    // Legacy accommodation.js:584–585 — no-op keeps the full result shape.
+    return { ok: true, committed: false, changed: [], dayIndices: [], routeDays: [] }
+  }
   const nextStays = { ...state.stays }
   delete nextStays[index]
   const next: AccommodationState = { version: 1, bases: state.bases, stays: nextStays }
@@ -736,7 +741,7 @@ export function replaceState(state: AccommodationState, input: string | unknown)
     ok: true,
     committed: true,
     state: next,
-    event: { type: 'restore', dayIndices: [...overnightDays], routeDays },
+    event: { type: 'restore', dayIndices: [...overnightDays], routeDays, fromImport: true },
     dayIndices: [...overnightDays],
     routeDays,
   }

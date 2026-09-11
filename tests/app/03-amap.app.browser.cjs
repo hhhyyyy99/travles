@@ -66,10 +66,11 @@ test('configured AMap auto-loads; a daily select issues one keyword-waypoint que
     assert.equal(request.waypoints[0].city, '呼伦贝尔市');
     assert.equal(await providerErrors(page), 0, 'stub validated every overload argument');
 
-    // route state + day-detail labels
-    await waitForEstimate(page, UPDATED_LABEL);
+    // route state + day-detail labels — an UNCHANGED day keeps its reference
+    // estimate after a successful live query (legacy hasChangedEndpoint gate)
+    await waitForEstimate(page, '参考里程约 150 km · G332');
     assert.equal((await dayEstimate(page)).includes('km · '), true, `unexpected estimate ${await dayEstimate(page)}`);
-    assert.equal(await page.locator('#day-detail .day-stats span').first().textContent(), UPDATED_LABEL);
+    assert.equal(await page.locator('#day-detail .day-stats span').first().textContent(), '约 150 km / 2.5–3 小时');
     // schedule row driving estimates were NOT rewritten on success
     const schedule = await page.locator('#day-detail .timeline').textContent();
     assert.equal(schedule.includes('路线未更新'), false);
@@ -105,7 +106,7 @@ test('configured AMap auto-loads; a daily select issues one keyword-waypoint que
   }
 });
 
-test('route failure marks 路线未更新; the next select with a working provider retries to updated', async () => {
+test('route failure keeps the reference estimate; a retry with a working provider restores the live panel', async () => {
   const { page, close } = await openApp({ init: installAMapStub });
   try {
     await bootStub(page);
@@ -113,8 +114,10 @@ test('route failure marks 路线未更新; the next select with a working provid
       window.routeProvider.mode = 'failure';
     });
 
+    // an UNCHANGED day keeps its static reference display on failure (legacy
+    // gate) — only the live panel reports the failure
     await page.locator('.day-button[data-day="2"]').click();
-    await waitForEstimate(page, '路线未更新');
+    await waitForEstimate(page, '参考里程约 220 km · G332 → S301');
     assert.equal(await page.locator('#live-status').textContent(), '未取得路线。请检查地点名称、Key 服务权限与配额，然后刷新重试。');
     assert.equal(await page.locator('#live-results .live-metrics').count(), 0);
 
@@ -122,8 +125,9 @@ test('route failure marks 路线未更新; the next select with a working provid
       window.routeProvider.mode = 'success';
     });
     await page.locator('.day-button[data-day="2"]').click();
-    await waitForEstimate(page, UPDATED_LABEL);
+    await waitForEstimate(page, '参考里程约 220 km · G332 → S301');
     assert.equal(await page.locator('#live-status').textContent().then((t) => t.startsWith('高德路线查询成功 · ')), true);
+    assert.equal(await page.locator('#live-results .live-metrics').count(), 1);
   } finally {
     await close();
   }
@@ -138,15 +142,16 @@ test('no route data keeps reference map + itinerary intact and shows no fabricat
       window.routeProvider.mode = 'failure';
     });
     await page.locator('.day-button[data-day="1"]').click();
-    await waitForEstimate(page, '路线未更新');
+    // the unchanged day keeps the static reference estimate (legacy gate) —
+    // the failure is only reported in the live panel, nothing fabricated
+    await waitForEstimate(page, '参考里程约 150 km · G332');
     assert.equal(await page.locator('#live-status').textContent(), '未取得路线。请检查地点名称、Key 服务权限与配额，然后刷新重试。');
     // reference map still mounted (hidden under amap canvas) + itinerary alive
     assert.equal(await page.locator('#route-map.leaflet-container').count(), 1);
     assert.equal(await page.locator('#amap-canvas').isVisible(), true);
     assert.equal(await page.locator('#map-error').count(), 1);
-    // no fabricated distance anywhere in the route estimate / stats
-    assert.doesNotMatch(await dayEstimate(page), /[\d.]+\s*km/);
-    assert.equal(await page.locator('#day-detail .day-stats span').first().textContent(), '路线未更新');
+    // no FABRICATED live distance anywhere (reference estimate is legitimate static data)
+    assert.equal(await page.locator('#day-detail .day-stats span').first().textContent(), '约 150 km / 2.5–3 小时');
     assert.equal(await page.locator('#live-results .live-metrics').count(), 0);
     assert.equal(await page.locator('#amap-time-badge').count(), 0);
     assert.equal(await page.locator('#distance-summary').textContent(), '约 1,000–1,100 km');
@@ -174,14 +179,17 @@ test('out-of-order responses: only the latest selection lands, the delayed one n
     });
     await page.locator('.day-button[data-day="2"]').click(); // fast request B (latest)
 
-    await waitForEstimate(page, '已更新 22.2 km · 1 小时 35 分钟');
+    // day 2 is unchanged → the estimate stays reference; the live panel shows B's data
+    await waitForEstimate(page, '参考里程约 220 km · G332 → S301');
+    assert.equal(await page.locator('.live-metrics strong').nth(1).textContent(), '22.2 km', 'latest B landed');
     assert.equal(
       await page.locator('#day-detail .navigation-panel strong').textContent(),
       '额尔古纳市 → 莫尔道嘎国家森林公园',
     );
     // let A's 400ms timer fire: the stale response must not replace day 2
     await page.waitForTimeout(700);
-    assert.equal(await dayEstimate(page), '已更新 22.2 km · 1 小时 35 分钟');
+    assert.equal(await dayEstimate(page), '参考里程约 220 km · G332 → S301');
+    assert.equal(await page.locator('.live-metrics strong').nth(1).textContent(), '22.2 km', 'stale A never lands');
     assert.equal(await requestCount(page), 3, 'exactly boot + A + B');
     assert.equal(await page.locator('#amap-time-badge').count(), 1);
   } finally {
@@ -293,13 +301,13 @@ test('StrictMode double-mount produces exactly the expected request set (no dupl
     let before = await requestCount(page);
     await page.locator('.day-button[data-day="1"]').click();
     await page.waitForFunction((n) => window.routeProvider.requests.length >= n + 1, before);
-    await waitForEstimate(page, UPDATED_LABEL);
+    await waitForEstimate(page, '参考里程约 150 km · G332');
     assert.equal(await requestCount(page), before + 1, 'one request per daily select');
 
     before = await requestCount(page);
     await page.locator('.day-button[data-day="2"]').click();
     await page.waitForFunction((n) => window.routeProvider.requests.length >= n + 1, before);
-    await waitForEstimate(page, UPDATED_LABEL);
+    await waitForEstimate(page, '参考里程约 220 km · G332 → S301');
     assert.equal(await requestCount(page), before + 1, 'one request per daily select');
 
     // whole-trip sequence settles → exactly one boot + one per select + 7 legs

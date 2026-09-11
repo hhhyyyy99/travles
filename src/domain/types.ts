@@ -146,6 +146,8 @@ export interface AccommodationChangeEvent {
   base?: AccommodationBase
   previousBase?: AccommodationBase
   changed?: number[]
+  /** true for whole-state restore (backup import) — legacy shows pending copy. */
+  fromImport?: boolean
 }
 
 /** Route endpoint kinds — `kind` is the TS port's discriminator (legacy has no field). */

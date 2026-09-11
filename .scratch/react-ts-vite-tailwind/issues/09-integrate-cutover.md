@@ -26,3 +26,15 @@ Evidence (all in the final integrated tree, branch ticket/09-integrate-cutover):
 - `npm run test:app` 66/66 (dev) and `npm run test:app:prod` 66/66 (production preview) — incl. the new `tests/app/09-cutover.app.browser.cjs` (root render, trip.html query+hash redirect, production entries + hashed assets + vendor script, accommodation save→reload persistence through the root, legacy-format storage renders through the root).
 - One flaky assertion hardened in suite 07 (wait for the exact backup status instead of a racy immediate read) — scenario, message and data-intact assertions unchanged.
 - External-dependency limitation: live AMap credentials are not available in this environment; the AMap boundary is verified via the provider fixture (tests/helpers/amap-stub.cjs), and the no-config fallback path is covered. Real-credential behavior (tiles, driving, search) requires the user's local `amap-config.js`.
+
+## Review round (post-cutover adversarial review, both reviewers + fixes)
+
+Two read-only reviews ran against the integrated branch (domain fidelity vs legacy worktree + notes; React integration defects). All findings fixed in a single follow-up batch:
+
+- MAJOR — day-detail nav links now pass the accommodation route to `navigationUrl` (no more search-URL fallback for default days); `navigationLimitNote` + `navigation-place-links` (搜索<景点> links) restored for keyword-only vias (DayDetail.tsx).
+- MAJOR — route-state writes are now gated by `hasChangedEndpoint` exactly like the legacy (amap-integration.js:175/204/214): unchanged days keep `reference` estimates (`参考里程约 …`) through success AND failure; live panel still reports results/errors; updated/`已更新` only for changed-endpoint days (useAmapLive.tsx).
+- MAJOR — `.map-legend` in AMap whole-trip mode now shows 全程参考连线 · 非道路导航 (fit() sets overview before the amap early-return); accommodation changes re-run choose(skipAmap) so the reference map redraws (App.tsx).
+- MINOR — backup import: read-in-flight token guard + close bumps the token; placeSearchReady gains an 8s plugin timeout; restoreDay/applyStays no-op results carry the full legacy shape; backup-import route days stay `pending` copy with a connected map (legacy) but re-derive stale/reference without one; connect-flush no longer double-queries the selected day; vite-app.cjs start-failure no longer masks the real error (TDZ fix); tsconfig enables noUnusedLocals/noUnusedParameters (dead code removed).
+- Suite updates: locked the previously-flaky 03/04b/06/07/08 assertions to the legacy-faithful expectations above (no test weakened; the two road-name strings use the legacy `→` separator).
+
+Final gates after the review round: typecheck pass; build pass; `npm test` 56/56; `test:app` 66/66 (dev); `test:app:prod` 66/66 (preview).

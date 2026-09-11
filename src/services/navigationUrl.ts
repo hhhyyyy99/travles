@@ -14,8 +14,9 @@ export const searchUrl = (name: string): string =>
   `https://uri.amap.com/search?keyword=${encodeURIComponent(name)}&callnative=0`
 
 interface RouteEndpoint {
-  lat: number
-  lng: number
+  /** WGS-84; absent only on keyword-only stops (guarded by hasCoordinates). */
+  lat?: number
+  lng?: number
   name: string
 }
 
@@ -26,14 +27,14 @@ interface RouteViaPoint extends RouteEndpoint {
 /** Shape of the accommodation day-route consumed by the legacy builder (tickets 03+). */
 export interface DayRouteLike {
   hasChangedEndpoint?: boolean
-  from?: RouteEndpoint
-  to?: RouteEndpoint
+  from?: RouteEndpoint | null
+  to?: RouteEndpoint | null
   via?: RouteViaPoint[]
 }
 
-/** `lng6,lat6,name` — legacy `endpoint()` helper (trip.js:12–16). */
+/** `lng6,lat6,name` — legacy `endpoint()` helper (trip.js:12–16). Coordinate presence is guaranteed by callers (hasCoordinates filters). */
 function endpoint(point: RouteEndpoint): string {
-  const [lng, lat] = wgs84ToGcj02LngLat(point.lat, point.lng)
+  const [lng, lat] = wgs84ToGcj02LngLat(point.lat!, point.lng!)
   return `${lng.toFixed(6)},${lat.toFixed(6)},${point.name}`
 }
 

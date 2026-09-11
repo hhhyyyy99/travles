@@ -544,7 +544,19 @@ class AmapLiveController {
     return token
   }
 
+  /**
+   * Failure/timeout write for the selected-day query (amap-integration.js
+   * :204/:214 — the legacy gate `accommodationRoute(day)?.hasChangedEndpoint`
+   * keeps UNCHANGED days on their static `reference` display: a failed live
+   * query must not destroy the reference leg/estimate for default routes).
+   */
   private recordDayResult(day: number, status: 'updated' | 'unupdated', expectedToken: number | undefined): void {
+    const changed = Boolean(this.accommodation?.getDayRoute(day)?.hasChangedEndpoint)
+    if (!changed) {
+      // Unchanged day: failure returns to the static reference display.
+      this.routes?.markRouteStatus([day], 'reference', { navigation: undefined }, expectedToken)
+      return
+    }
     this.routes?.markRouteStatus([day], status, { navigation: undefined }, expectedToken)
   }
 
@@ -604,9 +616,13 @@ class AmapLiveController {
     if (this.bootFlushed) return
     this.bootFlushed = true
     if (!this.queuedAccommodationDays.size) return
-    const days = [...this.queuedAccommodationDays].sort((a, b) => a - b)
+    // The selected day's normal connect-time query already uses the
+    // accommodation endpoints — skip it here to avoid a duplicate on wire.
+    const days = [...this.queuedAccommodationDays]
+      .sort((a, b) => a - b)
+      .filter((index) => index !== this.selectedDay)
     this.queuedAccommodationDays.clear()
-    this.accommodationChanged(days)
+    if (days.length) this.accommodationChanged(days)
   }
 
   /**
@@ -764,9 +780,13 @@ class AmapLiveController {
     const timestamp = new Date().toLocaleString('zh-CN', { hour12: false })
     this.setLiveStatus(`高德路线查询成功 · ${timestamp}（本地时间）`)
     if (!whole) {
+      // amap-integration.js:175 — legacy writes `updated` only for
+      // changed-endpoint days; an unchanged day keeps its `reference` state
+      // (static leg/estimate) while the patched navigation hrefs still land.
+      const changed = Boolean(this.accommodation?.getDayRoute(routeDay)?.hasChangedEndpoint)
       this.routes?.markRouteStatus(
         [routeDay],
-        'updated',
+        changed ? 'updated' : 'reference',
         {
           distance: Number(route.distance),
           duration: Number(route.time),
@@ -871,14 +891,26 @@ export function AmapLiveProvider({ children }: { children: ReactNode }) {
         state: payload.state,
         getDayRoute: (day) => accommodationGetDayRoute(payload.state, day),
       })
-      if (payload.routeDays?.length) controller.accommodationChanged(payload.routeDays)
-      const days = [...new Set(payload.routeDays.map(Number))].filter(
-        (index) => index >= 0 && index < tripPlan.days.length,
-      )
-      if (days.length) {
+      if (payload.routeDays?.length) {
+        const queriesStarted = controller.accommodationChanged(payload.routeDays)
+        const days = [...new Set(payload.routeDays.map(Number))].filter(
+          (index) => index >= 0 && index < tripPlan.days.length,
+        )
+        if (!days.length) return
         if (payload.type === 'create' || payload.type === 'update') {
+          // Changed days show 「当前没有可用的新路线结果…」 until a result lands.
           days.forEach((day) => markRouteStatus([day], 'stale'))
-        } else {
+        } else if (payload.type === 'restore' && payload.fromImport && !queriesStarted) {
+          // Whole-state restore (backup import). With a connected map the days
+          // stay `pending` (legacy `normalizeRouteStatuses(…, false)` BEFORE
+          // notify → 正在重新查询路线。 until results land). Without a map no
+          // query will ever settle them, so re-derive the truth: stale for
+          // still-changed days, reference for reverted ones.
+          days.forEach((day) =>
+            markRouteStatus([day], accommodationGetDayRoute(payload.state, day)?.hasChangedEndpoint ? 'stale' : 'reference'),
+          )
+        } else if (payload.type !== 'restore' || !payload.fromImport) {
+          // Single-night restore (legacy normalizes AFTER notify → stale).
           days.forEach((day) =>
             markRouteStatus([day], accommodationGetDayRoute(payload.state, day)?.hasChangedEndpoint ? 'stale' : 'reference'),
           )

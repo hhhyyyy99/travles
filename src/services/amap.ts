@@ -356,6 +356,7 @@ export function placeSearchReady(amap: AmapStatic | null | undefined): Promise<A
     const finish = (): void => {
       if (settled) return
       settled = true
+      window.clearTimeout(timeout)
       if (sdk.PlaceSearch) resolve(sdk)
       else {
         const error = new Error('高德地点搜索插件未就绪') as AmapSearchError
@@ -363,11 +364,21 @@ export function placeSearchReady(amap: AmapStatic | null | undefined): Promise<A
         reject(error)
       }
     }
+    // The plugin callback must not hang the caller forever: settle with the
+    // unavailable error if it never fires (offline / partial SDK).
+    const timeout = window.setTimeout(() => {
+      if (settled) return
+      settled = true
+      const error = new Error('高德地点搜索不可用') as AmapSearchError
+      error.code = 'unavailable'
+      reject(error)
+    }, 8000)
     try {
       sdk.plugin('AMap.PlaceSearch', finish)
     } catch (error) {
       if (!settled) {
         settled = true
+        window.clearTimeout(timeout)
         ;(error as AmapSearchError).code = (error as AmapSearchError).code || 'unavailable'
         reject(error as AmapSearchError)
       }

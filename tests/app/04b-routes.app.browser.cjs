@@ -163,10 +163,10 @@ test('changing a stay re-queries exactly the affected days with NEW endpoints (L
     assert.equal(await page.locator('#day-detail .navigation-panel strong').textContent(), '额尔古纳 → 草原民宿');
     assert.equal(await page.locator('.map-legend').textContent(), '高德路线已更新');
     assert.equal(await page.locator('#day-detail .day-stats span').first().textContent(), UPDATED_LABEL);
-    // untouched day keeps its plan display names and reference legend (React
-    // marks any selected day updated once its own AMap query settles — 03 lock)
+    // untouched day keeps its plan display names, reference estimate and
+    // reference legend — the legacy hasChangedEndpoint gate keeps it static
     await page.locator('.day-button[data-day="0"]').click();
-    await waitForEstimate(page, UPDATED_LABEL);
+    await waitForEstimate(page, '参考里程约 6 km');
     assert.equal(await page.locator('#day-detail .navigation-panel strong').textContent(), '海拉尔东山机场 → 海拉尔市区');
     assert.equal(await page.locator('.map-legend').textContent(), '行程连线示意 · 非道路导航');
   } finally {
@@ -302,11 +302,12 @@ test('switching the selected day mid-flight: a late response for the previous da
       window.routeProvider.distance = 33333;
     });
     await page.locator('.day-button[data-day="2"]').click();
-    await waitForEstimate(page, '已更新 33.3 km · 1 小时 35 分钟');
+    // day 2 is unchanged in this seed → static reference display throughout
+    await waitForEstimate(page, '参考里程约 220 km · G332 → S301');
 
     // let every delayed boot response arrive — none may touch day 2's display
     await page.waitForTimeout(800);
-    assert.equal(await page.locator('#day-detail .route-estimate').textContent(), '已更新 33.3 km · 1 小时 35 分钟');
+    assert.equal(await page.locator('#day-detail .route-estimate').textContent(), '参考里程约 220 km · G332 → S301');
     assert.equal(await page.locator('.day-button[aria-pressed="true"]').getAttribute('data-day'), '2');
     assert.equal(await page.locator('.map-legend').textContent(), '行程连线示意 · 非道路导航');
     assert.equal(await page.locator('#day-detail .navigation-panel strong').textContent(), '额尔古纳市 → 莫尔道嘎国家森林公园');
@@ -365,10 +366,9 @@ test('boot with a legacy-format stays override queries the affected days and set
     await waitForEstimate(page, UPDATED_LABEL);
     assert.equal(await page.locator('#day-detail .navigation-panel strong').textContent(), '草原民宿 → 黑山头');
 
-    // reference days untouched (display names + reference legend; the select
-    // query still marks them updated — React 03 lock)
+    // reference days untouched (display names + reference estimate + legend)
     await page.locator('.day-button[data-day="0"]').click();
-    await waitForEstimate(page, UPDATED_LABEL);
+    await waitForEstimate(page, '参考里程约 6 km');
     assert.equal(await page.locator('#day-detail .navigation-panel strong').textContent(), '海拉尔东山机场 → 海拉尔市区');
     assert.equal(await page.locator('.map-legend').textContent(), '行程连线示意 · 非道路导航');
   } finally {

@@ -95,9 +95,10 @@ async function startViteApp({ mode } = {}) {
  *   it naturally)
  */
 async function openApp({ mode, init, viewport, entry = '/', amapConfig404 = false, acceptDownloads = false } = {}) {
-  const server = await startViteApp({ mode });
+  let server;
   let browser;
   try {
+    server = await startViteApp({ mode });
     browser = await chromium.launch({
       headless: true,
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined,
@@ -127,7 +128,9 @@ async function openApp({ mode, init, viewport, entry = '/', amapConfig404 = fals
     };
   } catch (error) {
     await browser?.close();
-    await server.close();
+    // `server` may be unset when startViteApp itself failed — its error
+    // (with the vite logs attached) must surface, not a TDZ ReferenceError.
+    if (server) await server.close();
     throw error;
   }
 }

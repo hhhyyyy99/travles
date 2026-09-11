@@ -184,8 +184,9 @@ test('beforeprint/afterprint open and restore ALL details incl. AMap road-detail
 
 test('AMap-updated route prints 已更新 and the live panel road-details join the print snapshot', async () => {
   // Combined init: deterministic AMap provider (routeProvider stub) + the
-  // long-text fixture. The stub resolves day-0 with a fixed distance, which
-  // must show as the updated label — not the static estimate.
+  // long-text fixture (nights 1–2 customized). The changed days resolve with
+  // the stub's fixed distance and must print the updated label; the UNCHANGED
+  // day 0 legitimately keeps its static reference estimate (legacy gate).
   const { page, close } = await openApp({
     init: `(${installAMapStub.toString()})(); localStorage.setItem('hailar-slow-trip-accommodation-v1', ${JSON.stringify(SEED)});`,
     viewport: { width: 1100, height: 900 },
@@ -196,15 +197,21 @@ test('AMap-updated route prints 已更新 and the live panel road-details join t
     await page.emulateMedia({ media: 'print' });
     const result = await readPrintSheet(page);
     assert.ok(result.bodyText.includes('已更新 43.2 km'), 'updated label printed');
-    // day 0 only: its updated label must replace the static estimate (day 6 —
-    // the unchanged airport leg — legitimately keeps 参考里程约 6 km)
+    // day 1 (changed): updated label must replace the static estimate
+    const day1Route = await page.evaluate(() => {
+      const route = document.querySelector('[data-day-index="1"] .print-route');
+      return { status: route.getAttribute('data-route-status'), text: route.querySelector('b').textContent };
+    });
+    assert.equal(day1Route.status, 'updated');
+    assert.match(day1Route.text, /^已更新 43\.2 km/);
+    assert.equal(day1Route.text.includes('参考里程约'), false, 'static estimate replaced for the updated day');
+    // day 0 (unchanged airport leg): reference display stays intact
     const day0Route = await page.evaluate(() => {
       const route = document.querySelector('[data-day-index="0"] .print-route');
       return { status: route.getAttribute('data-route-status'), text: route.querySelector('b').textContent };
     });
-    assert.equal(day0Route.status, 'updated');
-    assert.match(day0Route.text, /^已更新 43\.2 km/);
-    assert.equal(day0Route.text.includes('参考里程约'), false, 'static estimate replaced for the updated day');
+    assert.equal(day0Route.status, 'reference');
+    assert.match(day0Route.text, /参考里程约 6 km/);
   } finally {
     await close();
   }

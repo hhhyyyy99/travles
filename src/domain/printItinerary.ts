@@ -21,7 +21,7 @@
 import { tripPlan } from '../data/itinerary'
 import { roadRoutes } from '../data/roadRoutes'
 import { getDayRoute, getDayStay, inUseBaseCount, overnightDays } from './accommodation'
-import { isStaleStatus, routeStateOrDefault, type RouteState } from './routeStates'
+import { routeStateOrDefault, type RouteState } from './routeStates'
 import type { AccommodationState, ItineraryDay } from './types'
 
 /** Legacy `staleStatuses` set (accommodation-print.js L2). */

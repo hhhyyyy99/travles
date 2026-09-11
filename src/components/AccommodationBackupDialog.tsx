@@ -81,6 +81,8 @@ export function AccommodationBackupDialog({
   const [status, setStatus] = useState('')
   const [tone, setTone] = useState<'normal' | typeof TONE_ERROR>('normal')
   const wasOpenRef = useRef(false)
+  /** Import session token — closing/reopening the dialog discards a read in flight. */
+  const importTokenRef = useRef(0)
 
   const setStatusTone = (message: string, nextTone: 'normal' | typeof TONE_ERROR = 'normal'): void => {
     setStatus(message)
@@ -102,6 +104,7 @@ export function AccommodationBackupDialog({
   }
 
   const closeDialog = (): void => {
+    importTokenRef.current++
     resetDraft()
     onRequestClose()
   }
@@ -134,9 +137,11 @@ export function AccommodationBackupDialog({
   const handleImport = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0]
     if (!file) return
+    const session = ++importTokenRef.current
     resetDraft()
     try {
       const validation: AccommodationValidationResult = validateBackup(await file.text())
+      if (session !== importTokenRef.current) return // dialog closed while reading
       if (!validation.ok) {
         setStatusTone(`无法导入：${validation.error}`, TONE_ERROR)
         return
@@ -144,6 +149,7 @@ export function AccommodationBackupDialog({
       setPending(validation.value)
       setStatusTone('请检查预览，并确认是否替换当前安排。')
     } catch {
+      if (session !== importTokenRef.current) return
       setStatusTone('无法读取备份文件，当前安排未改变。', TONE_ERROR)
     }
   }

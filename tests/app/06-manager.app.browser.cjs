@@ -185,7 +185,8 @@ localStorage.setItem("hailar-slow-trip-accommodation-v1", JSON.stringify({versio
     // boot: night 2 is a changed endpoint → its requery settles alongside the boot query
     await page.waitForFunction(() => window.routeProvider.requests.length >= 2);
     await page.waitForFunction(() => document.querySelector('#amap-time-badge'));
-    await waitForEstimate(page, UPDATED_LABEL);
+    // selected day 0 is unchanged → reference estimate stays; the changed day 2 updates
+    await waitForEstimate(page, '参考里程约 6 km');
     await page.locator('.day-button[data-day="2"]').click();
     await waitForEstimate(page, UPDATED_LABEL);
     const before = await page.evaluate(() => window.routeProvider.requests.length);

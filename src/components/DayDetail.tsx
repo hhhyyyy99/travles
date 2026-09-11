@@ -1,10 +1,11 @@
 import { ArrowUpRight, BedDouble, CarFront, LocateFixed, MapPin, Mountain, Navigation, Replace } from 'lucide-react'
 import type { ItineraryDay, ScheduleRow } from '../domain/types'
 import { legByDay, roadRoutes } from '../data/roadRoutes'
-import { navigationUrl, searchUrl } from '../services/navigationUrl'
+import { navigationLimitNote, navigationUrl, searchUrl } from '../services/navigationUrl'
 import { useRouteStates } from '../hooks/useRouteStates'
 import { useAccommodation } from '../hooks/useAccommodation'
 import { getDayStay, getDayRoute } from '../domain/accommodation'
+import { hasCoordinates } from '../domain/geo'
 import { routeDisplayNames } from '../domain/routeView'
 import {
   describeDriveText,
@@ -31,11 +32,13 @@ function NavigationPanel({ day, index }: DayDetailProps) {
   const { get } = useRouteStates()
   const { state: accommodationState } = useAccommodation()
   const state = get(index)
+  const route = getDayRoute(accommodationState, index)
   const stale = isStaleStatus(state.status)
   const legIndex = legByDay[index]
-  const leg = legIndex != null && !stale ? roadRoutes.legs[legIndex] : undefined
+  // trip.js:51 — `route?.hasChangedEndpoint || stale` drops the static leg for
+  // changed-endpoint days (their estimate comes from the live query only).
+  const leg = legIndex != null && !route?.hasChangedEndpoint && !stale ? roadRoutes.legs[legIndex] : undefined
   const localDay = day.points.length < 2
-  const roads = leg ? leg.roads.filter((r) => /^[GS]\d/.test(r)).join(' → ') : ''
   const names = routeDisplayNames(accommodationState, index)
   const fromName = names.from
   const toName = names.to
@@ -45,9 +48,11 @@ function NavigationPanel({ day, index }: DayDetailProps) {
   )
   // trip.js:54 — the changed-endpoint area suffix 住宿区域按代表位置估算。comes from
   // the accommodation route (threaded only through the stale branch).
-  const routeNote = describeRouteNote(state, localDay, getDayRoute(accommodationState, index))
-  const primaryHref = state.navigation?.primary ?? navigationUrl(day)
-  const currentHref = state.navigation?.current ?? navigationUrl(day, true)
+  const routeNote = describeRouteNote(state, localDay, route)
+  const externalNote = navigationLimitNote(route)
+  const primaryHref = state.navigation?.primary ?? navigationUrl(day, false, route)
+  const currentHref = state.navigation?.current ?? navigationUrl(day, true, route)
+  const placeLinks = (route?.via ?? []).filter((point) => point.keywordOnly || !hasCoordinates(point))
 
   return (
     <div className="navigation-panel">
@@ -70,7 +75,21 @@ function NavigationPanel({ day, index }: DayDetailProps) {
           </a>
         )}
       </div>
-      <p className="navigation-note">{routeNote}</p>
+      <p className="navigation-note">
+        {routeNote}
+        {externalNote ? ` ${externalNote}` : ''}
+      </p>
+      {placeLinks.length > 0 && (
+        <p className="navigation-place-links">
+          {placeLinks.map((point) => (
+            <a key={point.name} href={searchUrl(point.keyword || point.name)} target="_blank" rel="noopener">
+              <MapPin aria-hidden="true" />
+              搜索{point.name}
+              <ArrowUpRight aria-hidden="true" />
+            </a>
+          ))}
+        </p>
+      )}
     </div>
   )
 }
