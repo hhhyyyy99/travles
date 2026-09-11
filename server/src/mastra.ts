@@ -10,6 +10,12 @@ import { dirname } from 'node:path'
 import { toLibsqlUrl } from './db/driver.js'
 import { createEmitRoundMetaTool } from './chat/round-meta.js'
 import { APPLY_TRIP_PATCH_TOOL_NAME, createApplyTripPatchTool } from './trip-patch/tool.js'
+import {
+  CREATE_TRIP_PROPOSAL_TOOL_NAME,
+  READ_TRIP_SNAPSHOT_TOOL_NAME,
+  createTripProposalTool,
+  createTripSnapshotTool,
+} from './ai-proposals/tool.js'
 import type { TripPatchStoreDriver } from './trip-patch/types.js'
 
 /**
@@ -69,6 +75,14 @@ const PLANNER_INSTRUCTIONS = [
   '- thinkComplete：think 摘要是否完整。',
   '- sources：引用来源（title + url），没有则省略。',
   '除 emit_round_meta 之外的结构化信息一律不要写进正文；正文只写用户可读的叙述。',
+  '',
+  '## 智能解析与路线优化建议（ticket 13）',
+  '智能解析、全局路线优化、天级魔法棒都必须先调用 create_trip_proposal 生成待确认建议。该工具只返回结构化建议，不会写行程；用户确认后服务端才会调用 apply_trip_patch。',
+  '全局路线优化和天级魔法棒在 create_trip_proposal 前必须先调用 read_trip_snapshot 获取当前行程；该工具只读天、卡片和交通段。',
+  'parse：把用户提供的攻略长文本拆成 items，并用 patch 的 add_day/add_item 表达可写入的结构。',
+  'optimize：读取现有行程，提出走法、顺序、节奏的 diff；只改必要的卡片，保留用户未涉及的内容。',
+  'day-optimize：只重排指定 targetDayId 的当天卡片；不要修改其它日期，也不要静默新增或删除天。',
+  '建议的 diff 用 add/update/move/remove 描述每个变更，summary 要说明取舍。不要把建议直接写入行程。',
   '',
   '## apply_trip_patch 工具（写行程的唯一通道）',
   '需要修改行程时（plan 回合整体规划、后续调整）通过该工具写入，ops 是按顺序执行的操作列表：',
@@ -141,6 +155,8 @@ export function createMastra(options: CreateMastraOptions = {}): Mastra {
     // trip; the server validates every patch before it reaches the database.
     tools: {
       emit_round_meta: createEmitRoundMetaTool(),
+      [CREATE_TRIP_PROPOSAL_TOOL_NAME]: createTripProposalTool(),
+      [READ_TRIP_SNAPSHOT_TOOL_NAME]: createTripSnapshotTool({ resolveStore: options.resolveTripPatchStore }),
       [APPLY_TRIP_PATCH_TOOL_NAME]: createApplyTripPatchTool({
         resolveStore: options.resolveTripPatchStore,
       }),

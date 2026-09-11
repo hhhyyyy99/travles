@@ -2,10 +2,20 @@
  * 工作台顶栏 (ticket 04) — back entry, trip title and the same date-range
  * badge the trip list uses ("10.02至10.08 7天6晚", reused formatters).
  */
-import { ArrowLeft, CalendarDays } from 'lucide-react'
+import { ArrowLeft, CalendarDays, WandSparkles } from 'lucide-react'
 import { formatDateBadge, formatDuration, type TripSummary } from '../../domain/tripList'
 
-export default function WorkbenchTopbar({ trip, onBack }: { trip: TripSummary; onBack: () => void }) {
+export default function WorkbenchTopbar({
+  trip,
+  onBack,
+  onOptimize,
+  optimizing = false,
+}: {
+  trip: TripSummary
+  onBack: () => void
+  onOptimize?: () => void
+  optimizing?: boolean
+}) {
   const badge = [formatDateBadge(trip.startDate, trip.endDate), formatDuration(trip.days, trip.nights)]
     .filter(Boolean)
     .join(' ')
@@ -35,6 +45,20 @@ export default function WorkbenchTopbar({ trip, onBack }: { trip: TripSummary; o
           <CalendarDays aria-hidden="true" className="w-[13px]" />
           {badge}
         </span>
+      )}
+      {onOptimize && (
+        <button
+          type="button"
+          data-action="route-optimize"
+          title="生成路线优化建议"
+          aria-label="生成路线优化建议"
+          disabled={optimizing}
+          onClick={onOptimize}
+          className="ml-auto inline-flex h-[30px] items-center gap-[5px] rounded-[5px] border border-green/40 px-[9px] text-[12px] text-green transition-colors hover:bg-green hover:text-white disabled:opacity-50"
+        >
+          <WandSparkles aria-hidden="true" className="w-[13px]" />
+          {optimizing ? '生成中…' : '路线优化'}
+        </button>
       )}
     </header>
   )

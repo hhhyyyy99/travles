@@ -19,7 +19,7 @@
  * back on failure; this component only reports intents.
  */
 import { useEffect, useState } from 'react'
-import { Car, Plus, Trash2 } from 'lucide-react'
+import { Car, Plus, Trash2, WandSparkles } from 'lucide-react'
 import {
   CARD_TYPE_LABEL,
   cardVisual,
@@ -61,6 +61,7 @@ export type CanvasColumnProps = {
   onAddDay?: () => void
   onThemeSave?: (dayId: string, theme: string) => void
   onDeleteDay?: (day: WorkbenchDay) => void
+  onOptimizeDay?: (day: WorkbenchDay) => void
   /** Card click → the map focuses the card's POI (ticket 05). */
   onCardClick?: (itemId: string) => void
   /** Highlighted card (marker click / detail card) + scroll into view. */
@@ -80,6 +81,7 @@ export default function CanvasColumn({
   onAddDay,
   onThemeSave,
   onDeleteDay,
+  onOptimizeDay,
   onCardClick,
   highlightItemId,
   onMoveItem,
@@ -166,6 +168,7 @@ export default function CanvasColumn({
             legLookup={legLookup}
             onThemeSave={onThemeSave}
             onDeleteDay={onDeleteDay}
+            onOptimizeDay={onOptimizeDay}
             onCardClick={onCardClick}
             highlightItemId={highlightItemId}
             onMoveItem={onMoveItem}
@@ -209,6 +212,7 @@ function DayColumn({
   legLookup,
   onThemeSave,
   onDeleteDay,
+  onOptimizeDay,
   onCardClick,
   highlightItemId,
   onMoveItem,
@@ -226,6 +230,7 @@ function DayColumn({
   legLookup: Map<string, WorkbenchLeg>
   onThemeSave?: (dayId: string, theme: string) => void
   onDeleteDay?: (day: WorkbenchDay) => void
+  onOptimizeDay?: (day: WorkbenchDay) => void
   onCardClick?: (itemId: string) => void
   highlightItemId?: string | null
   onMoveItem?: (itemId: string, toDayId: string, toIndex: number) => void
@@ -280,6 +285,19 @@ function DayColumn({
           </span>
           <span className="text-[12px] text-muted">{weekdayLabel(day.date)}</span>
           <span className="ml-auto text-[11px] text-muted">D{day.index + 1}</span>
+          {onOptimizeDay && (
+            <button
+              type="button"
+              data-action="optimize-day"
+              data-day-id={day.id}
+              title={`优化 ${dateLabel}`}
+              aria-label={`优化 ${dateLabel}`}
+              onClick={() => onOptimizeDay(day)}
+              className="grid h-[22px] w-[22px] place-items-center rounded-[4px] text-muted hover:text-green transition-colors"
+            >
+              <WandSparkles aria-hidden="true" className="w-[13px]" />
+            </button>
+          )}
           {onDeleteDay && (
             <button
               type="button"

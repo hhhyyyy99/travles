@@ -29,6 +29,8 @@ import { SqliteMessageStoreDriver } from './chat/driver-sqlite.js'
 import type { MessageStoreDriver } from './chat/types.js'
 import { registerChatRoutes } from './chat/routes.js'
 import { readJsonBody } from './http/body.js'
+import { registerAiProposalRoutes } from './ai-proposals/routes.js'
+import { MemoryAiProposalStore } from './ai-proposals/types.js'
 // ---- TripPatch writes (ticket 08, additive) --------------------------------
 import { createSqliteTripPatchStore } from './trip-patch/store-sqlite.js'
 import type { TripPatchStoreDriver } from './trip-patch/types.js'
@@ -528,6 +530,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     modelConfigured: options.plannerModel !== undefined || modelConfigFromEnv() !== null,
     memoryConfigured,
     resolveTripPatchStore,
+  })
+
+  // Ticket 13: AI proposals are read-only until the user confirms them. The
+  // process-local store is intentional: a proposal is a short-lived preview,
+  // while the applied TripPatch remains the durable source of truth.
+  registerAiProposalRoutes(app, {
+    tripRepository,
+    planner: mastra.getAgent('planner'),
+    modelConfigured: options.plannerModel !== undefined || modelConfigFromEnv() !== null,
+    memoryConfigured,
+    resolveTripPatchStore,
+    proposalStore: new MemoryAiProposalStore(),
   })
 
   return app
