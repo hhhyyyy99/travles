@@ -7,14 +7,14 @@
   },
   "scripts": {
     "dev": "vite",
-    "start": "npm run build && vite preview --port 4173",
+    "start": "pnpm run build && vite preview --port 4173",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:browser": "node --test tests/app/*.browser.cjs",
     "test:app": "node --test tests/app/*.browser.cjs",
-    "test:app:prod": "npm run build && APP_MODE=preview node --test tests/app/*.browser.cjs"
+    "test:app:prod": "pnpm run build && APP_MODE=preview node --test tests/app/*.browser.cjs"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
@@ -33,5 +33,6 @@
     "tsx": "^4.20.0",
     "typescript": "~5.9.0",
     "vite": "^8.2.0"
-  }
+  },
+  "packageManager": "pnpm@11.17.0"
 }

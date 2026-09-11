@@ -5,23 +5,23 @@
 ## 环境要求
 
 - Node **>= 20.19**（`engines` 已在 `package.json` 声明；开发机使用 Node 24 验证）。
-- npm。本机默认 `~/.npm` 缓存可能有权限问题，所有 npm 命令请显式指定缓存目录：
-  `npm --cache <你的缓存目录> <command>`（例如 `npm --cache /path/to/npm-cache ci`）。
+- pnpm（`packageManager` 已声明为 `pnpm@11.17.0`；可用 corepack 自动选用：
+  `corepack enable && corepack prepare pnpm@11.17.0 --activate`）。
 
 ## 安装
 
 ```bash
-npm ci          # 安装 lockfile 锁定的依赖（package-lock.json 已提交）
+pnpm install --frozen-lockfile   # 按 pnpm-lock.yaml 精确安装依赖（锁文件已提交）
 ```
 
-Playwright 浏览器按宿主环境预先放置；如缺失可 `npx playwright install chromium`。测试同时支持
+Playwright 浏览器按宿主环境预先放置；如缺失可 `pnpm exec playwright install chromium`。测试同时支持
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定现成 Chromium 可执行文件。
 
 ## 开发 / 启动
 
 ```bash
-npm run dev     # Vite 开发服务器，默认端口 5173 → http://localhost:5173/
-npm start       # 构建后以生产产物预览方式启动（vite preview，默认端口 4173）
+pnpm run dev    # Vite 开发服务器，默认端口 5173 → http://localhost:5173/
+pnpm start      # 构建后以生产产物预览方式启动（vite preview，默认端口 4173）
 ```
 
 - 根入口 `/` 与 `/trip.html`（重定向到 `/`，保留 `?query` 与 `#hash`）在开发与生产预览中都可访问。
@@ -35,9 +35,9 @@ npm start       # 构建后以生产产物预览方式启动（vite preview，�
 
 | 命令 | 作用 |
 |---|---|
-| `npm run typecheck` | 独立严格类型检查（`tsc --noEmit`，不依赖 Vite 转译） |
-| `npm run build` | 先 `typecheck` 再 `vite build`；产物输出到 `dist/`（入口 `index.html` + `trip.html`） |
-| `npm run preview` | `vite preview`，在本地预览 `dist/` 生产产物 |
+| `pnpm run typecheck` | 独立严格类型检查（`tsc --noEmit`，不依赖 Vite 转译） |
+| `pnpm run build` | 先 `typecheck` 再 `vite build`；产物输出到 `dist/`（入口 `index.html` + `trip.html`） |
+| `pnpm run preview` | `vite preview`，在本地预览 `dist/` 生产产物 |
 
 ## 高德地图配置（可选）
 
@@ -63,10 +63,10 @@ npm start       # 构建后以生产产物预览方式启动（vite preview，�
 
 | 命令 | 目标 |
 |---|---|
-| `npm test` | 纯逻辑测试（`node --import tsx --test tests/*.test.ts`；经 tsx 直接导入 TS 源码） |
-| `npm run test:browser` | 新版浏览器行为验收 `tests/app/*.browser.cjs`，跑在 Vite **开发**服务器 |
-| `npm run test:app` | 同上（开发服务器别名） |
-| `npm run test:app:prod` | 先 `npm run build`，再以 `APP_MODE=preview` 跑同一套验收，针对 **生产预览** |
+| `pnpm test` | 纯逻辑测试（`node --import tsx --test tests/*.test.ts`；经 tsx 直接导入 TS 源码） |
+| `pnpm run test:browser` | 新版浏览器行为验收 `tests/app/*.browser.cjs`，跑在 Vite **开发**服务器 |
+| `pnpm run test:app` | 同上（开发服务器别名） |
+| `pnpm run test:app:prod` | 先 `pnpm run build`，再以 `APP_MODE=preview` 跑同一套验收，针对 **生产预览** |
 
 浏览器测试约定：Chromium headless（`tests/helpers/vite-app.cjs`，127.0.0.1 + 空闲端口 + `--strictPort`）、
 默认 8 秒超时、abort 所有非 127.0.0.1 请求、`page.addInitScript` 注入 provider fixture / 旧格式
