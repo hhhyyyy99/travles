@@ -34,7 +34,29 @@ function installAMapStub() {
   class Traffic {reload(){} show(){} hide(){}}
   class Shape {constructor(options) {this.options=options;}}
   class AutoComplete {on(){}}
-  window.AMap={LngLat,Driving,Map,TileLayer:{Traffic},ToolBar:Shape,Scale:Shape,Marker:Shape,Polyline:Shape,Pixel:class{},AutoComplete,DrivingPolicy:{REAL_TRAFFIC:0}};
+  // Place search (ticket 05): deterministic responses driven by placeProvider,
+  // mirroring routeProvider's mode/delay knobs. `pois` may be an array or a
+  // function of the query, so suites can script per-query responses (and
+  // slow-vs-fast races for the stale-result guard).
+  window.placeProvider = {requests: [], mode: 'success', delay: 40, pois: null};
+  class PlaceSearch {
+    constructor(options) { this.options = options || {}; }
+    search(query, callback) {
+      const provider = window.placeProvider;
+      const request = {query, city: this.options.city, citylimit: this.options.citylimit, pageSize: this.options.pageSize, mode: provider.mode, delay: provider.delay};
+      provider.requests.push(request);
+      setTimeout(() => {
+        request.completed = true;
+        if (provider.mode === 'no_data') return callback('no_data', {});
+        if (provider.mode === 'error') return callback('error', {});
+        const pois = typeof provider.pois === 'function'
+          ? provider.pois(query)
+          : (provider.pois || [{id: 'poi-default', name: query, address: '测试地址', location: {lng: 119.8, lat: 49.2}}]);
+        callback('complete', {poiList: {pois}});
+      }, provider.delay || 40);
+    }
+  }
+  window.AMap={LngLat,Driving,Map,TileLayer:{Traffic},ToolBar:Shape,Scale:Shape,Marker:Shape,Polyline:Shape,Pixel:class{},AutoComplete,PlaceSearch,DrivingPolicy:{REAL_TRAFFIC:0}};
   window.TIBET_AMAP_CONFIG={key:'local-test-only',securityJsCode:'local-test-only'};
 }
 module.exports = {installAMapStub};
