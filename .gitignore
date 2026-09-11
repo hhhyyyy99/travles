@@ -32,3 +32,6 @@ dist/
 out/
 *.tsbuildinfo
 test-results/
+
+# Server local SQLite data (ticket 02)
+server/data/
