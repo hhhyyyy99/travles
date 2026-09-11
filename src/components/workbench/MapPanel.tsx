@@ -51,6 +51,11 @@ export interface MapPanelProps {
   /** Marker clicks and the detail card's close button both land here. */
   onSelectItem: (itemId: string | null) => void
   onCollapse: () => void
+  /**
+   * AI-message POI link focus (ticket 07): panning only — no detail card,
+   * since the POI is not an itinerary item. Change of value re-centers.
+   */
+  focus?: { name: string; lat: number; lng: number; amapId?: string } | null
 }
 
 function findSelectedItem(days: WorkbenchDay[], itemId: string | null): { item: WorkbenchItem; day: WorkbenchDay } | null {
@@ -62,7 +67,7 @@ function findSelectedItem(days: WorkbenchDay[], itemId: string | null): { item: 
   return null
 }
 
-export default function MapPanel({ days, legs, selectedItemId, onSelectItem, onCollapse }: MapPanelProps) {
+export default function MapPanel({ days, legs, selectedItemId, onSelectItem, onCollapse, focus }: MapPanelProps) {
   const { containerRef, handleRef, tileError } = useRouteMap({
     onDaySelect: () => {},
     onMapReady: () => {
@@ -145,6 +150,14 @@ export default function MapPanel({ days, legs, selectedItemId, onSelectItem, onC
     if (!handle || selectedItemId !== null) return
     fitWorkbenchCoordinates(handle, tripFitCoordinates(days, legs))
   }, [handleRef, selectedItemId, days, legs, mapReadyTick])
+
+  // AI-message POI link click (ticket 07) → pan to the coordinate. Panning
+  // only: the linked POI is not an itinerary item, so no detail card opens.
+  useEffect(() => {
+    const handle = handleRef.current
+    if (!handle || !focus) return
+    focusWorkbenchPoi(handle, [focus.lat, focus.lng])
+  }, [focus])
 
   const fitOverview = (): void => {
     setViewDayId(null)

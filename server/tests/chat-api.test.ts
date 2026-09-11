@@ -1,12 +1,14 @@
 /**
- * Chat SSE loop tests (ticket 06) — the highest seam (spec 测试接缝 #1).
+ * Chat SSE loop tests (tickets 06/07) — the highest seam (spec 测试接缝 #1).
  *
  * Every test drives the REAL app via app.request() (Hono, no port, no
  * internal mocks): the mock model is injected at the Mastra model boundary,
  * or, for the env-routing tests, a real local OpenAI-compatible HTTP server
  * stands in for the provider. We assert the SSE event sequence, message
  * persistence, and (for the SQLite path) agent memory over the same
- * database file.
+ * database file. Ticket 07 adds clarify-round coverage: the fake model
+ * emits an `emit_round_meta` tool call (like a real provider's function
+ * calling) and the route must turn it into start/meta events + persistence.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -36,7 +38,8 @@ type StreamPart =
   | { type: 'text-start'; id: string }
   | { type: 'text-delta'; id: string; delta: string }
   | { type: 'text-end'; id: string }
-  | { type: 'finish'; finishReason: 'stop'; usage: { inputTokens: number; outputTokens: number; totalTokens: number } }
+  | { type: 'tool-call'; toolCallId: string; toolName: string; input: string }
+  | { type: 'finish'; finishReason: 'stop' | 'tool-calls'; usage: { inputTokens: number; outputTokens: number; totalTokens: number } }
 
 function jsonRequest(method: string, body: unknown): RequestInit {
   return { method, body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }
@@ -80,6 +83,77 @@ function fakeStreamModel(chunks: string[], options: { fail?: boolean } = {}): Ma
 }
 
 type SseEvent = { event: string; data: unknown }
+
+/**
+ * Ticket 07: fake model that plays the clarify-round protocol the way a real
+ * function-calling provider would — step 1 emits the `emit_round_meta` tool
+ * call (finishReason `tool-calls`), then Mastra executes the tool and calls
+ * the model again (step 2) for the user-visible prose. The tool result sent
+ * back in the step-2 prompt is recorded so tests can assert the loop.
+ */
+function fakeClarifyModel(options: {
+  toolInput: unknown
+  textChunks: string[]
+}): MastraLanguageModel & { prompts: string[] } {
+  const prompts: string[] = []
+  let call = 0
+  const finish = (finishReason: 'stop' | 'tool-calls'): StreamPart => ({
+    type: 'finish',
+    finishReason,
+    usage: { inputTokens: 3, outputTokens: 5, totalTokens: 8 },
+  })
+  return {
+    specificationVersion: 'v2',
+    provider: 'test.mock',
+    modelId: 'mock-clarify',
+    supportedUrls: Promise.resolve({}),
+    prompts,
+    doGenerate: async () => {
+      throw new Error('doGenerate not used in this ticket')
+    },
+    doStream: async ({ prompt }: { prompt?: unknown }) => {
+      call += 1
+      if (prompt !== undefined) prompts.push(JSON.stringify(prompt))
+      if (call === 1) {
+        const parts: StreamPart[] = [
+          { type: 'stream-start', warnings: [] },
+          {
+            type: 'tool-call',
+            toolCallId: 'call-1',
+            toolName: 'emit_round_meta',
+            input: JSON.stringify(options.toolInput),
+          },
+          finish('tool-calls'),
+        ]
+        return {
+          stream: new ReadableStream({
+            start(controller) {
+              for (const part of parts) controller.enqueue(part)
+              controller.close()
+            },
+          }),
+        }
+      }
+      const parts: StreamPart[] = [
+        { type: 'stream-start', warnings: [] },
+        ...options.textChunks.flatMap((delta): StreamPart[] => [
+          { type: 'text-start', id: 't1' },
+          { type: 'text-delta', id: 't1', delta },
+        ]),
+        { type: 'text-end', id: 't1' },
+        finish('stop'),
+      ]
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            for (const part of parts) controller.enqueue(part)
+            controller.close()
+          },
+        }),
+      }
+    },
+  } as unknown as MastraLanguageModel & { prompts: string[] }
+}
 
 /** Parse an SSE body into `{event, data}` pairs (data stays JSON-parsed). */
 function parseSSE(raw: string): SseEvent[] {
@@ -169,6 +243,108 @@ test('qa round: mock model streams through SSE, deltas arrive in order, both mes
     ],
   )
   assert.equal(messageStore.messageRows.length, 2)
+})
+
+// ---- Clarify round (ticket 07) ---------------------------------------------
+// The mock model plays the instructed protocol: call `emit_round_meta` first
+// (round type + chips + POI links + think + sources), then stream the prose.
+
+const CLARIFY_TOOL_INPUT = {
+  round: 'clarify',
+  chips: [
+    { label: '🚗 自驾/租车自驾', value: '我们自驾出行' },
+    { label: '✈️ 飞到当地后租车', value: '飞到海拉尔后租车' },
+    { label: '🚌 公共交通为主', value: '公共交通为主' },
+  ],
+  poiLinks: [
+    { name: '莫尔格勒河', lat: 49.4072, lng: 119.7478 },
+    { name: '额尔古纳', lat: 50.2428, lng: 120.1909, amapId: 'B000A8U608' },
+  ],
+  think: '用户未说明出行方式，这直接影响整体节奏，先澄清它。',
+  thinkComplete: true,
+  sources: [{ title: '呼伦贝尔自驾攻略', url: 'https://example.com/guide' }],
+}
+
+test('clarify round: emit_round_meta tool call drives start/meta events, chips ride the stream, metadata persists', async () => {
+  const model = fakeClarifyModel({
+    toolInput: CLARIFY_TOOL_INPUT,
+    textChunks: ['经典环线是海拉尔→额尔古纳→恩和→满洲里→海拉尔。', '先澄清一个关键变量：'],
+  })
+  const { app, trip, messageStore } = await makeInjectedApp(model as unknown as MastraLanguageModel)
+
+  const res = await app.request(
+    `/api/trips/${trip.id}/messages`,
+    jsonRequest('POST', { content: '我打算去呼伦贝尔玩 7 天，走经典路线' }),
+  )
+  assert.equal(res.status, 200)
+  const events = parseSSE(await res.text())
+
+  // Event sequence: start(round) → delta… → meta → done. The tool call lands
+  // before the first text delta, so `start` already carries `clarify`.
+  assert.deepEqual(
+    events.map((e) => e.event),
+    ['start', 'delta', 'delta', 'meta', 'done'],
+  )
+  assert.deepEqual((events[0] as { data: { round: string } }).data, { round: 'clarify' })
+
+  const deltas = events.filter((e) => e.event === 'delta') as { data: { text: string } }[]
+  assert.deepEqual(
+    deltas.map((d) => d.data.text),
+    ['经典环线是海拉尔→额尔古纳→恩和→满洲里→海拉尔。', '先澄清一个关键变量：'],
+  )
+
+  // The meta event carries the validated tool payload.
+  const meta = events.find((e) => e.event === 'meta') as { data: typeof CLARIFY_TOOL_INPUT }
+  assert.deepEqual(meta.data, CLARIFY_TOOL_INPUT)
+
+  // `done` echoes the persisted assistant message WITH the round metadata.
+  const done = events[events.length - 1] as {
+    data: { assistantMessage: { role: string; content: string; think?: string; sources?: unknown[]; meta?: typeof CLARIFY_TOOL_INPUT } }
+  }
+  assert.equal(done.data.assistantMessage.role, 'assistant')
+  assert.equal(done.data.assistantMessage.content, '经典环线是海拉尔→额尔古纳→恩和→满洲里→海拉尔。先澄清一个关键变量：')
+  assert.equal(done.data.assistantMessage.think, CLARIFY_TOOL_INPUT.think)
+  assert.deepEqual(done.data.assistantMessage.sources, CLARIFY_TOOL_INPUT.sources)
+  assert.deepEqual(done.data.assistantMessage.meta, CLARIFY_TOOL_INPUT)
+
+  // Reload path: GET history returns the same metadata fields.
+  const history = await app.request(`/api/trips/${trip.id}/messages`)
+  const historyBody = (await history.json()) as {
+    messages: { role: string; content: string; think?: string | null; sources?: unknown; meta?: typeof CLARIFY_TOOL_INPUT | null }[]
+  }
+  const assistantRow = historyBody.messages.find((m) => m.role === 'assistant')
+  assert.ok(assistantRow)
+  assert.equal(assistantRow.think, CLARIFY_TOOL_INPUT.think)
+  assert.deepEqual(assistantRow.sources, CLARIFY_TOOL_INPUT.sources)
+  assert.deepEqual(assistantRow.meta, CLARIFY_TOOL_INPUT)
+
+  // The agent loop came back to the model after the tool executed, and the
+  // step-2 prompt carried the tool result (loop sanity, not internals).
+  assert.equal(model.prompts.length, 2)
+  assert.ok(model.prompts[1]?.includes('clarify'))
+
+  assert.equal(messageStore.messageRows.length, 2)
+})
+
+test('clarify round with minimal tool input: no chips/sources sections, meta still emitted and persisted', async () => {
+  const toolInput = { round: 'clarify', chips: [{ label: '松弛一点', value: '节奏松弛一点' }] }
+  const { app, trip } = await makeInjectedApp(
+    fakeClarifyModel({ toolInput, textChunks: ['好的，那节奏上：'] }) as unknown as MastraLanguageModel,
+  )
+
+  const res = await app.request(`/api/trips/${trip.id}/messages`, jsonRequest('POST', { content: '去额尔古纳玩三天' }))
+  assert.equal(res.status, 200)
+  const events = parseSSE(await res.text())
+  assert.deepEqual(
+    events.map((e) => e.event),
+    ['start', 'delta', 'meta', 'done'],
+  )
+  const meta = events.find((e) => e.event === 'meta') as { data: typeof toolInput }
+  assert.deepEqual(meta.data, { round: 'clarify', chips: toolInput.chips })
+  const done = events[events.length - 1] as { data: { assistantMessage: { meta?: typeof toolInput; think?: string | null; sources?: unknown } } }
+  assert.deepEqual(done.data.assistantMessage.meta, toolInput)
+  assert.equal(done.data.assistantMessage.think, null)
+  assert.equal(done.data.assistantMessage.sources, null)
 })
 
 test('qa round: agent memory keeps one thread per trip (thread id trip-<tripId>)', async () => {

@@ -1,5 +1,6 @@
 /**
- * AI chat API client (ticket 06) — the qa-round conversation loop.
+ * AI chat API client (tickets 06/07) — the conversation loop over the
+ * four-round protocol (qa baseline + clarify rounds).
  *
  * Same codec convention as src/domain/tripList.ts / workbench.ts: tolerant
  * reads that never throw, an injectable FetchLike for Node tests, and
@@ -7,11 +8,15 @@
  *
  * ## SSE contract (mirrors server/src/chat/routes.ts)
  * POST /api/trips/:id/messages answers `text/event-stream` with
- * `start {round}` → `delta {text}…` → `done {userMessage, assistantMessage}`,
- * or an in-stream `error {code, message, guidance}` + `close {}` pair.
- * Stream errors are delivered to the caller through the
- * `onError(code, message, guidance)` callback (the spec's 用户故事 25 banner),
- * while transport-level failures resolve as `{ok:false,error}`.
+ * `start {round}` → `delta {text}…` → `meta` (ticket 07, optional — the
+ * round's structured payload: chips, poiLinks, think, thinkComplete,
+ * sources) → `done {userMessage, assistantMessage}`, or an in-stream
+ * `error {code, message, guidance}` + `close {}` pair. Unknown events are
+ * ignored (forward compatibility with tickets 08/11), so the parser skips
+ * anything it does not recognize. Stream errors are delivered to the caller
+ * through the `onError(code, message, guidance)` callback (the spec's
+ * 用户故事 25 banner), while transport-level failures resolve as
+ * `{ok:false,error}`.
  */
 
 import type { ApiResult, FetchLike } from './tripList'
@@ -19,12 +24,55 @@ import { defaultFetch } from './tripList'
 
 export type ChatRole = 'user' | 'assistant'
 
+/** One clickable clarify option chip (clicking sends `value` as the reply). */
+export type ChatOptionChip = {
+  label: string
+  value: string
+}
+
+/** A place the AI mentioned; clicking focuses the map on it. */
+export type ChatPoiLink = {
+  name: string
+  lat: number
+  lng: number
+  amapId?: string
+}
+
+/** One citation for the 来源 collapsible. */
+export type ChatSource = {
+  title: string
+  url: string
+}
+
+/**
+ * Structured round metadata (ticket 07) — the `meta` SSE event payload and
+ * the persisted `meta` field of an assistant message. `round` mirrors the
+ * protocol round type (PRD 附录 B): `clarify` | `qa` | `plan` |
+ * `patch-explain`; `chips` drive the clarify option chips, `poiLinks` the
+ * inline POI links, `think`/`thinkComplete` the 思考完成 collapsible and
+ * `sources` the 来源 collapsible (both hidden when absent).
+ */
+export type ChatMessageMeta = {
+  round?: string
+  chips?: ChatOptionChip[]
+  poiLinks?: ChatPoiLink[]
+  think?: string
+  thinkComplete?: boolean
+  sources?: ChatSource[]
+}
+
 export type ChatMessage = {
   id: string
   tripId: string
   role: ChatRole
   content: string
   createdAt: string
+  /** Assistant messages: reasoning summary for the 思考完成 collapsible. */
+  think?: string | null
+  /** Assistant messages: parsed citations for the 来源 collapsible. */
+  sources?: ChatSource[] | null
+  /** Assistant messages: parsed round metadata (round, chips, poiLinks). */
+  meta?: ChatMessageMeta | null
 }
 
 export type ChatStreamError = {
@@ -38,6 +86,8 @@ export type SendChatHandlers = {
   onStart?: (round: string) => void
   /** Called for every streamed text chunk. */
   onDelta?: (text: string) => void
+  /** Called (ticket 07) when the round's structured metadata arrives. */
+  onMeta?: (meta: ChatMessageMeta) => void
   /** Called on an in-stream model/storage error (guidance for the banner). */
   onError?: (error: ChatStreamError) => void
 }
@@ -47,6 +97,80 @@ export type SendChatResult =
   | { ok: false; error: string }
 
 export const CHAT_NETWORK_ERROR = '无法连接服务器，请确认后端服务已启动。'
+
+/** Tolerant normalizer for the meta payload; null unless a round is present. */
+export function normalizeChatMeta(raw: unknown): ChatMessageMeta | null {
+  if (raw === null || typeof raw !== 'object') return null
+  const m = raw as Record<string, unknown>
+  const round = typeof m.round === 'string' && m.round ? m.round : null
+  if (round === null) return null
+  const chips: ChatOptionChip[] = []
+  if (Array.isArray(m.chips)) {
+    for (const entry of m.chips) {
+      if (entry === null || typeof entry !== 'object') continue
+      const label = (entry as { label?: unknown }).label
+      const value = (entry as { value?: unknown }).value
+      if (typeof label === 'string' && label && typeof value === 'string' && value) {
+        chips.push({ label, value })
+      }
+    }
+  }
+  const poiLinks: ChatPoiLink[] = []
+  if (Array.isArray(m.poiLinks)) {
+    for (const entry of m.poiLinks) {
+      if (entry === null || typeof entry !== 'object') continue
+      const e = entry as { name?: unknown; lat?: unknown; lng?: unknown; amapId?: unknown }
+      if (
+        typeof e.name === 'string' &&
+        e.name &&
+        typeof e.lat === 'number' &&
+        Number.isFinite(e.lat) &&
+        typeof e.lng === 'number' &&
+        Number.isFinite(e.lng)
+      ) {
+        poiLinks.push({
+          name: e.name,
+          lat: e.lat,
+          lng: e.lng,
+          ...(typeof e.amapId === 'string' && e.amapId ? { amapId: e.amapId } : {}),
+        })
+      }
+    }
+  }
+  const sources: ChatSource[] = []
+  if (Array.isArray(m.sources)) {
+    for (const entry of m.sources) {
+      if (entry === null || typeof entry !== 'object') continue
+      const title = (entry as { title?: unknown }).title
+      const url = (entry as { url?: unknown }).url
+      if (typeof title === 'string' && title && typeof url === 'string' && url) {
+        sources.push({ title, url })
+      }
+    }
+  }
+  return {
+    round,
+    ...(chips.length > 0 ? { chips } : {}),
+    ...(poiLinks.length > 0 ? { poiLinks } : {}),
+    ...(typeof m.think === 'string' && m.think ? { think: m.think } : {}),
+    ...(typeof m.thinkComplete === 'boolean' ? { thinkComplete: m.thinkComplete } : {}),
+    ...(sources.length > 0 ? { sources } : {}),
+  }
+}
+
+function normalizeSources(raw: unknown): ChatSource[] | null {
+  if (!Array.isArray(raw)) return null
+  const sources: ChatSource[] = []
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== 'object') continue
+    const title = (entry as { title?: unknown }).title
+    const url = (entry as { url?: unknown }).url
+    if (typeof title === 'string' && title && typeof url === 'string' && url) {
+      sources.push({ title, url })
+    }
+  }
+  return sources.length > 0 ? sources : null
+}
 
 function normalizeMessage(raw: unknown): ChatMessage | null {
   if (raw === null || typeof raw !== 'object') return null
@@ -59,6 +183,13 @@ function normalizeMessage(raw: unknown): ChatMessage | null {
     role,
     content: typeof m.content === 'string' ? m.content : '',
     createdAt: typeof m.createdAt === 'string' ? m.createdAt : '',
+    ...(role === 'assistant'
+      ? {
+          think: typeof m.think === 'string' && m.think ? m.think : null,
+          sources: normalizeSources(m.sources),
+          meta: normalizeChatMeta(m.meta),
+        }
+      : {}),
   }
 }
 
@@ -144,6 +275,13 @@ export async function sendChatMessage(
     if (event === 'delta' && parsed !== null && typeof parsed === 'object') {
       const text = (parsed as { text?: unknown }).text
       if (typeof text === 'string' && text) handlers.onDelta?.(text)
+      return
+    }
+    if (event === 'meta' && parsed !== null && typeof parsed === 'object') {
+      // Ticket 07: structured round metadata (round/chips/poiLinks/think/
+      // sources). Malformed payloads are ignored, not fatal.
+      const meta = normalizeChatMeta(parsed)
+      if (meta) handlers.onMeta?.(meta)
       return
     }
     if (event === 'error' && parsed !== null && typeof parsed === 'object') {

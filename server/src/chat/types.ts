@@ -1,15 +1,21 @@
 /**
- * Chat types (ticket 06) — the qa-round minimal conversation loop.
+ * Chat types (tickets 06/07) — the conversation loop over the four-round
+ * protocol (qa today; clarify arrives with ticket 07's `emit_round_meta`
+ * tool; plan / patch-explain land with tickets 08/11).
  *
  * Message rows map 1:1 onto the `messages` table from ticket 02's schema
- * (role/content/created_at; think/sources/applied_patch are JSON-reserved
- * columns this ticket never writes — they belong to tickets 07/08).
+ * (role/content/created_at) plus ticket 07's round-metadata columns:
  *
- * The round type (`qa` in this ticket; `clarify` / `plan` / `patch-explain`
- * land with tickets 07/08/11) is part of the SSE protocol, not the storage:
- * persisted rows stay plain role/content pairs so later rounds can extend
- * the stream schema without a migration.
+ * - `think`  — the reasoning summary behind the "思考完成" collapsible (text).
+ * - `sources` — JSON array of `{title, url}` citations ("来源" collapsible).
+ * - `meta`   — JSON `RoundMetaPayload` (round type, clarify chips, POI links,
+ *   thinkComplete). Column added additively by ticket 07 (ensureSchema issues
+ *   a tolerant ALTER for pre-existing databases).
+ *
+ * The SSE protocol carries the same payload live (see chat/routes.ts); the
+ * persisted rows are the reload-time projection of it.
  */
+import type { RoundMetaPayload, RoundSource } from './round-meta.js'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -20,6 +26,12 @@ export type ChatMessage = {
   role: ChatRole
   content: string
   createdAt: string
+  /** Assistant messages: reasoning summary for the 思考完成 collapsible. */
+  think?: string | null
+  /** Assistant messages: parsed citation list for the 来源 collapsible. */
+  sources?: RoundSource[] | null
+  /** Assistant messages: parsed round metadata (round type, chips, POI links). */
+  meta?: RoundMetaPayload | null
 }
 
 /** Raw driver row (snake_case, mirrors the messages table columns). */
@@ -29,6 +41,19 @@ export type MessageRow = {
   role: string
   content: string
   created_at: string
+  /** Ticket 07: think summary text (assistant rows only). */
+  think?: string | null
+  /** Ticket 07: JSON array of RoundSource. */
+  sources?: string | null
+  /** Ticket 07: JSON RoundMetaPayload (round/chips/poiLinks/thinkComplete). */
+  meta?: string | null
+}
+
+/** Optional round metadata persisted alongside an assistant message. */
+export type AssistantMessageMeta = {
+  think?: string
+  sources?: RoundSource[]
+  meta?: RoundMetaPayload
 }
 
 export interface MessageStoreDriver {

@@ -21,6 +21,7 @@ import {
   type TripCanvasData,
   type WorkbenchDay,
 } from '../../domain/workbench'
+import type { ChatPoiLink } from '../../domain/chat'
 import { AI_WIDTH_MAX, AI_WIDTH_MIN } from '../../domain/workbenchLayout'
 import type { WorkbenchView } from '../../domain/workbenchLayout'
 import { useWorkbenchLayout } from '../../hooks/useWorkbenchLayout'
@@ -48,6 +49,10 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   const { open: toolsOpen, toggle: toggleTools, close: closeTools } = useToolsPanel(tripId)
   const [actionError, setActionError] = useState('')
   const [pendingDelete, setPendingDelete] = useState<WorkbenchDay | null>(null)
+  // Ticket 07: POI focus target raised by the chat panel's inline POI links.
+  // The map panel receives it as a prop and centers/opens the POI detail;
+  // the placeholder logs it until ticket 05's real panel lands.
+  const [mapFocus, setMapFocus] = useState<ChatPoiLink | null>(null)
 
   // Latest ready data for async handlers (avoids stale-closure rollbacks).
   const readyData = state.status === 'ready' ? state.data : null
@@ -162,7 +167,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
               className="flex shrink-0 flex-col border-r border-line bg-white"
               style={{ width: layout.aiWidth }}
             >
-              <ChatPanel tripId={tripId} onCollapse={() => toggle('ai')} />
+              <ChatPanel tripId={tripId} onCollapse={() => toggle('ai')} onFocusPoi={setMapFocus} />
             </div>
             <AiResizeHandle width={layout.aiWidth} onResize={resizeAi} />
           </>
@@ -251,6 +256,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
               selectedItemId={selectedItemId}
               onSelectItem={setSelectedItemId}
               onCollapse={() => toggle('map')}
+              focus={mapFocus}
             />
           </div>
         )}
