@@ -10,11 +10,13 @@ import {
   KeyRound,
   PlaneLanding,
   PlaneTakeoff,
+  Printer,
   Ticket,
   Wind,
 } from 'lucide-react'
 import { Checklist } from './components/Checklist'
 import { DaysPanel } from './components/DaysPanel'
+import { PrintItinerary } from './components/PrintItinerary'
 import { RoutePanel } from './components/RoutePanel'
 import { AccommodationDialog } from './components/AccommodationDialog'
 import { useAmapLive } from './hooks/useAmapLive'
@@ -23,6 +25,7 @@ import { useRouteStates } from './hooks/useRouteStates'
 import { inUseBaseCount } from './domain/accommodation'
 import { legendForDay } from './domain/routeView'
 import { useRouteMap } from './hooks/useRouteMap'
+import { usePrint } from './hooks/usePrint'
 import type { RouteMapHandle } from './services/map'
 import { tripPlan } from './data/itinerary'
 import { allRouteGeometries, drawSelectedDay, fitTrip, focusDay, renderFullRoute, showTimeLabels } from './services/map'
@@ -40,6 +43,7 @@ export default function App() {
   const [overview, setOverview] = useState(true)
   const [mapHandle, setMapHandle] = useState<RouteMapHandle | null>(null)
   const amap = useAmapLive()
+  const print = usePrint()
   const { state: accommodationState, subscribe } = useAccommodation()
   const routeStates = useRouteStates()
   const accommodationCount = inUseBaseCount(accommodationState)
@@ -134,6 +138,16 @@ export default function App() {
         <nav className="flex items-center gap-[30px] text-[13px] max-sm:gap-[8px] max-sm:text-[12px] max-sm:flex-none">
           <a href="#journey" className="max-sm:hidden">每日行程</a>
           <a href="#prepare" className="max-sm:hidden">出发准备</a>
+          <button
+            id="print"
+            type="button"
+            title="打印或存为 PDF"
+            aria-label="打印或存为 PDF"
+            onClick={print}
+            className="grid h-[38px] w-[38px] place-items-center border border-line rounded-[5px] max-sm:h-[31px] max-sm:w-[31px]"
+          >
+            <Printer aria-hidden="true" />
+          </button>
         </nav>
       </header>
       <main className="mx-auto max-w-[1440px] px-[4%] max-sm:px-[5%]">
@@ -327,6 +341,7 @@ export default function App() {
         </a>
       </footer>
       <AccommodationDialog mapHandle={mapHandle} />
+      <PrintItinerary state={accommodationState} routeStates={routeStates.states} />
     </>
   )
 }
