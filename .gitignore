@@ -1,41 +1,7 @@
-# Next.js & Build
-.next/
-out/
-build/
-dist/
-.turbo/
-.vercel/
-*.tsbuildinfo
-
-# Dependencies
-node_modules/
-.pnpm-store/
-.npm/
-
-# Environment files & Secrets
-.env
-.env.local
-.env.*.local
-.env*.local
+# API keys & sensitive local configs
 amap-config.js
-*.pem
-*.key
 
-# Logs
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-.pnpm-debug.log*
-
-# Testing & Coverage
-coverage/
-.nyc_output/
-test-results/
-
-# OS & System files
+# OS files
 .DS_Store
 .DS_Store?
 ._*
@@ -43,23 +9,26 @@ test-results/
 .Trashes
 ehthumbs.db
 Thumbs.db
-Icon?
 
 # IDE & Editor configs
 .idea/
 .vscode/
 *.sublime-workspace
 *.sublime-project
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-*~
 
-# Temporary & Cache files
-.cache/
-.temp/
-.tmp/
+# Node dependencies & logs (if used)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
 *.tmp
 *.temp
+
+# Generated build and test artifacts
+dist/
+.next/
+out/
+*.tsbuildinfo
+test-results/
