@@ -6,6 +6,7 @@ import { MemoryTripStoreDriver } from '../src/trips/driver-memory.js'
 import { TripRepository } from '../src/trips/repository.js'
 import { MemoryAiProviderStoreDriver } from '../src/ai-providers/driver-memory.js'
 import { probeAiProvider } from '../src/ai-providers/probe.js'
+import { createProviderModel } from '../src/ai-providers/model.js'
 import { MockMemory } from '@mastra/core/memory'
 import { InMemoryStore } from '@mastra/core/storage'
 import { MemoryMessageStoreDriver } from '../src/chat/driver-memory.js'
@@ -61,6 +62,21 @@ const providerInput = {
   protocol: 'chat-completions' as const,
   apiKey: 'sk-provider-secret',
   headers: { 'X-Tenant': 'header-secret' },
+}
+
+type ProviderModel = {
+  doStream(options: { prompt: Array<{ role: string; content: unknown }> }): Promise<{ stream: ReadableStream<Record<string, unknown>> }>
+}
+
+async function readProviderParts(model: ProviderModel, prompt: Array<{ role: string; content: unknown }>): Promise<Record<string, unknown>[]> {
+  const result = await model.doStream({ prompt })
+  const reader = result.stream.getReader()
+  const parts: Record<string, unknown>[] = []
+  for (;;) {
+    const next = await reader.read()
+    if (next.done) return parts
+    parts.push(next.value)
+  }
 }
 
 test('provider settings persist multiple configs, select a default, and redact every secret', async () => {
@@ -221,6 +237,207 @@ test('chat-completions and responses providers drive the real chat SSE route', a
       assert.equal('messages' in (calls[0]?.body ?? {}), false)
     }
   }
+})
+
+test('provider model honors a non-streaming capability and preserves JSON text', async () => {
+  const app = await createApp({
+    tripRepository: new TripRepository(new MemoryTripStoreDriver()),
+    aiProviderStore: new MemoryAiProviderStoreDriver(),
+    messageStore: new MemoryMessageStoreDriver(),
+    plannerMemory: new MockMemory({ storage: new InMemoryStore(), enableMessageHistory: true }),
+    aiProviderProbe: async () => ({
+      ok: true,
+      capabilities: {
+        streaming: false,
+        functionCalling: true,
+        degraded: false,
+        testedAt: '2026-09-12T00:00:00.000Z',
+        error: null,
+      },
+    }),
+  })
+  const created = await app.request('/api/settings/ai-providers', jsonRequest('POST', providerInput))
+  assert.equal(created.status, 201)
+  const tripResponse = await app.request('/api/trips', jsonRequest('POST', {
+    title: '非流式回复',
+    startDate: '2026-10-02',
+    endDate: '2026-10-03',
+  }))
+  const trip = (await tripResponse.json() as { trip: { id: string } }).trip
+  let requestBody: Record<string, unknown> | null = null
+  globalThis.fetch = (async (_input: string | URL, init?: RequestInit) => {
+    requestBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: 'assistant', content: '来自普通 JSON 响应。' }, finish_reason: 'stop' }],
+    }), { headers: { 'content-type': 'application/json' } })
+  }) as typeof fetch
+
+  const response = await app.request(`/api/trips/${trip.id}/messages`, jsonRequest('POST', { content: '你好' }))
+  const raw = await response.text()
+  assert.equal(response.status, 200)
+  const observedBody = requestBody as Record<string, unknown> | null
+  assert.ok(observedBody)
+  assert.equal(observedBody.stream, false)
+  assert.match(raw, /来自普通 JSON 响应/)
+  assert.match(raw, /event: done/)
+})
+
+test('provider model streams the first SSE delta before the upstream response closes', async () => {
+  const provider = {
+    id: 'streaming-test',
+    name: 'streaming-test',
+    baseUrl: 'https://model.example.test/v1',
+    apiKey: 'sk-streaming-secret',
+    modelId: 'planner-1',
+    headers: {},
+    protocol: 'chat-completions' as const,
+    isDefault: true,
+    capabilities: null,
+    lastTestedAt: null,
+    lastError: null,
+    createdAt: '',
+    updatedAt: '',
+  }
+  let release!: () => void
+  const upstreamOpen = new Promise<void>((resolve) => { release = resolve })
+  let requestBody: Record<string, unknown> | null = null
+  globalThis.fetch = (async (_input: string | URL, init?: RequestInit) => {
+    requestBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+    const encoder = new TextEncoder()
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"先到"},"finish_reason":null}]}\n\n'))
+        void upstreamOpen.then(() => {
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"后到"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'))
+          controller.close()
+        })
+      },
+    }), { headers: { 'content-type': 'text/event-stream' } })
+  }) as typeof fetch
+
+  const model = createProviderModel(provider, {
+    streaming: true,
+    functionCalling: true,
+    degraded: false,
+    testedAt: null,
+  }) as unknown as ProviderModel
+  const result = await model.doStream({ prompt: [{ role: 'user', content: '你好' }] })
+  const reader = result.stream.getReader()
+  assert.equal((await reader.read()).value?.type, 'stream-start')
+  const firstDelta = await Promise.race([
+    (async () => {
+      for (;;) {
+        const next = await reader.read()
+        if (next.done) return null
+        if (next.value.type === 'text-delta') return next.value
+      }
+    })(),
+    new Promise<null>((_, reject) => setTimeout(() => reject(new Error('first SSE delta was buffered')), 500)),
+  ])
+  assert.equal(firstDelta?.delta, '先到')
+  const observedBody = requestBody as Record<string, unknown> | null
+  assert.ok(observedBody)
+  assert.equal(observedBody.stream, true)
+  release()
+  const remaining = await (async () => {
+    const parts: Record<string, unknown>[] = []
+    for (;;) {
+      const next = await reader.read()
+      if (next.done) return parts
+      parts.push(next.value)
+    }
+  })()
+  assert.ok(remaining.some((part) => part.type === 'text-delta' && part.delta === '后到'))
+})
+
+test('Responses tool-call events with item and call ids produce one complete call', async () => {
+  globalThis.fetch = (async () => new Response([
+    'event: response.output_item.added',
+    'data: {"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"emit_round_meta","arguments":""}}',
+    '',
+    'event: response.function_call_arguments.delta',
+    'data: {"item_id":"fc_1","delta":"{\\"round\\":\\"plan\\"}"}',
+    '',
+    'event: response.completed',
+    'data: {"response":{"output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"emit_round_meta","arguments":"{\\"round\\":\\"plan\\"}"}]}}',
+    '',
+  ].join('\n'), { headers: { 'content-type': 'text/event-stream' } })) as typeof fetch
+  const provider = {
+    id: 'responses-test',
+    name: 'responses-test',
+    baseUrl: 'https://model.example.test/v1',
+    apiKey: 'sk-responses-secret',
+    modelId: 'planner-1',
+    headers: {},
+    protocol: 'responses' as const,
+    isDefault: true,
+    capabilities: null,
+    lastTestedAt: null,
+    lastError: null,
+    createdAt: '',
+    updatedAt: '',
+  }
+  const model = createProviderModel(provider, {
+    streaming: true,
+    functionCalling: true,
+    degraded: false,
+    testedAt: null,
+  }) as unknown as ProviderModel
+  const parts = await readProviderParts(model, [{ role: 'user', content: '请调用工具' }])
+  const calls = parts.filter((part) => part.type === 'tool-call')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.toolCallId, 'call_1')
+  assert.equal(calls[0]?.input, '{"round":"plan"}')
+})
+
+test('Chat Completions prompt keeps every parallel tool result', async () => {
+  let requestBody: Record<string, unknown> | null = null
+  globalThis.fetch = (async (_input: string | URL, init?: RequestInit) => {
+    requestBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+    return new Response(JSON.stringify({ choices: [{ message: { content: '收到' }, finish_reason: 'stop' }] }), { headers: { 'content-type': 'application/json' } })
+  }) as typeof fetch
+  const provider = {
+    id: 'tool-context-test',
+    name: 'tool-context-test',
+    baseUrl: 'https://model.example.test/v1',
+    apiKey: 'sk-context-secret',
+    modelId: 'planner-1',
+    headers: {},
+    protocol: 'chat-completions' as const,
+    isDefault: true,
+    capabilities: null,
+    lastTestedAt: null,
+    lastError: null,
+    createdAt: '',
+    updatedAt: '',
+  }
+  const model = createProviderModel(provider, {
+    streaming: false,
+    functionCalling: true,
+    degraded: false,
+    testedAt: null,
+  }) as unknown as ProviderModel
+  await readProviderParts(model, [
+    {
+      role: 'assistant',
+      content: [
+        { type: 'tool-call', toolCallId: 'call-a', toolName: 'first', input: {} },
+        { type: 'tool-call', toolCallId: 'call-b', toolName: 'second', input: {} },
+      ],
+    },
+    {
+      role: 'tool',
+      content: [
+        { type: 'tool-result', toolCallId: 'call-a', toolName: 'first', output: { type: 'json', value: { first: true } } },
+        { type: 'tool-result', toolCallId: 'call-b', toolName: 'second', output: { type: 'json', value: { second: true } } },
+      ],
+    },
+  ])
+  const observedBody = requestBody as Record<string, unknown> | null
+  assert.ok(observedBody)
+  const messages = observedBody.messages as { role: string; tool_call_id?: string }[] | undefined
+  assert.deepEqual(messages?.map((message) => message.role), ['assistant', 'tool', 'tool'])
+  assert.deepEqual(messages?.slice(1).map((message) => message.tool_call_id), ['call-a', 'call-b'])
 })
 
 test('switching the default provider changes the next model request and keeps trip context', async () => {

@@ -27,7 +27,7 @@ type StreamPart =
   | { type: 'finish'; finishReason: 'stop' | 'length' | 'tool-calls' | 'error' | 'other'; usage: { inputTokens: number; outputTokens: number; totalTokens: number } }
   | { type: 'error'; error: unknown }
 
-type ToolCall = { id: string; name: string; args: string; index?: number }
+type ToolCall = { id: string; name: string; args: string; index?: number; aliases?: string[] }
 
 /**
  * HTTP model adapter for both OpenAI-compatible wire formats. It keeps the
@@ -155,7 +155,7 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
   if (!Object.keys(headers).some((key) => key.toLowerCase() === 'authorization') && provider.apiKey) {
     headers.authorization = `Bearer ${provider.apiKey}`
   }
-  const messages = options.prompt.map(toChatMessage)
+  const messages = options.prompt.flatMap(toChatMessage)
   const tools = capabilities.functionCalling ? options.tools?.map((tool) => toTool(tool, provider.protocol)) : undefined
   if (provider.protocol === 'responses') {
     const system = options.prompt.filter((message) => message.role === 'system').map(contentOf).join('\n\n')
@@ -168,7 +168,7 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
         model: provider.modelId,
         ...(system ? { instructions: system } : {}),
         input,
-        stream: true,
+        stream: capabilities.streaming,
         ...(tools && tools.length > 0 ? { tools } : {}),
         ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
         ...(options.maxOutputTokens !== undefined ? { max_output_tokens: options.maxOutputTokens } : {}),
@@ -183,7 +183,7 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
     body: {
       model: provider.modelId,
       messages: prompt,
-      stream: true,
+      stream: capabilities.streaming,
       ...(tools && tools.length > 0 ? { tools, tool_choice: options.toolChoice ? toToolChoice(options.toolChoice) : 'auto' } : {}),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.topP !== undefined ? { top_p: options.topP } : {}),
@@ -192,17 +192,19 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
   }
 }
 
-function toChatMessage(message: PromptMessage): Record<string, unknown> {
+function toChatMessage(message: PromptMessage): Record<string, unknown>[] {
   const content = message.content
   if (message.role === 'tool') {
-    const result = Array.isArray(content) ? content.find((part) => part.type === 'tool-result') : undefined
-    return {
-      role: 'tool',
-      tool_call_id: result?.toolCallId ?? 'tool-call',
-      content: outputText(result?.output ?? result?.value ?? ''),
-    }
+    const results = Array.isArray(content) ? content.filter((part) => part.type === 'tool-result') : []
+    return results.length > 0
+      ? results.map((result) => ({
+          role: 'tool',
+          tool_call_id: result.toolCallId ?? 'tool-call',
+          content: outputText(result.output ?? result.value ?? ''),
+        }))
+      : [{ role: 'tool', tool_call_id: 'tool-call', content: '' }]
   }
-  if (!Array.isArray(content)) return { role: message.role, content }
+  if (!Array.isArray(content)) return [{ role: message.role, content }]
   const text = content.filter((part) => part.type === 'text' || part.type === 'reasoning').map((part) => part.text ?? '').join('')
   const toolCalls = content
     .filter((part) => part.type === 'tool-call')
@@ -211,11 +213,11 @@ function toChatMessage(message: PromptMessage): Record<string, unknown> {
       type: 'function',
       function: { name: part.toolName ?? '', arguments: JSON.stringify(part.input ?? {}) },
     }))
-  return {
+  return [{
     role: message.role,
     content: text,
     ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-  }
+  }]
 }
 
 function toResponseInput(message: PromptMessage): Record<string, unknown>[] {
@@ -297,42 +299,79 @@ function parseProviderStream(response: Response, protocol: AiProvider['protocol'
       controller.enqueue({ type: 'stream-start', warnings: [] })
       const textParts: string[] = []
       const toolCalls = new Map<string, ToolCall>()
-  let finishReason: 'stop' | 'length' | 'tool-calls' | 'error' | 'other' = 'stop'
+      let finishReason: 'stop' | 'length' | 'tool-calls' | 'error' | 'other' = 'stop'
       let textStarted = false
       let textEnded = false
+
+      const emitText = (text: string): void => {
+        if (!text) return
+        if (!textStarted) {
+          textStarted = true
+          controller.enqueue({ type: 'text-start', id: 'text-1' })
+        }
+        controller.enqueue({ type: 'text-delta', id: 'text-1', delta: text })
+      }
+
+      const handleEvent = (event: string, payload: Record<string, unknown>): void => {
+        const result = parseEvent(event, payload, protocol, functionCalling, toolCalls)
+        if (result.text) {
+          if (functionCalling) emitText(result.text)
+          else textParts.push(result.text)
+        }
+        if (result.finishReason) finishReason = result.finishReason
+      }
+
       try {
-        const raw = await response.text()
-        if (/text\/event-stream/i.test(response.headers.get('content-type') ?? '') || /(?:^|\n)\s*(?:event:|data:)/.test(raw)) {
-          parseSseText(raw, (event, payload) => {
-            const result = parseEvent(event, payload, protocol, functionCalling, toolCalls)
-            if (result.text) {
-              if (!functionCalling) textParts.push(result.text)
-              else {
-                if (!textStarted) {
-                  textStarted = true
-                  controller.enqueue({ type: 'text-start', id: 'text-1' })
-                }
-                controller.enqueue({ type: 'text-delta', id: 'text-1', delta: result.text })
-              }
-            }
-            if (result.finishReason) finishReason = result.finishReason
-          })
+        const body = response.body
+        if (!body) throw new Error('模型服务没有返回响应体')
+        const reader = body.getReader()
+        const decoder = new TextDecoder()
+        const sseParser = new IncrementalSseParser(handleEvent)
+        let sseMode = /text\/event-stream/i.test(response.headers.get('content-type') ?? '')
+        let buffered = ''
+
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          const chunk = decoder.decode(value, { stream: true })
+          if (sseMode) {
+            sseParser.push(chunk)
+            continue
+          }
+          buffered += chunk
+          if (looksLikeSse(buffered)) {
+            sseMode = true
+            sseParser.push(buffered)
+            buffered = ''
+          }
+        }
+
+        const tail = decoder.decode()
+        if (sseMode) {
+          if (tail) sseParser.push(tail)
+          sseParser.finish()
         } else {
-          const parsed = JSON.parse(raw) as unknown
+          buffered += tail
+          const parsed = JSON.parse(buffered) as unknown
           const result = parseJsonResponse(parsed, protocol, toolCalls)
           if (result.text) textParts.push(result.text)
           if (result.finishReason) finishReason = result.finishReason
         }
+
+        const completeText = textParts.join('')
         if (!functionCalling) {
-          const fallbackTool = parseFallbackTool(textParts.join(''))
+          const fallbackTool = parseFallbackTool(completeText)
           if (fallbackTool) toolCalls.set(fallbackTool.id, fallbackTool)
-          else if (textParts.join('')) {
-            textStarted = true
-            controller.enqueue({ type: 'text-start', id: 'text-1' })
-            controller.enqueue({ type: 'text-delta', id: 'text-1', delta: textParts.join('') })
-          }
+          else emitText(completeText)
+        } else {
+          // A provider may return a regular JSON response even when tools are
+          // enabled. Preserve its text just like streamed text deltas.
+          emitText(completeText)
         }
-        if (textStarted && !textEnded) controller.enqueue({ type: 'text-end', id: 'text-1' })
+        if (textStarted && !textEnded) {
+          controller.enqueue({ type: 'text-end', id: 'text-1' })
+          textEnded = true
+        }
         for (const call of toolCalls.values()) {
           controller.enqueue({ type: 'tool-call', toolCallId: call.id, toolName: call.name, input: call.args })
         }
@@ -347,31 +386,61 @@ function parseProviderStream(response: Response, protocol: AiProvider['protocol'
   })
 }
 
-function parseSseText(raw: string, emit: (event: string, payload: Record<string, unknown>) => void): void {
-  let event = ''
-  let data = ''
-  for (const line of raw.split(/\r?\n/)) {
-    if (line.startsWith('event:')) event = line.slice(6).trim()
-    else if (line.startsWith('data:')) data += line.slice(5).trim()
-    else if (line === '' && data) {
-      if (data !== '[DONE]') {
-        try {
-          const payload = JSON.parse(data) as unknown
-          if (payload && typeof payload === 'object') emit(event, payload as Record<string, unknown>)
-        } catch {
-          // Ignore provider keepalive/malformed chunks; the stream may continue.
-        }
-      }
-      event = ''
-      data = ''
+function looksLikeSse(value: string): boolean {
+  return /(?:^|\n)\s*(?:event:|data:)/.test(value)
+}
+
+class IncrementalSseParser {
+  private buffer = ''
+  private event = ''
+  private dataLines: string[] = []
+
+  constructor(private readonly emit: (event: string, payload: Record<string, unknown>) => void) {}
+
+  push(value: string): void {
+    this.buffer += value
+    for (;;) {
+      const newline = this.buffer.indexOf('\n')
+      if (newline < 0) return
+      const line = this.buffer.slice(0, newline).replace(/\r$/, '')
+      this.buffer = this.buffer.slice(newline + 1)
+      this.processLine(line)
     }
   }
-  if (data && data !== '[DONE]') {
+
+  finish(): void {
+    if (this.buffer) {
+      this.processLine(this.buffer.replace(/\r$/, ''))
+      this.buffer = ''
+    }
+    this.flushEvent()
+  }
+
+  private processLine(line: string): void {
+    if (line === '') {
+      this.flushEvent()
+    } else if (line.startsWith(':')) {
+      // SSE comments are keepalive frames.
+    } else if (line.startsWith('event:')) {
+      this.event = line.slice(6).trim()
+    } else if (line.startsWith('data:')) {
+      const data = line.slice(5)
+      this.dataLines.push(data.startsWith(' ') ? data.slice(1) : data)
+    }
+  }
+
+  private flushEvent(): void {
+    if (this.dataLines.length === 0) return
+    const data = this.dataLines.join('\n')
+    const event = this.event
+    this.dataLines = []
+    this.event = ''
+    if (data === '[DONE]') return
     try {
       const payload = JSON.parse(data) as unknown
-      if (payload && typeof payload === 'object') emit(event, payload as Record<string, unknown>)
+      if (payload && typeof payload === 'object') this.emit(event, payload as Record<string, unknown>)
     } catch {
-      // Ignore a truncated final event.
+      // Ignore provider keepalive/malformed chunks; the stream may continue.
     }
   }
 }
@@ -381,18 +450,41 @@ function parseEvent(event: string, payload: Record<string, unknown>, protocol: A
     const type = event || stringValue(payload.type)
     if (type === 'response.output_text.delta' || type === 'response.text.delta') return { text: stringValue(payload.delta) }
     if (type === 'response.function_call_arguments.delta') {
-      const id = stringValue(payload.item_id) || stringValue(payload.call_id) || 'tool-call'
-      const call = toolCalls.get(id) ?? { id, name: stringValue(payload.name), args: '' }
+      const itemId = stringValue(payload.item_id)
+      const callId = stringValue(payload.call_id)
+      const id = callId || itemId || 'tool-call'
+      const call = findToolCall(toolCalls, [callId, itemId]) ?? createToolCall(toolCalls, [id, itemId], stringValue(payload.name))
+      if (callId) preferToolCallId(toolCalls, call, callId)
+      addToolCallAliases(call, [itemId, callId])
+      call.name ||= stringValue(payload.name)
       call.args += stringValue(payload.delta)
-      toolCalls.set(id, call)
       return {}
     }
     if (type === 'response.output_item.added') {
       const item = objectValue(payload.item)
       if (item && item.type === 'function_call') {
-        const id = stringValue(item.call_id) || stringValue(item.id) || 'tool-call'
-        toolCalls.set(id, { id, name: stringValue(item.name), args: stringValue(item.arguments) })
+        const callId = stringValue(item.call_id)
+        const itemId = stringValue(item.id)
+        const call = findToolCall(toolCalls, [callId, itemId]) ?? createToolCall(toolCalls, [callId, itemId], stringValue(item.name))
+        if (callId) preferToolCallId(toolCalls, call, callId)
+        addToolCallAliases(call, [itemId, callId])
+        call.name ||= stringValue(item.name)
+        if (stringValue(item.arguments)) call.args = stringValue(item.arguments)
       }
+      return {}
+    }
+    if (type === 'response.function_call_arguments.done' || type === 'response.output_item.done') {
+      const item = objectValue(payload.item)
+      const itemId = stringValue(payload.item_id) || stringValue(item?.id)
+      const callId = stringValue(payload.call_id) || stringValue(item?.call_id)
+      const name = stringValue(payload.name) || stringValue(item?.name)
+      const completeArguments = stringValue(payload.arguments) || stringValue(item?.arguments)
+      const id = callId || itemId || 'tool-call'
+      const call = findToolCall(toolCalls, [callId, itemId]) ?? createToolCall(toolCalls, [id, itemId], name)
+      if (callId) preferToolCallId(toolCalls, call, callId)
+      addToolCallAliases(call, [itemId, callId])
+      call.name ||= name
+      if (completeArguments) call.args = completeArguments
       return {}
     }
     if (type === 'response.completed' || type === 'response.done') {
@@ -447,9 +539,45 @@ function addResponseToolCalls(value: Record<string, unknown>, calls: Map<string,
   for (const entry of output) {
     const item = objectValue(entry)
     if (!item || item.type !== 'function_call') continue
-    const id = stringValue(item.call_id) || stringValue(item.id) || `tool-${calls.size + 1}`
-    calls.set(id, { id, name: stringValue(item.name), args: stringValue(item.arguments) })
+    const callId = stringValue(item.call_id)
+    const itemId = stringValue(item.id)
+    const call = findToolCall(calls, [callId, itemId]) ?? createToolCall(calls, [callId, itemId], stringValue(item.name))
+    if (callId) preferToolCallId(calls, call, callId)
+    addToolCallAliases(call, [itemId, callId])
+    call.name ||= stringValue(item.name)
+    if (stringValue(item.arguments)) call.args = stringValue(item.arguments)
   }
+}
+
+function findToolCall(calls: Map<string, ToolCall>, ids: string[]): ToolCall | undefined {
+  return [...calls.values()].find((call) => ids.some((id) => id !== '' && (call.id === id || call.aliases?.includes(id))))
+}
+
+function createToolCall(calls: Map<string, ToolCall>, ids: string[], name: string): ToolCall {
+  const id = ids.find((value) => value !== '') || `tool-${calls.size + 1}`
+  const call: ToolCall = { id, name, args: '' }
+  addToolCallAliases(call, ids)
+  calls.set(id, call)
+  return call
+}
+
+function addToolCallAliases(call: ToolCall, ids: string[]): void {
+  const aliases = ids.filter((value) => value !== '' && value !== call.id && !call.aliases?.includes(value))
+  if (aliases.length > 0) call.aliases = [...(call.aliases ?? []), ...aliases]
+}
+
+function preferToolCallId(calls: Map<string, ToolCall>, call: ToolCall, id: string): void {
+  if (!id || call.id === id) return
+  const previousId = call.id
+  addToolCallAliases(call, [previousId, id])
+  for (const [key, value] of calls) {
+    if (value === call) {
+      calls.delete(key)
+      break
+    }
+  }
+  call.id = id
+  calls.set(id, call)
 }
 
 function collectResponseText(value: Record<string, unknown>): string {
