@@ -101,8 +101,12 @@ export interface TripPatchStoreDriver {
   listDayRows(tripId: string): Promise<DayRow[]>
   listItemRows(tripId: string): Promise<ItemRow[]>
   listLegRows(tripId: string): Promise<LegRow[]>
-  /** Run `fn` atomically: all writes land or none do. */
-  withTransaction<T>(fn: () => Promise<T>): Promise<T>
+  /** Return the owning trip for a globally keyed day id, or null when absent. */
+  getDayTripId(dayId: string): Promise<string | null>
+  /** Return the owning trip for a globally keyed item id, or null when absent. */
+  getItemTripId(itemId: string): Promise<string | null>
+  /** Run `fn` atomically: all reads/writes use the transaction-scoped driver. */
+  withTransaction<T>(fn: (store: TripPatchStoreDriver) => Promise<T>): Promise<T>
   upsertDayRow(tripId: string, day: TripPatchDayUpsert): Promise<void>
   deleteDayRow(tripId: string, dayId: string): Promise<void>
   deleteItemsForDay(tripId: string, dayId: string): Promise<void>
@@ -115,6 +119,18 @@ export interface TripPatchStoreDriver {
 
 /** Machine-readable failure class shared with the other repositories. */
 export type TripPatchErrorCode = 'invalid' | 'not_found' | 'storage'
+
+/** Raised by a driver when a globally keyed row belongs to another trip. */
+export class TripPatchIdConflictError extends Error {
+  constructor(
+    public readonly entity: 'day' | 'item' | 'leg',
+    public readonly id: string,
+    public readonly ownerTripId: string,
+  ) {
+    super(`${entity} id "${id}" belongs to trip "${ownerTripId}"`)
+    this.name = 'TripPatchIdConflictError'
+  }
+}
 
 export type TripPatchApplyResult =
   | { ok: true; summary: string; stats: TripPatchStats; patch: unknown }

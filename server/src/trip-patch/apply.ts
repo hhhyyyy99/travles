@@ -36,12 +36,8 @@ import { isValidDateString } from '../trips/dates.js'
 import { mapLegRow, mapPoiRef } from '../days/repository.js'
 import type { CanvasItem, CanvasLeg, ItemType, PoiRef } from '../days/types.js'
 import { recomputeTripLegs } from '../items-admin/legs.js'
-import type {
-  PatchPoiRef,
-  TripPatchApplyResult,
-  TripPatchStats,
-  TripPatchStoreDriver,
-} from './types.js'
+import { TripPatchIdConflictError } from './types.js'
+import type { PatchPoiRef, TripPatchApplyResult, TripPatchStats, TripPatchStoreDriver } from './types.js'
 import type { TripPatchInput } from './schema.js'
 import { parseTripPatchInput } from './schema.js'
 
@@ -76,6 +72,8 @@ type Projection = {
   days: Map<string, ProjectedDay>
   /** Set of day ids whose adjacency changed (leg rebuild targets). */
   touchedDays: Set<string>
+  /** Item ids whose POI changed; stored legs touching them cannot be reused. */
+  invalidatedLegItems: Set<string>
   maxIdx: number
   seqCounter: number
 }
@@ -125,11 +123,22 @@ async function loadProjection(store: TripPatchStoreDriver, tripId: string): Prom
       fromPatch: false,
     })
   }
-  return { days, touchedDays: new Set(), maxIdx, seqCounter: seq }
+  return { days, touchedDays: new Set(), invalidatedLegItems: new Set(), maxIdx, seqCounter: seq }
 }
 
 function sortedItems(day: ProjectedDay): ProjectedItem[] {
   return [...day.items].sort((a, b) => a.order - b.order || a.seq - b.seq)
+}
+
+/** Keep projected positions deterministic after an insertion, move, or remove. */
+function reindexItems(day: ProjectedDay): ProjectedItem[] {
+  const items = sortedItems(day)
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]
+    if (item) item.order = index
+  }
+  day.items = items
+  return items
 }
 
 // ---------------------------------------------------------------------------
@@ -183,11 +192,11 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
       case 'add_item': {
         const day = projection.days.get(op.dayId as string)
         if (!day) return fail(i, `天「${op.dayId}」不存在`)
-        if (day.items.some((item) => item.id === op.itemId)) return fail(i, `卡片「${op.itemId}」已存在`)
-        day.items.push({
+        if (findItem(projection, op.itemId as string)) return fail(i, `卡片「${op.itemId}」已存在`)
+        const item: ProjectedItem = {
           id: op.itemId as string,
           dayId: day.id,
-          order: (op.order as number | undefined) ?? day.items.length,
+          order: 0,
           seq: projection.seqCounter++,
           type: op.type as ItemType,
           title: op.title as string,
@@ -196,7 +205,16 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
           pending: (op.pending as boolean | undefined) ?? false,
           legPending: (op.legPending as boolean | undefined) ?? false,
           fromPatch: true,
-        })
+        }
+        const items = reindexItems(day)
+        const requested = (op.order as number | undefined) ?? items.length
+        const index = Math.max(0, Math.min(items.length, requested))
+        items.splice(index, 0, item)
+        for (let position = 0; position < items.length; position += 1) {
+          const current = items[position]
+          if (current) current.order = position
+        }
+        day.items = items
         projection.touchedDays.add(day.id)
         break
       }
@@ -208,7 +226,13 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
         if (op.note !== undefined) item.note = (op.note as string | null) ?? ''
         if (op.type !== undefined) item.type = op.type as ItemType
         if (op.pending !== undefined) item.pending = op.pending as boolean
-        if (op.poi !== undefined) item.poi = (op.poi as PatchPoiRef | null) ?? null
+        if (op.poi !== undefined) {
+          item.poi = (op.poi as PatchPoiRef | null) ?? null
+          // A stored route's numbers are tied to the old coordinates. Rebuild
+          // this day and exclude every old leg touching the changed card.
+          projection.touchedDays.add(found.day.id)
+          projection.invalidatedLegItems.add(item.id)
+        }
         if (op.legPending !== undefined) item.legPending = op.legPending as boolean
         break
       }
@@ -218,12 +242,25 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
         const target = projection.days.get(op.dayId as string)
         if (!target) return fail(i, `天「${op.dayId}」不存在`)
         const item = found.item
-        found.day.items = found.day.items.filter((entry) => entry.id !== item.id)
+        const sourceItems = reindexItems(found.day).filter((entry) => entry.id !== item.id)
+        for (let position = 0; position < sourceItems.length; position += 1) {
+          const current = sourceItems[position]
+          if (current) current.order = position
+        }
+        found.day.items = sourceItems
         item.dayId = target.id
-        item.order = (op.order as number | undefined) ?? target.items.length
+        const targetItems = found.day === target ? sourceItems : reindexItems(target)
+        const requested = (op.order as number | undefined) ?? targetItems.length
+        const index = Math.max(0, Math.min(targetItems.length, requested))
+        item.order = index
         item.seq = projection.seqCounter++
         item.fromPatch = true
-        target.items.push(item)
+        targetItems.splice(index, 0, item)
+        for (let position = 0; position < targetItems.length; position += 1) {
+          const current = targetItems[position]
+          if (current) current.order = position
+        }
+        target.items = targetItems
         projection.touchedDays.add(target.id)
         projection.touchedDays.add(found.day.id)
         break
@@ -231,7 +268,8 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
       case 'remove_item': {
         const found = findItem(projection, op.itemId as string)
         if (!found) return fail(i, `卡片「${op.itemId}」不存在`)
-        found.day.items = found.day.items.filter((entry) => entry.id !== op.itemId)
+        found.day.items = reindexItems(found.day).filter((entry) => entry.id !== op.itemId)
+        reindexItems(found.day)
         projection.touchedDays.add(found.day.id)
         break
       }
@@ -251,6 +289,47 @@ function findItem(
     if (item) return { day, item }
   }
   return null
+}
+
+/**
+ * SQLite keys are global within each table, while the normal projection only
+ * loads rows for the requested trip. Check ids against the whole database
+ * before any write so a model cannot accidentally reuse another trip's id.
+ */
+async function validateGlobalIds(
+  store: TripPatchStoreDriver,
+  tripId: string,
+  ops: TripPatchInput['ops'],
+): Promise<ValidationFailure | { ok: true }> {
+  const addedDayIds = new Set<string>()
+  const addedItemIds = new Set<string>()
+
+  for (let i = 0; i < ops.length; i += 1) {
+    const op = ops[i]
+    if (!op) continue
+    if (op.op === 'add_day') {
+      if (addedDayIds.has(op.dayId)) return fail(i, `天「${op.dayId}」在同一 patch 中重复创建，id 必须全局唯一`)
+      addedDayIds.add(op.dayId)
+      const owner = await store.getDayTripId(op.dayId)
+      if (owner !== null) {
+        return fail(i, owner === tripId
+          ? `天「${op.dayId}」已存在，add_day 需要使用全新的 id`
+          : `天「${op.dayId}」与其他行程冲突（该 id 已被占用），请换一个新的 dayId`)
+      }
+      continue
+    }
+    if (op.op === 'add_item') {
+      if (addedItemIds.has(op.itemId)) return fail(i, `卡片「${op.itemId}」在同一 patch 中重复创建，id 必须全局唯一`)
+      addedItemIds.add(op.itemId)
+      const owner = await store.getItemTripId(op.itemId)
+      if (owner !== null) {
+        return fail(i, owner === tripId
+          ? `卡片「${op.itemId}」已存在，add_item 需要使用全新的 id`
+          : `卡片「${op.itemId}」与其他行程冲突（该 id 已被占用），请换一个新的 itemId`)
+      }
+    }
+  }
+  return { ok: true }
 }
 
 /** 日期连续且不重叠：有日期的天排序后必须逐日紧邻、无重复。 */
@@ -422,14 +501,18 @@ async function rebuildLegsForDay(
   tripId: string,
   day: ProjectedDay,
   previousLegs: CanvasLeg[],
+  invalidatedLegItems: ReadonlySet<string>,
   stats: TripPatchStats,
 ): Promise<void> {
   const items = sortedItems(day).map(toCanvasItem)
   const ids = items.map((item) => item.id)
   await store.deleteLegsForItems(tripId, ids)
+  const reusableLegs = previousLegs.filter(
+    (leg) => !invalidatedLegItems.has(leg.fromItemId) && !invalidatedLegItems.has(leg.toItemId),
+  )
   // Ticket 09 recompute (reuse → reversed → haversine × 1.2 estimate → 0/0),
   // run over the patched day so the canvas shows estimated legs immediately.
-  for (const leg of recomputeTripLegs(items, previousLegs)) {
+  for (const leg of recomputeTripLegs(items, reusableLegs)) {
     await store.upsertLegRow(tripId, {
       id: leg.id,
       fromItemId: leg.fromItemId,
@@ -467,6 +550,13 @@ export async function applyTripPatch(
   const reference = projection
   const integrity = validateOps(reference, ops)
   if (!integrity.ok) return { ok: false, error: integrity.error, code: 'invalid' }
+  let globalIntegrity: ValidationFailure | { ok: true }
+  try {
+    globalIntegrity = await validateGlobalIds(store, tripId, ops)
+  } catch {
+    return { ok: false, error: '读取行程 id 归属失败，请稍后重试。', code: 'storage' }
+  }
+  if (!globalIntegrity.ok) return { ok: false, error: globalIntegrity.error, code: 'invalid' }
   for (const check of [validateDates, validateStays, validateReachability]) {
     const result = check(reference)
     if (!result.ok) return { ok: false, error: result.error, code: 'invalid' }
@@ -483,14 +573,14 @@ export async function applyTripPatch(
   }
 
   try {
-    await store.withTransaction(async () => {
-      const previousLegs = usableStoredLegs(await store.listLegRows(tripId))
+    await store.withTransaction(async (transactionStore) => {
+      const previousLegs = usableStoredLegs(await transactionStore.listLegRows(tripId))
       for (const op of ops) {
         switch (op.op) {
           case 'add_day': {
             const day = reference.days.get(op.dayId)
             if (!day) throw new Error('patch projection drifted') // cannot happen post-validation
-            await store.upsertDayRow(tripId, {
+            await transactionStore.upsertDayRow(tripId, {
               id: day.id,
               idx: day.idx,
               date: day.date || nextDateAfter(reference.days.values()),
@@ -502,56 +592,75 @@ export async function applyTripPatch(
           case 'update_day': {
             const day = reference.days.get(op.dayId)
             if (!day) throw new Error('patch projection drifted')
-            await store.upsertDayRow(tripId, { id: day.id, idx: day.idx, date: day.date, theme: day.theme })
+            await transactionStore.upsertDayRow(tripId, { id: day.id, idx: day.idx, date: day.date, theme: day.theme })
             stats.daysUpdated += 1
             break
           }
           case 'remove_day': {
-            const itemIds = (await store.listItemRows(tripId))
+            const itemIds = (await transactionStore.listItemRows(tripId))
               .filter((row) => typeof row?.id === 'string' && row.day_id === op.dayId)
               .map((row) => row.id as string)
-            await store.deleteLegsForItems(tripId, itemIds)
-            await store.deleteItemsForDay(tripId, op.dayId)
-            await store.deleteDayRow(tripId, op.dayId)
+            await transactionStore.deleteLegsForItems(tripId, itemIds)
+            await transactionStore.deleteItemsForDay(tripId, op.dayId)
+            await transactionStore.deleteDayRow(tripId, op.dayId)
             stats.daysRemoved += 1
             break
           }
           case 'add_item': {
             const found = findItem(reference, op.itemId)
             if (!found) throw new Error('patch projection drifted')
-            await store.upsertItemRow(tripId, itemUpsert(found.item))
+            await transactionStore.upsertItemRow(tripId, itemUpsert(found.item))
             stats.itemsAdded += 1
             break
           }
           case 'update_item': {
             const found = findItem(reference, op.itemId)
             if (!found) throw new Error('patch projection drifted')
-            await store.upsertItemRow(tripId, itemUpsert(found.item))
+            await transactionStore.upsertItemRow(tripId, itemUpsert(found.item))
             stats.itemsUpdated += 1
             break
           }
           case 'move_item': {
             const found = findItem(reference, op.itemId)
             if (!found) throw new Error('patch projection drifted')
-            await store.upsertItemRow(tripId, itemUpsert(found.item))
+            await transactionStore.upsertItemRow(tripId, itemUpsert(found.item))
             break
           }
           case 'remove_item': {
-            await store.deleteLegsForItems(tripId, [op.itemId])
-            await store.deleteItemsById(tripId, [op.itemId])
+            await transactionStore.deleteLegsForItems(tripId, [op.itemId])
+            await transactionStore.deleteItemsById(tripId, [op.itemId])
             stats.itemsRemoved += 1
             break
           }
+        }
+      }
+      // Positional operations shift neighboring cards as well as the card in
+      // the op. Persist the complete final order for each touched day so the
+      // database order matches the validated projection (upsert preserves
+      // existing images in both store implementations).
+      for (const dayId of reference.touchedDays) {
+        const day = reference.days.get(dayId)
+        if (!day) continue
+        for (const item of sortedItems(day)) {
+          await transactionStore.upsertItemRow(tripId, itemUpsert(item))
         }
       }
       // Rebuild adjacency legs for every day whose card list changed.
       for (const dayId of reference.touchedDays) {
         const day = reference.days.get(dayId)
         if (!day) continue // day itself removed — its legs were deleted with it
-        await rebuildLegsForDay(store, tripId, day, previousLegs, stats)
+        await rebuildLegsForDay(transactionStore, tripId, day, previousLegs, reference.invalidatedLegItems, stats)
       }
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof TripPatchIdConflictError) {
+      const label = error.entity === 'day' ? '天' : error.entity === 'item' ? '卡片' : '交通段'
+      return {
+        ok: false,
+        error: `${label}「${error.id}」与其他行程冲突（该 id 已被占用），请换一个新的 id。`,
+        code: 'invalid',
+      }
+    }
     return { ok: false, error: '写入行程失败，请稍后重试。', code: 'storage' }
   }
 

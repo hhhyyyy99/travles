@@ -29,9 +29,15 @@ import { SqliteMessageStoreDriver } from './chat/driver-sqlite.js'
 import type { MessageStoreDriver } from './chat/types.js'
 import { registerChatRoutes } from './chat/routes.js'
 import { readJsonBody } from './http/body.js'
+import { registerAiProposalRoutes } from './ai-proposals/routes.js'
+import { MemoryAiProposalStore } from './ai-proposals/types.js'
 // ---- TripPatch writes (ticket 08, additive) --------------------------------
 import { createSqliteTripPatchStore } from './trip-patch/store-sqlite.js'
 import type { TripPatchStoreDriver } from './trip-patch/types.js'
+import { createSqliteRecommendationsStore } from './recommendations/driver-sqlite.js'
+import type { PoiSearch, RecommendationsStoreDriver } from './recommendations/types.js'
+import { mountRecommendationsRoutes } from './recommendations/routes.js'
+import { searchAmapPoi } from './recommendations/search.js'
 
 export type AppEnv = {
   Bindings: HonoBindings
@@ -105,6 +111,10 @@ export type CreateAppOptions = {
    * trip repository opens, resolved lazily like `workbenchStore`.
    */
   tripPatchStore?: TripPatchStoreDriver
+  /** Injected `search_poi` provider for tests; production uses AMap Web Service. */
+  searchPoi?: PoiSearch
+  /** Injected stash/favorites store; defaults to the shared SQLite database. */
+  recommendationsStore?: RecommendationsStoreDriver
 }
 
 /** Default SQLite location: <server>/data/trips.db (gitignored). */
@@ -133,6 +143,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     // Ticket 08: the apply_trip_patch tool resolves its store lazily on first
     // patch (the SQLite path opens the shared database only when actually hit).
     resolveTripPatchStore: resolveTripPatchStore,
+    searchPoi: options.searchPoi ?? searchAmapPoi,
   })
   const memoryConfigured = options.plannerMemory !== undefined || !options.tripRepository
 
@@ -347,6 +358,29 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
   }
   mountToolsRoutes(app, { tripRepository, resolveToolsStore })
 
+  // ---- Recommendations / stash / favorites (ticket 15) ---------------------
+  // The map consumes one aggregate snapshot; mutations remain separate so a
+  // favorite can be removed without dropping a recommendation that is still
+  // in the pending pool.
+  let recommendationsStore = options.recommendationsStore ?? null
+  let recommendationsDb: SqlDatabase | null = workbenchDb
+  const resolveRecommendationsStore = async (): Promise<RecommendationsStoreDriver> => {
+    if (recommendationsStore) return recommendationsStore
+    if (!recommendationsDb) {
+      const created = await createSqliteTripRepository(
+        options.databaseUrl ?? process.env.TRIPS_DB_PATH ?? defaultDatabaseUrl(),
+      )
+      recommendationsDb = created.db
+    }
+    recommendationsStore = createSqliteRecommendationsStore(recommendationsDb)
+    return recommendationsStore
+  }
+  mountRecommendationsRoutes(app, {
+    tripRepository,
+    resolveStore: resolveRecommendationsStore,
+    searchPoi: options.searchPoi ?? searchAmapPoi,
+  })
+
   // ---- Day management writes (ticket 10, additive) --------------------------
   // POST   /api/trips/:id/days           create a day (next date / empty body OK)
   // PATCH  /api/trips/:id/days/:dayId    update theme (and color)
@@ -528,6 +562,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     modelConfigured: options.plannerModel !== undefined || modelConfigFromEnv() !== null,
     memoryConfigured,
     resolveTripPatchStore,
+  })
+
+  // Ticket 13: AI proposals are read-only until the user confirms them. The
+  // process-local store is intentional: a proposal is a short-lived preview,
+  // while the applied TripPatch remains the durable source of truth.
+  registerAiProposalRoutes(app, {
+    tripRepository,
+    planner: mastra.getAgent('planner'),
+    modelConfigured: options.plannerModel !== undefined || modelConfigFromEnv() !== null,
+    memoryConfigured,
+    resolveTripPatchStore,
+    proposalStore: new MemoryAiProposalStore(),
   })
 
   return app

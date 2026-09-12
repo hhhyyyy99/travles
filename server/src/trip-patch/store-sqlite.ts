@@ -2,17 +2,13 @@
  * SQLite TripPatchStoreDriver (ticket 08) — patch writes over the days/
  * items/legs tables that ticket 02's schema already created. Additive by
  * design: no schema changes, no imports from the trips module beyond the
- * date validator. `withTransaction` wraps a batch in BEGIN/COMMIT so a
- * failed patch apply leaves no partial writes behind.
+ * date validator. `withTransaction` uses the libSQL transaction connection
+ * when available, so a failed patch apply leaves no partial writes behind.
  */
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
-import type {
-  TripPatchDayUpsert,
-  TripPatchItemUpsert,
-  TripPatchLegUpsert,
-  TripPatchStoreDriver,
-} from './types.js'
+import { TripPatchIdConflictError } from './types.js'
+import type { TripPatchDayUpsert, TripPatchItemUpsert, TripPatchLegUpsert, TripPatchStoreDriver } from './types.js'
 
 export class SqliteTripPatchStore implements TripPatchStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
@@ -40,10 +36,21 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
     return rows as unknown as LegRow[]
   }
 
-  async withTransaction<T>(fn: () => Promise<T>): Promise<T> {
+  async getDayTripId(dayId: string): Promise<string | null> {
+    return this.ownerTripId('days', dayId)
+  }
+
+  async getItemTripId(itemId: string): Promise<string | null> {
+    return this.ownerTripId('items', itemId)
+  }
+
+  async withTransaction<T>(fn: (store: TripPatchStoreDriver) => Promise<T>): Promise<T> {
+    if (this.db.withTransaction) {
+      return this.db.withTransaction(async (transactionDb) => fn(new SqliteTripPatchStore(transactionDb)))
+    }
     await this.db.run('BEGIN IMMEDIATE')
     try {
-      const result = await fn()
+      const result = await fn(this)
       await this.db.run('COMMIT')
       return result
     } catch (error) {
@@ -57,11 +64,14 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
   }
 
   async upsertDayRow(tripId: string, day: TripPatchDayUpsert): Promise<void> {
+    await this.assertNoForeignOwner('days', day.id, 'day', tripId)
     await this.db.run(
       `INSERT INTO days (id, trip_id, idx, date, theme, color) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET idx = excluded.idx, date = excluded.date, theme = excluded.theme`,
+       ON CONFLICT(id) DO UPDATE SET idx = excluded.idx, date = excluded.date, theme = excluded.theme
+       WHERE days.trip_id = excluded.trip_id`,
       [day.id, tripId, day.idx, day.date, day.theme, ''] as SqlValue[],
     )
+    await this.assertCurrentOwner('days', day.id, 'day', tripId)
   }
 
   async deleteDayRow(tripId: string, dayId: string): Promise<void> {
@@ -82,12 +92,15 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
   }
 
   async upsertItemRow(tripId: string, item: TripPatchItemUpsert): Promise<void> {
+    await this.assertNoForeignOwner('items', item.id, 'item', tripId)
+    await this.assertNoForeignOwner('days', item.dayId, 'day', tripId)
     await this.db.run(
       `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, poi, images, pending)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          day_id = excluded.day_id, item_order = excluded.item_order, type = excluded.type,
-         title = excluded.title, note = excluded.note, poi = excluded.poi, pending = excluded.pending`,
+         title = excluded.title, note = excluded.note, poi = excluded.poi, pending = excluded.pending
+       WHERE items.trip_id = excluded.trip_id`,
       [
         item.id,
         tripId,
@@ -101,15 +114,20 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
         item.pending ? 1 : 0,
       ] as SqlValue[],
     )
+    await this.assertCurrentOwner('items', item.id, 'item', tripId)
   }
 
   async upsertLegRow(tripId: string, leg: TripPatchLegUpsert): Promise<void> {
+    await this.assertNoForeignOwner('legs', leg.id, 'leg', tripId)
+    await this.assertNoForeignOwner('items', leg.fromItemId, 'item', tripId)
+    await this.assertNoForeignOwner('items', leg.toItemId, 'item', tripId)
     await this.db.run(
       `INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          from_item_id = excluded.from_item_id, to_item_id = excluded.to_item_id, mode = excluded.mode,
-         distance_km = excluded.distance_km, duration_min = excluded.duration_min, polyline = excluded.polyline`,
+         distance_km = excluded.distance_km, duration_min = excluded.duration_min, polyline = excluded.polyline
+       WHERE legs.trip_id = excluded.trip_id`,
       [
         leg.id,
         tripId,
@@ -121,6 +139,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
         leg.polyline,
       ] as SqlValue[],
     )
+    await this.assertCurrentOwner('legs', leg.id, 'leg', tripId)
   }
 
   async deleteLegsForItems(tripId: string, itemIds: string[]): Promise<void> {
@@ -130,6 +149,35 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
       `DELETE FROM legs WHERE trip_id = ? AND (from_item_id IN (${placeholders}) OR to_item_id IN (${placeholders}))`,
       [tripId, ...itemIds, ...itemIds] as SqlValue[],
     )
+  }
+
+  private async ownerTripId(table: 'days' | 'items' | 'legs', id: string): Promise<string | null> {
+    const { rows } = await this.db.run(`SELECT trip_id FROM ${table} WHERE id = ?`, [id])
+    const owner = rows[0]?.trip_id
+    return typeof owner === 'string' ? owner : null
+  }
+
+  private async assertNoForeignOwner(
+    table: 'days' | 'items' | 'legs',
+    id: string,
+    entity: 'day' | 'item' | 'leg',
+    tripId: string,
+  ): Promise<void> {
+    const owner = await this.ownerTripId(table, id)
+    if (owner !== null && owner !== tripId) throw new TripPatchIdConflictError(entity, id, owner)
+  }
+
+  private async assertCurrentOwner(
+    table: 'days' | 'items' | 'legs',
+    id: string,
+    entity: 'day' | 'item' | 'leg',
+    tripId: string,
+  ): Promise<void> {
+    const owner = await this.ownerTripId(table, id)
+    if (owner !== tripId) {
+      if (owner !== null) throw new TripPatchIdConflictError(entity, id, owner)
+      throw new Error(`upserted ${entity} row "${id}" disappeared`)
+    }
   }
 }
 

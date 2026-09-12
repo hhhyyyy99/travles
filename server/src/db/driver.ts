@@ -3,7 +3,8 @@
  *
  * The driver is the injectable boundary from the spec's 测试接缝 #2: the
  * repository layer never touches @libsql/client directly, only this minimal
- * `run(sql, args)` surface. LibSQL is chosen over better-sqlite3 because it
+ * `run(sql, args)` surface plus an optional transaction callback. LibSQL is
+ * chosen over better-sqlite3 because it
  * ships prebuilt native binaries (no node-gyp / pnpm allowBuilds changes),
  * speaks the local `file:` SQLite dialect we need, and matches the Mastra
  * LibSQL storage ecosystem the spec points at for later tickets ("Mastra
@@ -22,6 +23,8 @@ export type SqlRunResult = {
 
 export interface SqlDatabase {
   run(sql: string, args?: SqlValue[]): Promise<SqlRunResult>
+  /** Execute a callback on one libSQL transaction connection. */
+  withTransaction?<T>(fn: (db: SqlDatabase) => Promise<T>): Promise<T>
   close(): Promise<void>
 }
 
@@ -43,10 +46,32 @@ export function createSqliteDatabase(rawUrl: string): SqlDatabase {
     if (filePath !== ':memory:') mkdirSync(dirname(filePath), { recursive: true })
   }
   const client: Client = createClient({ url })
+  const run = async (executor: { execute(statement: { sql: string; args: SqlValue[] }): Promise<{ rows: unknown[]; rowsAffected: number }> }, sql: string, args: SqlValue[] = []): Promise<SqlRunResult> => {
+    const result = await executor.execute({ sql, args })
+    return { rows: result.rows as Record<string, unknown>[], rowsAffected: result.rowsAffected }
+  }
   return {
-    async run(sql, args = []) {
-      const result = await client.execute({ sql, args })
-      return { rows: result.rows as Record<string, unknown>[], rowsAffected: result.rowsAffected }
+    run: (sql, args = []) => run(client, sql, args),
+    withTransaction: async <T>(fn: (db: SqlDatabase) => Promise<T>): Promise<T> => {
+      const transaction = await client.transaction('write')
+      const transactionDb: SqlDatabase = {
+        run: (sql, args = []) => run(transaction, sql, args),
+        close: async () => transaction.close(),
+      }
+      try {
+        const result = await fn(transactionDb)
+        await transaction.commit()
+        return result
+      } catch (error) {
+        try {
+          await transaction.rollback()
+        } catch {
+          // connection-level failure — nothing to roll back
+        }
+        throw error
+      } finally {
+        transaction.close()
+      }
     },
     close: async () => {
       client.close()

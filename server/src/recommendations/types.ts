@@ -1,0 +1,93 @@
+/**
+ * Recommendation / stash / favorite storage contracts (ticket 15).
+ *
+ * POI data is intentionally kept as an opaque JSON value at the driver
+ * boundary. The repository owns validation and tolerant decoding so corrupt
+ * rows cannot take the workbench down.
+ */
+
+export type RecommendationOrigin = 'recommend' | 'favorite'
+
+export type RecommendationPoi = {
+  id: string
+  amapId: string
+  name: string
+  lat: number
+  lng: number
+  category: string
+  type: 'attraction' | 'food' | 'stay' | 'other'
+  region: string
+  rating: number
+  introSummary: string
+  address: string
+  images: Array<{ url: string; caption: string }>
+}
+
+export interface StashRow {
+  id: unknown
+  trip_id: unknown
+  poi: unknown
+  origin: unknown
+  added_at: unknown
+}
+
+export interface FavoriteRow {
+  id: unknown
+  trip_id: unknown
+  poi: unknown
+  created_at: unknown
+}
+
+export interface StashInsert {
+  id: string
+  poi: string
+  origin: RecommendationOrigin
+  addedAt: string
+}
+
+export interface FavoriteInsert {
+  id: string
+  poi: string
+  createdAt: string
+}
+
+export interface RecommendationsStoreDriver {
+  listStashRows(tripId: string): Promise<StashRow[]>
+  insertStashRow(tripId: string, item: StashInsert): Promise<void>
+  deleteStashRow(tripId: string, stashId: string): Promise<boolean>
+  listFavoriteRows(tripId: string): Promise<FavoriteRow[]>
+  insertFavoriteRow(tripId: string, favorite: FavoriteInsert): Promise<void>
+  deleteFavoriteRow(tripId: string, favoriteId: string): Promise<boolean>
+}
+
+export type RecommendationsErrorCode = 'invalid' | 'not_found' | 'storage'
+
+export type RecommendationWriteResult<T = unknown> =
+  | { ok: true; value: T }
+  | { ok: false; error: string; code: RecommendationsErrorCode }
+
+export type StashItem = {
+  id: string
+  poi: RecommendationPoi
+  origin: RecommendationOrigin
+  addedAt: string
+}
+
+export type FavoriteItem = {
+  id: string
+  poi: RecommendationPoi
+  createdAt: string
+}
+
+export type RecommendationsSnapshot = {
+  stash: StashItem[]
+  favorites: FavoriteItem[]
+}
+
+export type PoiSearchInput = {
+  query: string
+  region?: string
+  type?: RecommendationPoi['type'] | null
+}
+
+export type PoiSearch = (input: PoiSearchInput) => Promise<RecommendationPoi[]>

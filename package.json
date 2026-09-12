@@ -14,9 +14,9 @@
     "build:server": "pnpm --filter @hailar/server build",
     "preview": "vite preview",
     "test": "node --import tsx --test tests/*.test.ts && pnpm --filter @hailar/server test",
-    "test:browser": "node --test tests/app/*.browser.cjs",
-    "test:app": "node --test tests/app/*.browser.cjs",
-    "test:app:prod": "pnpm run build && APP_MODE=preview node --test tests/app/*.browser.cjs"
+    "test:browser": "node --test --test-concurrency=4 tests/app/*.browser.cjs",
+    "test:app": "node --test --test-concurrency=4 tests/app/*.browser.cjs",
+    "test:app:prod": "pnpm run build && APP_MODE=preview node --test --test-concurrency=4 tests/app/*.browser.cjs"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
