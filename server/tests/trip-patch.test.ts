@@ -271,6 +271,36 @@ test('update_item POI changes invalidate every adjacent stored leg touching that
   assert.equal(bc?.polyline, null)
 })
 
+test('AI item updates retain migrated accommodation metadata through POI replacement', async () => {
+  const store = new MemoryTripPatchStore()
+  store.dayRows.push({ id: 'stay-day', trip_id: TRIP, idx: 0, date: '2026-10-02', theme: '住宿', color: '' })
+  store.itemRows.push({
+    id: 'stay-item', trip_id: TRIP, day_id: 'stay-day', item_order: 0, type: 'stay', title: '旧住宿', note: '旧备注',
+    poi: JSON.stringify({
+      name: '旧住宿', location: { lat: 49.2, lng: 119.7 }, amapId: '', category: '住宿', rating: 0, introSummary: '',
+      accommodationBaseId: 'legacy-base-1', accommodationType: 'hotel', accommodationNotes: '老基地备注', accommodationMigrationVersion: 2,
+    }), images: null, pending: 0,
+  })
+
+  const result = await applyTripPatch(store, TRIP, {
+    ops: [{ op: 'update_item', itemId: 'stay-item', title: '新住宿', note: '新备注', poi: { name: '新住宿', lat: 50.1, lng: 120.1 } }],
+  })
+  assert.equal(result.ok, true)
+  const saved = mapPoiRef((await store.listItemRows(TRIP))[0]?.poi)
+  assert.deepEqual(saved && {
+    name: saved.name,
+    lat: saved.lat,
+    lng: saved.lng,
+    accommodationBaseId: saved.accommodationBaseId,
+    accommodationType: saved.accommodationType,
+    accommodationNotes: saved.accommodationNotes,
+    accommodationMigrationVersion: saved.accommodationMigrationVersion,
+  }, {
+    name: '新住宿', lat: 50.1, lng: 120.1,
+    accommodationBaseId: 'legacy-base-1', accommodationType: 'hotel', accommodationNotes: '老基地备注', accommodationMigrationVersion: 2,
+  })
+})
+
 test('reachability: a touched pair without coordinates and without 待定 flags is rejected', async () => {
   const store = new MemoryTripPatchStore()
   const result = await applyTripPatch(store, TRIP, {

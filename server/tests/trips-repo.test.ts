@@ -129,6 +129,9 @@ test('intake recognizes full-year Chinese dates, keeps short dates tentative, an
   assert.deepEqual(mismatch, { ok: false, error: '你说的是 5 天，但日期范围是 7 天，请确认日期或行程天数。', code: 'invalid' })
   const reversed = await repo.createFromIntake({ sentence: '去成都玩 7 天，2026-10-08 到 2026-10-02' })
   assert.deepEqual(reversed, { ok: false, error: '日期范围 2026-10-08 至 2026-10-02 的结束日期早于开始日期，请确认日期。', code: 'invalid' })
+  const invalidFullDate = await repo.createFromIntake({ sentence: '去成都玩 7 天，2026-02-30 到 2026-03-08' })
+  assert.equal(invalidFullDate.ok, false)
+  if (!invalidFullDate.ok) assert.match(invalidFullDate.error, /2026-02-30.*无效/)
   assert.equal(driver.rows.size, 2, 'the contradictory intake is rejected before persistence')
 })
 

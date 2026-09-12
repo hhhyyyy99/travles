@@ -8,8 +8,14 @@ const poiSchema = z
     lat: z.number().min(-90).max(90),
     lng: z.number().min(-180).max(180),
     amapId: z.string().max(64).optional(),
+    address: z.string().max(500).optional(),
     category: z.string().max(30).optional(),
     rating: z.number().min(0).max(5).optional(),
+    introSummary: z.string().max(1000).optional(),
+    accommodationBaseId: z.string().max(200).optional(),
+    accommodationType: z.enum(['area', 'hotel']).optional(),
+    accommodationNotes: z.string().max(2000).optional(),
+    accommodationMigrationVersion: z.number().int().positive().max(100).optional(),
   })
   .nullable()
   .optional()

@@ -46,7 +46,10 @@ test('intake opens the current workbench, sends the sentence once, edits stays o
       {
         id: 'day-1', index: 0, date: '', theme: '日期待定', color: '#c26d4f',
         items: [
-          item('stay-1', 'day-1', 0, 'stay', '原住宿', { amapId: '', name: '原住宿', lat: 49.2, lng: 119.7, category: '住宿', rating: 0, introSummary: '' }, '晚到联系前台'),
+          item('stay-1', 'day-1', 0, 'stay', '原住宿', {
+            amapId: '', name: '原住宿', lat: 49.2, lng: 119.7, category: '住宿', rating: 0, introSummary: '',
+            accommodationBaseId: 'legacy-base-1', accommodationType: 'hotel', accommodationNotes: '保留老基地备注', accommodationMigrationVersion: 2,
+          }, '晚到联系前台'),
           item('poi-1', 'day-1', 1, 'attraction', '草原景点', { amapId: '', name: '草原景点', lat: 49.3, lng: 119.8, category: '景点', rating: 0, introSummary: '' }),
         ],
       },
@@ -142,12 +145,17 @@ test('intake opens the current workbench, sends the sentence once, edits stays o
     await page.locator('#workbench-stay-editor').waitFor({ state: 'detached' })
     assert.equal(stayPatch.title, '更新住宿')
     assert.equal(stayPatch.poi.address, '额尔古纳河畔 18 号')
+    assert.equal(stayPatch.poi.accommodationBaseId, 'legacy-base-1')
+    assert.equal(stayPatch.poi.accommodationType, 'hotel')
+    assert.equal(stayPatch.poi.accommodationNotes, '保留老基地备注')
+    assert.equal(stayPatch.poi.accommodationMigrationVersion, 2)
     assert.equal(stayPatch.note, '晚到请提前联系')
 
     // Change a server-only card after the page snapshot has settled. The
     // print action must read the authoritative canvas rather than props held
     // by the already-mounted workbench.
     currentCanvas.days[0].items[1].title = '服务器更新景点'
+    currentCanvas.legs = [{ ...currentCanvas.legs[0], distanceKm: 42, durationMin: 43, quality: 'measured' }]
     await page.locator('#workbench-print').click()
     await page.waitForFunction(() => (window.__printCalls || 0) === 1)
     assert.ok(canvasReads >= 2, `print should refetch the authoritative canvas, got ${canvasReads}`)
@@ -156,6 +164,7 @@ test('intake opens the current workbench, sends the sentence once, edits stays o
     assert.match(await page.locator('#print-itinerary').textContent(), /呼伦贝尔 · 7日行程/)
     assert.match(await page.locator('#print-itinerary').textContent(), /更新住宿/)
     assert.match(await page.locator('#print-itinerary').textContent(), /服务器更新景点/)
+    assert.match(await page.locator('#print-itinerary').textContent(), /42 千米 · 43 分钟/)
     assert.match(await page.locator('#print-itinerary').textContent(), /最新便签/)
     assert.equal(await page.locator('#print-itinerary button, #print-itinerary input, #print-itinerary select, #print-itinerary textarea').count(), 0)
 
@@ -212,6 +221,58 @@ test('reopening a failed date-pending draft restores its persisted sentence for 
     await page.reload()
     await page.locator('[data-chat-role="user"]').filter({ hasText: failedTrip.planningContext.originalSentence }).waitFor()
     assert.equal(chatCalls, 2, 'the persisted sentence is retried once after reopening the empty-history draft')
+  } finally {
+    await close()
+  }
+})
+
+test('a failed history read blocks automatic intake until the user retries', async () => {
+  let historyReads = 0
+  let chatCalls = 0
+  const retryTrip = {
+    ...trip,
+    id: 'trip-history-retry',
+    planningContext: { ...planningContext, originalSentence: '成都 3 天，喜欢美食', destination: '成都', durationDays: 3 },
+    title: '成都 · 3日行程',
+    durationDays: 3,
+  }
+  const { page, close } = await openApp({
+    entry: `/?view=workbench&trip=${retryTrip.id}`,
+    setup: async ({ page }) => {
+      await page.route('**/api/trips/**', async (route) => {
+        const request = route.request()
+        const path = new URL(request.url()).pathname
+        if (path.endsWith('/canvas')) return json(route, 200, { trip: retryTrip, days: [], legs: [] })
+        if (path.endsWith('/messages') && request.method() === 'GET') {
+          historyReads += 1
+          return historyReads < 3 ? json(route, 503, { error: '对话历史暂不可用' }) : json(route, 200, { messages: [] })
+        }
+        if (path.endsWith('/messages') && request.method() === 'POST') {
+          chatCalls += 1
+          const body = request.postDataJSON()
+          return route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' },
+            body: sse([
+              ['start', { round: 'qa' }],
+              ['done', {
+                userMessage: { id: 'retry-user', tripId: retryTrip.id, role: 'user', content: body.content, createdAt: '' },
+                assistantMessage: { id: 'retry-assistant', tripId: retryTrip.id, role: 'assistant', content: '已恢复', createdAt: '', meta: { round: 'qa' } },
+              }],
+            ]),
+          })
+        }
+        if (path.endsWith('/events')) return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: '' })
+        return json(route, 404, { error: '未处理请求' })
+      })
+    },
+  })
+  try {
+    await page.locator('[data-action="retry-chat-history"]').waitFor()
+    assert.equal(chatCalls, 0, 'a failed history read must not send the original sentence')
+    await page.locator('[data-action="retry-chat-history"]').click()
+    await page.locator('[data-chat-role="user"]').filter({ hasText: retryTrip.planningContext.originalSentence }).waitFor()
+    assert.equal(chatCalls, 1, 'the sentence is sent only after a successful empty-history retry')
   } finally {
     await close()
   }

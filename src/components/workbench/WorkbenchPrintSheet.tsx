@@ -96,7 +96,7 @@ const WorkbenchPrintSheet = forwardRef<WorkbenchPrintSheetHandle, WorkbenchPrint
       <section className="print-days" aria-label="当前行程">
         {schedule.map((day, index) => {
           const previousDay = schedule[index - 1]
-          const route = workbenchPrintRoute(day, legs, previousDay)
+          const route = workbenchPrintRoute(day, snapshot.legs, previousDay)
           const items = [...day.items].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
           return (
             <article className="print-day" data-print-day={day.id} data-day-index={day.index} key={day.id}>

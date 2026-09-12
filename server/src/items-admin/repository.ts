@@ -201,7 +201,7 @@ export class ItemsAdminRepository {
       if (current.type !== 'stay') return { ok: false, error: '只有住宿卡片可以编辑住宿位置', code: 'invalid' }
       const next = readPoiInput(patch.poi)
       if (next === false) return { ok: false, error: '住宿位置数据无效', code: 'invalid' }
-      poi = next
+      poi = next === null ? null : preserveAccommodationMetadata(current.poi, next)
     }
 
     const updated: CanvasItem = { ...current, title, note, images, poi }
@@ -408,9 +408,37 @@ function readPoiInput(value: unknown): PoiRef | null | false {
     lat: asFiniteNumber(record.lat),
     lng: asFiniteNumber(record.lng),
     ...(address ? { address } : {}),
+    ...(asText(record.accommodationBaseId) ? { accommodationBaseId: asText(record.accommodationBaseId) } : {}),
+    ...(record.accommodationType === 'area' || record.accommodationType === 'hotel'
+      ? { accommodationType: record.accommodationType }
+      : {}),
+    ...(asText(record.accommodationNotes) ? { accommodationNotes: asText(record.accommodationNotes) } : {}),
+    ...(Number.isInteger(Number(record.accommodationMigrationVersion)) && Number(record.accommodationMigrationVersion) > 0
+      ? { accommodationMigrationVersion: Number(record.accommodationMigrationVersion) }
+      : {}),
     category: asText(record.category),
     rating: asFiniteNumber(record.rating),
     introSummary: asText(record.introSummary),
+  }
+}
+
+/** Keep migrated accommodation identity when a manual edit sends a new POI shape. */
+function preserveAccommodationMetadata(current: PoiRef | null, next: PoiRef): PoiRef {
+  if (!current) return next
+  return {
+    ...next,
+    ...(next.accommodationBaseId === undefined && current.accommodationBaseId !== undefined
+      ? { accommodationBaseId: current.accommodationBaseId }
+      : {}),
+    ...(next.accommodationType === undefined && current.accommodationType !== undefined
+      ? { accommodationType: current.accommodationType }
+      : {}),
+    ...(next.accommodationNotes === undefined && current.accommodationNotes !== undefined
+      ? { accommodationNotes: current.accommodationNotes }
+      : {}),
+    ...(next.accommodationMigrationVersion === undefined && current.accommodationMigrationVersion !== undefined
+      ? { accommodationMigrationVersion: current.accommodationMigrationVersion }
+      : {}),
   }
 }
 

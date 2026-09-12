@@ -39,8 +39,14 @@ export const patchPoiSchema = z.object({
   lat: z.number().min(-90).max(90).describe('纬度'),
   lng: z.number().min(-180).max(180).describe('经度'),
   amapId: z.string().max(64).optional().describe('高德 POI id（如有）'),
+  address: z.string().max(500).optional().describe('地址（如有）'),
   category: z.string().max(30).optional().describe('地点类型，如 景点/酒店/餐饮'),
   rating: z.number().min(0).max(5).optional().describe('评分（如有）'),
+  introSummary: z.string().max(1000).optional().describe('地点简介（如有）'),
+  accommodationBaseId: z.string().max(200).optional().describe('住宿基地 id（迁移数据内部字段）'),
+  accommodationType: z.enum(['area', 'hotel']).optional().describe('住宿基地类型（迁移数据内部字段）'),
+  accommodationNotes: z.string().max(2000).optional().describe('住宿基地备注（迁移数据内部字段）'),
+  accommodationMigrationVersion: z.number().int().positive().max(100).optional().describe('住宿迁移版本（内部字段）'),
 })
 
 const addDayOp = z.object({

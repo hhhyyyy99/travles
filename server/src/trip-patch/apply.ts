@@ -231,7 +231,8 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
         if (op.type !== undefined) item.type = op.type as ItemType
         if (op.pending !== undefined) item.pending = op.pending as boolean
         if (op.poi !== undefined) {
-          item.poi = (op.poi as PatchPoiRef | null) ?? null
+          const nextPoi = (op.poi as PatchPoiRef | null) ?? null
+          item.poi = nextPoi === null ? null : preserveAccommodationMetadata(item.poi, nextPoi)
           // A stored route's numbers are tied to the old coordinates. Rebuild
           // this day and exclude every old leg touching the changed card.
           projection.touchedDays.add(found.day.id)
@@ -481,9 +482,16 @@ function toPoiRef(poi: PatchPoiRef): PoiRef {
     name: poi.name,
     lat: poi.lat,
     lng: poi.lng,
+    ...(poi.address !== undefined ? { address: poi.address } : {}),
+    ...(poi.accommodationBaseId !== undefined ? { accommodationBaseId: poi.accommodationBaseId } : {}),
+    ...(poi.accommodationType !== undefined ? { accommodationType: poi.accommodationType } : {}),
+    ...(poi.accommodationNotes !== undefined ? { accommodationNotes: poi.accommodationNotes } : {}),
+    ...(poi.accommodationMigrationVersion !== undefined
+      ? { accommodationMigrationVersion: poi.accommodationMigrationVersion }
+      : {}),
     category: poi.category ?? '',
     rating: poi.rating ?? 0,
-    introSummary: '',
+    introSummary: poi.introSummary ?? '',
   }
 }
 
@@ -492,17 +500,49 @@ function toPoiStorage(poi: PatchPoiRef): {
   amapId: string
   name: string
   location: { lat: number; lng: number }
+  address?: string
   category: string
   rating: number
   introSummary: string
+  accommodationBaseId?: string
+  accommodationType?: 'area' | 'hotel'
+  accommodationNotes?: string
+  accommodationMigrationVersion?: number
 } {
   return {
     amapId: poi.amapId ?? '',
     name: poi.name,
     location: { lat: poi.lat, lng: poi.lng },
+    ...(poi.address !== undefined ? { address: poi.address } : {}),
     category: poi.category ?? '',
     rating: poi.rating ?? 0,
-    introSummary: '',
+    introSummary: poi.introSummary ?? '',
+    ...(poi.accommodationBaseId !== undefined ? { accommodationBaseId: poi.accommodationBaseId } : {}),
+    ...(poi.accommodationType !== undefined ? { accommodationType: poi.accommodationType } : {}),
+    ...(poi.accommodationNotes !== undefined ? { accommodationNotes: poi.accommodationNotes } : {}),
+    ...(poi.accommodationMigrationVersion !== undefined
+      ? { accommodationMigrationVersion: poi.accommodationMigrationVersion }
+      : {}),
+  }
+}
+
+/** Preserve migration metadata when AI updates only the visible POI fields. */
+function preserveAccommodationMetadata(current: PatchPoiRef | null, next: PatchPoiRef): PatchPoiRef {
+  if (!current) return next
+  return {
+    ...next,
+    ...(next.accommodationBaseId === undefined && current.accommodationBaseId !== undefined
+      ? { accommodationBaseId: current.accommodationBaseId }
+      : {}),
+    ...(next.accommodationType === undefined && current.accommodationType !== undefined
+      ? { accommodationType: current.accommodationType }
+      : {}),
+    ...(next.accommodationNotes === undefined && current.accommodationNotes !== undefined
+      ? { accommodationNotes: current.accommodationNotes }
+      : {}),
+    ...(next.accommodationMigrationVersion === undefined && current.accommodationMigrationVersion !== undefined
+      ? { accommodationMigrationVersion: current.accommodationMigrationVersion }
+      : {}),
   }
 }
 

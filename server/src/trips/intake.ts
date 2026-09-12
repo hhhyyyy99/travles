@@ -31,7 +31,14 @@ export function parseTripIntake(sentence: unknown): TripIntakeError {
 
   const fullDateTokens = [...originalSentence.matchAll(FULL_DATE_PATTERN)].map((match) => match[0] ?? '')
   const shortDateTokens = [...originalSentence.matchAll(SHORT_DATE_PATTERN)].map((match) => match[0] ?? '')
-  const dates = fullDateTokens.map(normalizeDate).filter(Boolean)
+  const normalizedFullDates = fullDateTokens.map(normalizeDate)
+  for (let index = 0; index < normalizedFullDates.length; index += 1) {
+    const date = normalizedFullDates[index]
+    if (!date || !isValidDateString(date)) {
+      return { ok: false, error: `日期 ${fullDateTokens[index] ?? ''} 无效，请确认日期。` }
+    }
+  }
+  const dates = normalizedFullDates
   const hasValidRange = dates.length >= 2 && isValidDateString(dates[0]) && isValidDateString(dates[1])
   if (hasValidRange && dates[1]! < dates[0]!) {
     return { ok: false, error: `日期范围 ${dates[0]} 至 ${dates[1]} 的结束日期早于开始日期，请确认日期。` }

@@ -89,6 +89,7 @@ export default function ChatPanel({
   const historyReadSeqRef = useRef(0)
   const localSendEpochRef = useRef(0)
   const sendingRef = useRef(false)
+  const historyMountedRef = useRef(false)
   // Latest onTripPatched for the async send handler (avoid stale closures).
   const onTripPatchedRef = useRef(onTripPatched)
   onTripPatchedRef.current = onTripPatched
@@ -101,6 +102,7 @@ export default function ChatPanel({
 
   useEffect(() => {
     let cancelled = false
+    historyMountedRef.current = true
     setHistory([])
     setLoadError(null)
     setHistoryLoading(true)
@@ -116,17 +118,35 @@ export default function ChatPanel({
     })
     return () => {
       cancelled = true
+      historyMountedRef.current = false
     }
   }, [tripId])
 
   useEffect(() => {
     const prompt = initialPrompt?.trim()
-    if (!prompt || historyLoading || history.length > 0) return
+    if (!prompt || historyLoading || loadError !== null || history.length > 0) return
     const key = `${tripId}:${prompt}`
     if (initialPromptSentRef.current === key) return
     initialPromptSentRef.current = key
     void handleSend(prompt)
-  }, [history.length, historyLoading, initialPrompt, tripId])
+  }, [history.length, historyLoading, initialPrompt, loadError, tripId])
+
+  function retryHistory() {
+    setHistoryLoading(true)
+    setLoadError(null)
+    const requestSeq = ++historyReadSeqRef.current
+    const sendEpoch = localSendEpochRef.current
+    void fetchChatHistory(tripId).then((result) => {
+      if (!historyMountedRef.current || requestSeq !== historyReadSeqRef.current) return
+      if (sendEpoch !== localSendEpochRef.current) {
+        setHistoryLoading(false)
+        return
+      }
+      if (result.ok) setHistory(result.data)
+      else setLoadError(result.error)
+      setHistoryLoading(false)
+    })
+  }
 
   // System notes and AI turns created in another tab arrive through the same
   // trip stream. Refresh only the persisted chat projection; the active local
@@ -235,7 +255,17 @@ export default function ChatPanel({
 
       <div id="chat-list" ref={listRef} className="flex flex-1 flex-col gap-[10px] overflow-y-auto px-[12px] py-[12px]">
         {loadError !== null && (
-          <p className="mx-auto my-[12px] text-center text-[13px] leading-[1.8] text-muted">{loadError}</p>
+          <div className="mx-auto my-[12px] text-center text-[13px] leading-[1.8] text-muted">
+            <p>{loadError}</p>
+            <button
+              type="button"
+              data-action="retry-chat-history"
+              onClick={retryHistory}
+              className="mt-[8px] rounded-[5px] border border-line px-[10px] py-[4px] text-[12px] text-ink hover:border-green hover:text-green transition-colors"
+            >
+              重试读取对话
+            </button>
+          </div>
         )}
         {historyLoading && <ChatHistorySkeleton />}
         {loadError === null && !historyLoading && history.length === 0 && streamText === null && (

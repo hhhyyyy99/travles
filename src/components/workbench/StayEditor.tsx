@@ -51,6 +51,12 @@ export default function StayEditor({ days, onSave, onClose }: StayEditorProps) {
       lat: Number.isFinite(nextLat) ? nextLat : previousPoi?.lat ?? 0,
       lng: Number.isFinite(nextLng) ? nextLng : previousPoi?.lng ?? 0,
       ...(address.trim() ? { address: address.trim() } : {}),
+      ...(previousPoi?.accommodationBaseId ? { accommodationBaseId: previousPoi.accommodationBaseId } : {}),
+      ...(previousPoi?.accommodationType ? { accommodationType: previousPoi.accommodationType } : {}),
+      ...(previousPoi?.accommodationNotes ? { accommodationNotes: previousPoi.accommodationNotes } : {}),
+      ...(previousPoi?.accommodationMigrationVersion
+        ? { accommodationMigrationVersion: previousPoi.accommodationMigrationVersion }
+        : {}),
       category: previousPoi?.category ?? '住宿',
       rating: previousPoi?.rating ?? 0,
       introSummary: previousPoi?.introSummary ?? '',

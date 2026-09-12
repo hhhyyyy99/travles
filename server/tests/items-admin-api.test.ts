@@ -200,7 +200,10 @@ test('PATCH /items/:id persists structured stay location and rejects it on non-s
   const bundle = await createAppWithMemoryStores()
   const trip = await createTripViaApi(bundle.app)
   seedCards(bundle, trip.id)
-  const stay = itemRow('stay-card', 'day-1', 2, { name: '原住宿', lat: 49.2, lng: 119.7 }, trip.id)
+  const stay = itemRow('stay-card', 'day-1', 2, {
+    name: '原住宿', lat: 49.2, lng: 119.7,
+    accommodationBaseId: 'legacy-base-1', accommodationType: 'hotel', accommodationNotes: '保留老基地备注', accommodationMigrationVersion: 2,
+  }, trip.id)
   stay.type = 'stay'
   bundle.itemsAdmin.itemRows.set('stay-card', stay)
 
@@ -214,7 +217,7 @@ test('PATCH /items/:id persists structured stay location and rejects it on non-s
     headers: { 'content-type': 'application/json' },
   })
   assert.equal(updated.status, 200)
-  const body = (await updated.json()) as { item: { title: string; note: string; poi: { name: string; address?: string; lat: number; lng: number } } }
+  const body = (await updated.json()) as { item: { title: string; note: string; poi: { name: string; address?: string; lat: number; lng: number; accommodationBaseId?: string; accommodationType?: string; accommodationNotes?: string; accommodationMigrationVersion?: number } } }
   assert.deepEqual({
     title: body.item.title,
     note: body.item.note,
@@ -223,11 +226,18 @@ test('PATCH /items/:id persists structured stay location and rejects it on non-s
       address: body.item.poi.address,
       lat: body.item.poi.lat,
       lng: body.item.poi.lng,
+      accommodationBaseId: body.item.poi.accommodationBaseId,
+      accommodationType: body.item.poi.accommodationType,
+      accommodationNotes: body.item.poi.accommodationNotes,
+      accommodationMigrationVersion: body.item.poi.accommodationMigrationVersion,
     },
   }, {
     title: '北境民宿',
     note: '晚到请提前联系',
-    poi: { name: '北境民宿', address: '额尔古纳河畔 18 号', lat: 50.12, lng: 119.98 },
+    poi: {
+      name: '北境民宿', address: '额尔古纳河畔 18 号', lat: 50.12, lng: 119.98,
+      accommodationBaseId: 'legacy-base-1', accommodationType: 'hotel', accommodationNotes: '保留老基地备注', accommodationMigrationVersion: 2,
+    },
   })
 
   const rejected = await bundle.app.request(`/api/trips/${trip.id}/items/i1`, {
