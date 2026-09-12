@@ -380,7 +380,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
 
         {/* 中栏 行程画布 —— 可收起 */}
         {canvasVisible ? (
-          <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${compactViewport ? 'w-full' : ''}`}>
+          <div id="workbench-column-canvas" className={`flex min-h-0 min-w-0 flex-1 flex-col ${compactViewport ? 'w-full' : ''}`}>
             <div className="flex shrink-0 items-center border-b border-line bg-white px-[14px] py-[8px] text-[13px] font-[550]">
               行程画布
               <ViewToggle view={layout.view} onChange={setView} />

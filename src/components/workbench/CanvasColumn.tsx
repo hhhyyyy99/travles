@@ -104,14 +104,16 @@ export default function CanvasColumn({
   // Marker click → scroll the highlighted card's day column into view.
   useEffect(() => {
     if (!highlightItemId) return
+    const behavior: ScrollBehavior =
+      typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
     for (const day of days) {
       if (!day.items.some((item) => item.id === highlightItemId)) continue
       document
         .querySelector(`[data-canvas-day="${day.id}"]`)
-        ?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+        ?.scrollIntoView({ behavior, inline: 'center', block: 'nearest' })
       document
         .querySelector(`[data-canvas-card="${highlightItemId}"]`)
-        ?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
+        ?.scrollIntoView({ behavior, inline: 'nearest', block: 'nearest' })
       return
     }
   }, [highlightItemId, days])
