@@ -9,10 +9,10 @@
  *   model the canvas chips and the map panel draw. Cross-day jumps produce
  *   no leg rows.
  * - **Reuse first:** an already-stored leg for the same ordered (from, to)
- *   item pair keeps its mode/distance/duration/polyline verbatim; a stored
- *   leg for the *reversed* pair keeps its numbers and mode and reuses the
- *   polyline reversed (the road geometry is direction-agnostic, only the
- *   point order flips).
+ *   item pair keeps its mode/distance/duration/polyline verbatim. A reversed
+ *   pair is never replayed: one-way road geometry and driving time can change
+ *   with direction, so it falls through to the explicit estimate until the
+ *   route provider refreshes it.
  * - **Estimate fallback:** when no stored leg exists for the pair but both
  *   items carry usable POI coordinates, the leg is an estimate: haversine
  *   great-circle distance × 1.2 road factor, ~60 km/h ⇒ duration ≈ 1 minute
@@ -75,7 +75,7 @@ export function recomputeTripLegs(items: CanvasItem[], previousLegs: CanvasLeg[]
   return legs
 }
 
-/** Same-ordered-pair reuse → reversed-pair reuse → estimate → empty leg. */
+/** Same-ordered-pair reuse → estimate → empty leg. */
 function plannedLegFor(from: CanvasItem, to: CanvasItem, byPair: Map<string, CanvasLeg>): CanvasLeg {
   const id = `leg-${from.id}-${to.id}`
   const same = byPair.get(`${from.id}|${to.id}`)
@@ -88,18 +88,6 @@ function plannedLegFor(from: CanvasItem, to: CanvasItem, byPair: Map<string, Can
       distanceKm: same.distanceKm,
       durationMin: same.durationMin,
       polyline: same.polyline,
-    }
-  }
-  const reversed = byPair.get(`${to.id}|${from.id}`)
-  if (reversed) {
-    return {
-      id,
-      fromItemId: from.id,
-      toItemId: to.id,
-      mode: reversed.mode,
-      distanceKm: reversed.distanceKm,
-      durationMin: reversed.durationMin,
-      polyline: reversed.polyline ? [...reversed.polyline].reverse() : null,
     }
   }
   const estimate = estimateLeg(from.poi, to.poi)

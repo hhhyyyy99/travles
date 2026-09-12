@@ -5,7 +5,7 @@ import { createApp } from '../src/app.js'
 import { MemoryRecommendationsStoreDriver } from '../src/recommendations/driver-memory.js'
 import { RecommendationsRepository } from '../src/recommendations/repository.js'
 import { searchAmapPoi } from '../src/recommendations/search.js'
-import { parseAmapRoute, pendingRoute, refreshTripLegs, routeAmapLeg } from '../src/recommendations/route.js'
+import { parseAmapRoute, pendingRoute, refreshTripLegs, routeAmapLeg, RouteLookupCache } from '../src/recommendations/route.js'
 import type { RecommendationPoi, RouteLegResult } from '../src/recommendations/types.js'
 import { MemoryItemsAdminStoreDriver } from '../src/items-admin/driver-memory.js'
 import { createMastra } from '../src/mastra.js'
@@ -235,6 +235,91 @@ test('route refresh replaces estimate rows with real metrics and preserves them 
   const pending = await refreshTripLegs(store, 'trip-route', async () => pendingRoute('未配置'))
   assert.equal(pending.ok, true)
   if (pending.ok) assert.equal(pending.legs[0]?.distanceKm, 21.4)
+})
+
+test('route refresh limits provider concurrency and reuses only ordered cached pairs', async () => {
+  const store = new MemoryItemsAdminStoreDriver()
+  for (let index = 0; index < 7; index += 1) {
+    store.itemRows.set(`item-${index}`, {
+      id: `item-${index}`,
+      trip_id: 'trip-bounded',
+      day_id: 'day-1',
+      item_order: index,
+      type: 'attraction',
+      title: `点位 ${index}`,
+      note: '',
+      poi: JSON.stringify({ name: `点位 ${index}`, lat: 49.4 + index * 0.01, lng: 119.9 + index * 0.01 }),
+      images: null,
+      pending: 0,
+    })
+  }
+  let active = 0
+  let maximumActive = 0
+  let calls = 0
+  const provider: NonNullable<Parameters<typeof refreshTripLegs>[2]> = async () => {
+    calls += 1
+    active += 1
+    maximumActive = Math.max(maximumActive, active)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    active -= 1
+    return { status: 'ok', source: 'amap', distanceKm: 10, durationMin: 12, polyline: [[119.9, 49.4], [120, 49.5]] }
+  }
+  const options = { cache: new RouteLookupCache(), concurrency: 2, lookupTimeoutMs: 100, maxDurationMs: 500 }
+  const first = await refreshTripLegs(store, 'trip-bounded', provider, options)
+  assert.equal(first.ok, true)
+  assert.equal(calls, 6)
+  assert.ok(maximumActive <= 2)
+  if (first.ok) assert.deepEqual(first.summary, { attempted: 6, updated: 6, pending: 0, truncated: false })
+
+  const second = await refreshTripLegs(store, 'trip-bounded', provider, options)
+  assert.equal(second.ok, true)
+  assert.equal(calls, 6, 'the same ordered coordinate pairs are served from the cache')
+})
+
+test('pending refresh turns a reverse geometry cache into an explicit estimate', async () => {
+  const store = new MemoryItemsAdminStoreDriver()
+  store.itemRows.set('item-a', {
+    id: 'item-a', trip_id: 'trip-reverse', day_id: 'day-1', item_order: 1, type: 'attraction', title: '起点', note: '',
+    poi: JSON.stringify({ name: '起点', lat: 49.4, lng: 119.9 }), images: null, pending: 0,
+  })
+  store.itemRows.set('item-b', {
+    id: 'item-b', trip_id: 'trip-reverse', day_id: 'day-1', item_order: 0, type: 'attraction', title: '终点', note: '',
+    poi: JSON.stringify({ name: '终点', lat: 49.5, lng: 120 }), images: null, pending: 0,
+  })
+  // This is the shape ticket 09 produces after moving a measured a→b leg to
+  // b→a. A pending provider must not preserve that one-way geometry.
+  store.legRows.set('leg-item-a-item-b', {
+    id: 'leg-item-a-item-b', trip_id: 'trip-reverse', from_item_id: 'item-a', to_item_id: 'item-b', mode: 'drive',
+    distance_km: 99, duration_min: 120, polyline: JSON.stringify([[119.9, 49.4], [120, 49.5]]),
+  })
+  const refreshed = await refreshTripLegs(store, 'trip-reverse', async () => pendingRoute('未配置'), {
+    maxDurationMs: 100,
+  })
+  assert.equal(refreshed.ok, true)
+  if (refreshed.ok) {
+    assert.equal(refreshed.legs[0]?.polyline, null)
+    assert.notEqual(refreshed.legs[0]?.distanceKm, 99)
+    assert.ok((refreshed.legs[0]?.distanceKm ?? 0) > 0)
+  }
+})
+
+test('route refresh abandons hanging provider pairs within its total budget', async () => {
+  const store = new MemoryItemsAdminStoreDriver()
+  for (let index = 0; index < 5; index += 1) {
+    store.itemRows.set(`item-${index}`, {
+      id: `item-${index}`, trip_id: 'trip-timeout', day_id: 'day-1', item_order: index, type: 'attraction', title: `点位 ${index}`, note: '',
+      poi: JSON.stringify({ name: `点位 ${index}`, lat: 49.4 + index * 0.01, lng: 119.9 + index * 0.01 }), images: null, pending: 0,
+    })
+  }
+  const started = Date.now()
+  const result = await refreshTripLegs(store, 'trip-timeout', async () => new Promise(() => {}), {
+    concurrency: 2,
+    lookupTimeoutMs: 15,
+    maxDurationMs: 35,
+  })
+  assert.equal(result.ok, true)
+  assert.ok(Date.now() - started < 250, 'the whole refresh is bounded even when the provider never resolves')
+  if (result.ok) assert.equal(result.summary.truncated, true)
 })
 
 test('route refresh API upgrades the shared item-admin leg store', async () => {

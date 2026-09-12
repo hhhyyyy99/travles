@@ -27,6 +27,7 @@ import {
 import {
   dayFitCoordinates,
   dayMileageKm,
+  dayRouteQuality,
   dayRouteSegments,
   formatMileageLabel,
   hiddenByCollision,
@@ -247,7 +248,7 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
         dayId: day.id,
         color: dayAccentColor(day.color, day.index),
         segments: dayRouteSegments(day, legs),
-        mileageLabel: formatMileageLabel(day, dayMileageKm(day, legs)),
+        mileageLabel: formatMileageLabel(day, dayMileageKm(day, legs), dayRouteQuality(day, legs)),
       })),
     [days, legs],
   )

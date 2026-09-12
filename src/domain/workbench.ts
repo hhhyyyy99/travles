@@ -69,6 +69,13 @@ export type TripCanvasData = {
   legs: WorkbenchLeg[]
 }
 
+export type WorkbenchRouteRefreshSummary = {
+  attempted: number
+  updated: number
+  pending: number
+  truncated: boolean
+}
+
 export const CANVAS_NETWORK_ERROR = '无法连接服务器，请确认后端服务已启动。'
 
 // ---------------------------------------------------------------------------
@@ -199,6 +206,27 @@ export async function fetchTripCanvas(
       legs: legs.map(normalizeLeg).filter((leg): leg is WorkbenchLeg => leg !== null),
     },
   }
+}
+
+/**
+ * POST /api/trips/:id/legs/refresh — best-effort background upgrade of the
+ * server's estimate legs. The endpoint may return pending rows when no route
+ * provider is configured; callers should keep the current canvas on failure.
+ */
+export async function refreshWorkbenchLegs(
+  tripId: string,
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<{ legs: WorkbenchLeg[]; summary: WorkbenchRouteRefreshSummary | null }>> {
+  const result = await dayRequest(
+    `/api/trips/${encodeURIComponent(tripId)}/legs/refresh`,
+    { method: 'POST' },
+    fetchLike,
+  )
+  if (!result.ok) return result
+  const record = result.data as { legs?: unknown; summary?: unknown }
+  if (!Array.isArray(record.legs)) return { ok: false, error: '服务器返回的路线数据无法解析。' }
+  const legs = record.legs.map(normalizeLeg).filter((leg): leg is WorkbenchLeg => leg !== null)
+  return { ok: true, data: { legs, summary: normalizeRouteRefreshSummary(record.summary) } }
 }
 
 /** Pure: weekday label ("周五") for a YYYY-MM-DD date; '' when unusable. */
@@ -601,6 +629,17 @@ function normalizeLeg(value: unknown): WorkbenchLeg | null {
     distanceKm: finiteNumber(record.distanceKm),
     durationMin: finiteNumber(record.durationMin),
     polyline: normalizePolyline(record.polyline),
+  }
+}
+
+function normalizeRouteRefreshSummary(value: unknown): WorkbenchRouteRefreshSummary | null {
+  if (value === null || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  return {
+    attempted: finiteNumber(record.attempted),
+    updated: finiteNumber(record.updated),
+    pending: finiteNumber(record.pending),
+    truncated: record.truncated === true,
   }
 }
 

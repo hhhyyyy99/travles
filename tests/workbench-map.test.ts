@@ -19,6 +19,7 @@ import {
   dayFitCoordinates,
   dayItemsInOrder,
   dayMileageKm,
+  dayRouteQuality,
   dayRouteSegments,
   formatMileageLabel,
   hiddenByCollision,
@@ -119,6 +120,20 @@ test('dayItemsInOrder sorts by order', () => {
 test('dayMileageKm sums the day leg distances', () => {
   const dayData = day({ items: [item('a', 0), item('b', 1), item('c', 2)] })
   assert.equal(dayMileageKm(dayData, [leg('l1', 'a', 'b', { distanceKm: 30.3 }), leg('l2', 'b', 'c', { distanceKm: 45 })]), 75.3)
+})
+
+test('dayRouteQuality distinguishes measured, estimated, and pending map routes', () => {
+  const dayData = day({ items: [item('a', 0), item('b', 1)] })
+  assert.equal(dayRouteQuality(dayData, [leg('l', 'a', 'b', { polyline: [[119.7, 49.2], [119.8, 49.3]] })]), 'measured')
+  assert.equal(dayRouteQuality(dayData, [leg('l', 'a', 'b')]), 'estimate')
+  assert.equal(dayRouteQuality(dayData, [leg('l', 'a', 'b', { distanceKm: 0, durationMin: 0 })]), 'pending')
+  assert.equal(dayRouteQuality(dayData, []), 'pending')
+})
+
+test('formatMileageLabel makes map estimates and pending routes explicit', () => {
+  const dayData = day({ date: '2026-10-02', index: 0 })
+  assert.equal(formatMileageLabel(dayData, 75.3, 'estimate'), '10.02 周五 约 75km')
+  assert.equal(formatMileageLabel(dayData, 0, 'pending'), '10.02 周五 待查询')
 })
 
 test('formatMileageLabel matches the canvas day header labels', () => {

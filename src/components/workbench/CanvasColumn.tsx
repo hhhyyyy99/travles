@@ -688,19 +688,25 @@ export function CanvasCard({
 
 function LegChip({ leg }: { leg: WorkbenchLeg | null }) {
   const label = formatLegLabel(leg)
-  if (!label) return null
-  const longDrive = isLongDriveLeg(leg)
+  if (!leg) return null
+  const pending = !label && leg.distanceKm <= 0 && leg.durationMin <= 0
+  if (!label && !pending) return null
+  const estimated = !pending && leg.polyline === null
+  const longDrive = !pending && isLongDriveLeg(leg)
+  const displayLabel = pending ? '路线待查询' : estimated ? `约 ${label}` : label
   return (
     <div
-      data-leg-chip={leg?.id ?? ''}
-      data-leg-warning={longDrive ? leg?.id : undefined}
-      title={longDrive ? longDriveWarningText(leg) : undefined}
+      data-leg-chip={leg.id}
+      data-leg-quality={pending ? 'pending' : estimated ? 'estimate' : 'measured'}
+      data-leg-warning={longDrive ? leg.id : undefined}
+      aria-label={pending ? '路线待查询' : estimated ? `预估路线：${displayLabel}` : `驾车路线：${displayLabel}`}
+      title={longDrive ? longDriveWarningText(leg) : pending ? '路线待查询' : estimated ? '直线估算，路线服务返回后会更新' : '高德驾车路线'}
       className={`flex items-center gap-[6px] rounded-[999px] border px-[10px] py-[3px] text-[11px] ${
         longDrive ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]' : 'border-line bg-paper text-muted'
       }`}
     >
       <Car aria-hidden="true" className="w-[12px]" />
-      {label}
+      {displayLabel}
       {longDrive && <span data-leg-warning-label>超长，建议拆分</span>}
     </div>
   )

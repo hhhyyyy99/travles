@@ -3,7 +3,7 @@ import type { AppEnv } from '../app.js'
 import type { TripRepository } from '../trips/repository.js'
 import { readJsonBody } from '../http/body.js'
 import { normalizePoi, RecommendationsRepository } from './repository.js'
-import { refreshTripLegs } from './route.js'
+import { refreshTripLegs, type RouteRefreshOptions } from './route.js'
 import type { ItemsAdminStoreDriver } from '../items-admin/types.js'
 import type { PoiSearch, RecommendationPoi, RouteLegSearch } from './types.js'
 
@@ -15,11 +15,16 @@ export type RecommendationsRouteOptions = {
   resolveItemsStore?: () => Promise<ItemsAdminStoreDriver>
   /** Broadcast successful stash/favorite writes to open workbenches. */
   onTripUpdated?: (tripId: string, reason: string) => Promise<void> | void
+  routeRefresh?: RouteRefreshOptions
 }
 
 /** Mounts the ticket 15 POI recommendation, stash, and favorite APIs. */
 export function mountRecommendationsRoutes(app: Hono<AppEnv>, options: RecommendationsRouteOptions): void {
   const repository = async (): Promise<RecommendationsRepository> => new RecommendationsRepository(await options.resolveStore())
+  // A refresh reads the whole layout before replacing the leg set. Serialize
+  // refreshes per trip so a slow request from an earlier edit cannot write
+  // stale legs after a newer edit has already landed.
+  const refreshQueues = new Map<string, Promise<void>>()
 
   app.get('/api/trips/:id/recommendations', async (c) => {
     if (await options.tripRepository.get(c.req.param('id')) === null) return c.json({ error: '行程不存在' }, 404)
@@ -65,9 +70,23 @@ export function mountRecommendationsRoutes(app: Hono<AppEnv>, options: Recommend
     app.post('/api/trips/:id/legs/refresh', async (c) => {
       const tripId = c.req.param('id')
       if (await options.tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
-      const result = await refreshTripLegs(await options.resolveItemsStore!(), tripId, options.routeLegs)
-      if (!result.ok) return c.json({ error: result.error }, 500)
-      return c.json({ legs: result.legs })
+      const previous = refreshQueues.get(tripId) ?? Promise.resolve()
+      const run = previous.then(async () => {
+        try {
+          return await refreshTripLegs(await options.resolveItemsStore!(), tripId, options.routeLegs, options.routeRefresh)
+        } catch {
+          return { ok: false as const, error: '读取路线数据失败。' }
+        }
+      })
+      const queueTail = run.then(() => undefined, () => undefined)
+      refreshQueues.set(tripId, queueTail)
+      try {
+        const result = await run
+        if (!result.ok) return c.json({ error: result.error }, 500)
+        return c.json({ legs: result.legs, summary: result.summary })
+      } finally {
+        if (refreshQueues.get(tripId) === queueTail) refreshQueues.delete(tripId)
+      }
     })
   }
 

@@ -28,6 +28,7 @@ import {
   deleteWorkbenchItem,
   fetchTripCanvas,
   moveWorkbenchItem,
+  refreshWorkbenchLegs,
   tempItemId,
   updateWorkbenchDay,
   updateWorkbenchItem,
@@ -69,6 +70,11 @@ type MobilePane = 'chat' | 'canvas' | 'map'
 
 export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBack: () => void }) {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
+  const routeRefreshSequence = useRef(0)
+  const routeRefreshInFlight = useRef<Promise<void> | null>(null)
+  const routeRefreshQueued = useRef(false)
+  const routeTripId = useRef(tripId)
+  routeTripId.current = tripId
   // Canvas ↔ map linkage (ticket 05): one shared selection — canvas card
   // clicks focus the map POI, map marker clicks highlight + scroll the canvas.
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
@@ -98,6 +104,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   dataRef.current = readyData
 
   useEffect(() => {
+    routeRefreshSequence.current += 1
     let cancelled = false
     setState({ status: 'loading' })
     setActionError('')
@@ -154,13 +161,53 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     )
   }
 
+  /** Replace the legs list on the ready state (map redraws from it). */
+  const patchLegs = (legs: TripCanvasData['legs']) => {
+    setState((prev) => (prev.status === 'ready' ? { ...prev, data: { ...prev.data, legs } } : prev))
+  }
+
+  /**
+   * Route lookup is deliberately best-effort and backgrounded. A missing API
+   * or provider leaves the optimistic estimate visible; a late response from
+   * an older edit cannot overwrite the latest canvas.
+   */
+  const requestRouteRefresh = () => {
+    // Coalesce rapid drag/add operations into one follow-up pass. The token
+    // advances immediately so an in-flight response cannot win over a newer
+    // optimistic layout.
+    ++routeRefreshSequence.current
+    routeRefreshQueued.current = true
+    if (routeRefreshInFlight.current) return
+    const run = async (): Promise<void> => {
+      while (routeRefreshQueued.current) {
+        routeRefreshQueued.current = false
+        const sequence = routeRefreshSequence.current
+        const result = await refreshWorkbenchLegs(routeTripId.current)
+        if (sequence === routeRefreshSequence.current && result.ok) patchLegs(result.data.legs)
+      }
+    }
+    const inFlight = run()
+    routeRefreshInFlight.current = inFlight
+    void inFlight.then(
+      () => {
+        if (routeRefreshInFlight.current === inFlight) routeRefreshInFlight.current = null
+      },
+      () => {
+        if (routeRefreshInFlight.current === inFlight) routeRefreshInFlight.current = null
+      },
+    )
+  }
+
   // ---- AI plan round (ticket 08) ---------------------------------------------
   // The chat panel calls this when an `applied_patch` SSE event arrives: the
   // trip changed server-side, so refetch /canvas and reproject all columns.
   const handleTripPatched = () => {
     setCanvasSyncing(true)
     void fetchTripCanvas(tripId).then((result) => {
-      if (result.ok) setState({ status: 'ready', data: result.data })
+      if (result.ok) {
+        setState({ status: 'ready', data: result.data })
+        requestRouteRefresh()
+      }
       // Refetch failures keep the current canvas — the chat card still reports
       // the write; a later event or manual refresh recovers.
     }).finally(() => setCanvasSyncing(false))
@@ -262,11 +309,6 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   // the response (map follows without a second canvas read). Any failure
   // restores the pre-edit snapshot and shows the error — no silent loss.
 
-  /** Replace the legs list on the ready state (map redraws from it). */
-  const patchLegs = (legs: TripCanvasData['legs']) => {
-    setState((prev) => (prev.status === 'ready' ? { ...prev, data: { ...prev.data, legs } } : prev))
-  }
-
   /** Shared rollback: restore the snapshot and surface the server error. */
   const rollback = (snapshot: TripCanvasData | null, error: string) => {
     if (snapshot) setState({ status: 'ready', data: snapshot })
@@ -286,6 +328,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
       return
     }
     patchLegs(result.data.legs)
+    requestRouteRefresh()
   })
 
   const handleCopyItem = (itemId: string, toDayId: string, toIndex?: number) => withPendingMutation(async () => {
@@ -302,6 +345,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     }
     patchDays((days) => applyItemReplace(days, temp.id, result.data.item))
     patchLegs(result.data.legs)
+    requestRouteRefresh()
   })
 
   const handleCreateCard = (input: WorkbenchItemCreateInput): Promise<WorkbenchItem | null> => withPendingMutation(async () => {
@@ -327,6 +371,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     }
     patchDays((days) => applyItemReplace(days, temp.id, result.data.item))
     patchLegs(result.data.legs)
+    requestRouteRefresh()
     return result.data.item
   })
 
@@ -345,6 +390,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
       if (deleted.ok) {
         patchDays((days) => applyItemRemove(days, created.id))
         patchLegs(deleted.data.legs)
+        requestRouteRefresh()
       } else {
         // If the compensating delete also failed, reload the authoritative
         // canvas so the optimistic view cannot diverge from the server.
@@ -367,6 +413,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
       return
     }
     patchLegs(result.data.legs)
+    requestRouteRefresh()
   })
 
   const handleNoteSave = (itemId: string, note: string) => withPendingMutation(async () => {

@@ -34,7 +34,9 @@ but chat requests answer `503` with guidance instead of opening a stream.
 coordinates are converted at the AMap boundary; without the key, route lookup
 returns an explicit `pending` result and does not invent measured metrics.
 `POST /api/trips/:id/legs/refresh` re-queries adjacent canvas cards and keeps
-existing estimates when routing is pending.
+existing estimates when routing is pending. Refreshes use up to four provider
+lookups at once, cap each lookup at 2.5 seconds and the whole request at 8
+seconds, and cache successful ordered coordinate pairs for ten minutes.
 
 Agent memory (one thread per trip, `thread = trip-<tripId>`) lives in the same
 SQLite database as the rest of the app data (`TRIPS_DB_PATH`, default
