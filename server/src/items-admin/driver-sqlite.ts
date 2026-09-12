@@ -46,6 +46,25 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
     return (rows[0] as unknown as ItemRow) ?? null
   }
 
+  async withTransaction<T>(fn: (store: ItemsAdminStoreDriver) => Promise<T>): Promise<T> {
+    if (this.db.withTransaction) {
+      return this.db.withTransaction(async (transactionDb) => fn(new SqliteItemsAdminStoreDriver(transactionDb)))
+    }
+    await this.db.run('BEGIN IMMEDIATE')
+    try {
+      const result = await fn(this)
+      await this.db.run('COMMIT')
+      return result
+    } catch (error) {
+      try {
+        await this.db.run('ROLLBACK')
+      } catch {
+        // Connection-level failure — there may be nothing left to roll back.
+      }
+      throw error
+    }
+  }
+
   async upsertItemFull(tripId: string, item: ItemFullUpsert): Promise<void> {
     await this.db.run(
       `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, poi, images, pending)

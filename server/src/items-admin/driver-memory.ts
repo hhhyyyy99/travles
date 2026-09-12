@@ -44,6 +44,23 @@ export class MemoryItemsAdminStoreDriver implements ItemsAdminStoreDriver {
     return this.itemRows.get(itemId) ?? null
   }
 
+  async withTransaction<T>(fn: (store: ItemsAdminStoreDriver) => Promise<T>): Promise<T> {
+    const days = new Map([...this.dayRows].map(([id, row]) => [id, { ...row }]))
+    const items = new Map([...this.itemRows].map(([id, row]) => [id, { ...row }]))
+    const legs = new Map([...this.legRows].map(([id, row]) => [id, { ...row }]))
+    try {
+      return await fn(this)
+    } catch (error) {
+      this.dayRows.clear()
+      this.itemRows.clear()
+      this.legRows.clear()
+      for (const [id, row] of days) this.dayRows.set(id, row)
+      for (const [id, row] of items) this.itemRows.set(id, row)
+      for (const [id, row] of legs) this.legRows.set(id, row)
+      throw error
+    }
+  }
+
   async upsertItemFull(tripId: string, item: ItemFullUpsert): Promise<void> {
     this.failNextWrite()
     if (!(await this.dayExists(tripId, item.dayId))) {

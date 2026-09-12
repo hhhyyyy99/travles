@@ -128,6 +128,14 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS patch_confirmations (
+    trip_id TEXT PRIMARY KEY REFERENCES trips(id) ON DELETE CASCADE,
+    token TEXT NOT NULL,
+    snapshot_hash TEXT NOT NULL,
+    choices TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    consumed_at TEXT
+  )`,
   `CREATE INDEX IF NOT EXISTS idx_days_trip ON days(trip_id)`,
   `CREATE INDEX IF NOT EXISTS idx_items_trip ON items(trip_id)`,
   `CREATE INDEX IF NOT EXISTS idx_items_day ON items(day_id)`,

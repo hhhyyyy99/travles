@@ -10,7 +10,13 @@ import type {
   LegRow,
 } from '../days/types.js'
 import { TripPatchIdConflictError } from './types.js'
-import type { TripPatchDayUpsert, TripPatchItemUpsert, TripPatchLegUpsert, TripPatchStoreDriver } from './types.js'
+import type {
+  PatchConfirmationRecord,
+  TripPatchDayUpsert,
+  TripPatchItemUpsert,
+  TripPatchLegUpsert,
+  TripPatchStoreDriver,
+} from './types.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
 interface StoredDayRow extends DayRow {
@@ -46,10 +52,13 @@ interface StoredLegRow extends LegRow {
   polyline: string | null
 }
 
+type StoredPatchConfirmation = PatchConfirmationRecord & { consumedAt?: string }
+
 export class MemoryTripPatchStore implements TripPatchStoreDriver {
   readonly dayRows: StoredDayRow[] = []
   readonly itemRows: StoredItemRow[] = []
   readonly legRows: StoredLegRow[] = []
+  readonly patchConfirmations = new Map<string, StoredPatchConfirmation>()
 
   async listDayRows(tripId: string): Promise<DayRow[]> {
     return this.dayRows.filter((row) => row.trip_id === tripId)
@@ -196,5 +205,33 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       row.idx = update.idx
       row.date = update.date
     }
+  }
+
+  async getPatchConfirmation(tripId: string): Promise<PatchConfirmationRecord | null> {
+    const record = this.patchConfirmations.get(tripId)
+    if (!record || record.consumedAt) return null
+    if (!record.token || !record.snapshotHash || record.choices.length === 0) return null
+    return {
+      token: record.token,
+      snapshotHash: record.snapshotHash,
+      choices: [...record.choices],
+      createdAt: record.createdAt,
+    }
+  }
+
+  async savePatchConfirmation(tripId: string, record: PatchConfirmationRecord): Promise<void> {
+    this.patchConfirmations.set(tripId, {
+      token: record.token,
+      snapshotHash: record.snapshotHash,
+      choices: [...record.choices],
+      createdAt: record.createdAt,
+    })
+  }
+
+  async consumePatchConfirmation(tripId: string, token: string, snapshotHash: string): Promise<boolean> {
+    const record = this.patchConfirmations.get(tripId)
+    if (!record || record.consumedAt || record.token !== token || record.snapshotHash !== snapshotHash) return false
+    record.consumedAt = new Date().toISOString()
+    return true
   }
 }

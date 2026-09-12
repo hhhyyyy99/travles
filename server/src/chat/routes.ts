@@ -103,6 +103,7 @@ import type { AppEnv } from '../app.js'
 import { readJsonBody } from '../http/body.js'
 import type { RoundMetaPayload, RoundWarning } from './round-meta.js'
 import { readRoundFromToolArgs } from './round-meta.js'
+import { createPatchConfirmation, hashTripSnapshot } from './confirmation.js'
 import {
   detectTimeConstraintConflicts,
   isModificationRequest,
@@ -169,7 +170,7 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
       return c.json(
         {
           error: '模型服务未配置，无法开始对话。',
-          guidance: '请先在环境变量中配置 AI_BASE_URL / AI_API_KEY / AI_MODEL（设置页即将到来）。',
+          guidance: '请从行程列表进入「AI 接入设置」，保存并测试一套模型配置后重试；若采用环境变量部署，也可配置 AI_BASE_URL / AI_API_KEY / AI_MODEL。',
         },
         503,
       )
@@ -183,10 +184,30 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
     }
 
     const analysis = await analyzeTripTurn(trip, content, options.resolveTripPatchStore)
+    const confirmationRequested = isPatchConfirmation(content)
+    if (confirmationRequested) {
+      if (!analysis.hasExistingPlan) {
+        return c.json(
+          {
+            error: '没有可确认的修改方案，或这项方案已经使用过。',
+            guidance: '请先描述要修改的内容，让 AI 分析影响后再点击最新的确认选项。',
+            code: 'confirmation_required',
+          },
+          409,
+        )
+      }
+      const gate = await consumePatchConfirmation(
+        options.resolveTripPatchStore,
+        trip.id,
+        analysis.snapshotHash,
+        content,
+      )
+      if (!gate.ok) return c.json({ error: gate.error, guidance: gate.guidance, code: gate.code }, 409)
+    }
     const allowPatchApply =
       analysis.conflicts.length === 0 &&
       !analysis.storeReadFailed &&
-      (!analysis.hasExistingPlan || isPatchConfirmation(content))
+      (!analysis.hasExistingPlan || confirmationRequested)
 
     // Start the agent run before committing to SSE so failures at run
     // construction can still fall back to a plain HTTP error.
@@ -322,6 +343,14 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         ...analysis.conflicts.map(conflictToWarning),
       ])
       const mustExplainPatch = forcedPatchExplain || patchTurn.blockedBeforeConfirmation
+      const shouldSaveConfirmation =
+        analysis.hasExistingPlan &&
+        analysis.isModification &&
+        !confirmationRequested &&
+        patchTurn.applied === null &&
+        !patchTurn.exhausted &&
+        mustExplainPatch &&
+        analysis.snapshotHash !== null
       if (boundaryWarnings.length > 0 || mustExplainPatch) {
         const nextRound = mustExplainPatch ? 'patch-explain' : round ?? 'qa'
         const current = meta ?? { round: nextRound }
@@ -418,6 +447,30 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         return
       }
 
+      if (shouldSaveConfirmation) {
+        try {
+          const store = await options.resolveTripPatchStore?.()
+          if (!store) throw new Error('patch confirmation store unavailable')
+          const choices = (meta?.chips ?? []).map((chip) => chip.value).filter((value) => value.trim() !== '')
+          const fallback = '确认方案：按刚才的影响分析执行重排'
+          await store.savePatchConfirmation(
+            tripId,
+            createPatchConfirmation(analysis.snapshotHash!, choices.length > 0 ? choices : [fallback]),
+          )
+        } catch {
+          await stream.writeSSE({
+            event: 'error',
+            data: JSON.stringify({
+              code: 'storage',
+              message: '修改确认方案保存失败。',
+              guidance: '请重新发送修改请求，先让 AI 再次分析影响后重试。',
+            }),
+          })
+          await stream.writeSSE({ event: 'close', data: '{}' })
+          return
+        }
+      }
+
       await stream.writeSSE({
         event: 'done',
         data: JSON.stringify({ userMessage: userSaved.message, assistantMessage: assistantSaved.message }),
@@ -431,6 +484,7 @@ type TripTurnAnalysis = {
   hasExistingPlan: boolean
   isModification: boolean
   storeReadFailed: boolean
+  snapshotHash: string | null
   warnings: RoundWarning[]
   conflicts: TimeConstraintConflict[]
 }
@@ -451,6 +505,7 @@ async function analyzeTripTurn(
       hasExistingPlan: false,
       isModification,
       storeReadFailed: false,
+      snapshotHash: null,
       warnings: explicitConflicts.map(conflictToWarning),
       conflicts: explicitConflicts,
     }
@@ -463,6 +518,7 @@ async function analyzeTripTurn(
       store.listLegRows(trip.id),
     ])
     const hasExistingPlan = dayRows.some((row) => typeof row?.id === 'string' && row.id !== '')
+    const snapshotHash = hashTripSnapshot(trip, dayRows, itemRows, legRows)
     const conflicts = scheduleRequest
       ? hasExistingPlan
         ? detectTimeConstraintConflicts(content, trip)
@@ -472,6 +528,7 @@ async function analyzeTripTurn(
       hasExistingPlan,
       isModification,
       storeReadFailed: false,
+      snapshotHash,
       warnings: [...longDriveWarnings(legRows, itemRows), ...conflicts.map(conflictToWarning)],
       conflicts,
     }
@@ -480,6 +537,7 @@ async function analyzeTripTurn(
       hasExistingPlan: false,
       isModification,
       storeReadFailed: true,
+      snapshotHash: null,
       warnings: explicitConflicts.map(conflictToWarning),
       conflicts: explicitConflicts,
     }
@@ -529,6 +587,81 @@ function buildPlannerPrompt(content: string, analysis: TripTurnAnalysis, allowPa
 function isPatchConfirmation(content: string): boolean {
   const text = content.trim()
   return /确认方案|确认并执行|按这个(?:方案)?(?:重排|执行)|就按.*(?:重排|调整|执行)|同意.*(?:重排|调整|执行)/.test(text)
+}
+
+type ConfirmationGateResult =
+  | { ok: true }
+  | { ok: false; code: 'confirmation_required' | 'confirmation_invalid' | 'confirmation_stale' | 'storage'; error: string; guidance: string }
+
+/** Require an exact, one-use chip from the current itinerary snapshot. */
+async function consumePatchConfirmation(
+  resolveStore: (() => Promise<TripPatchStoreDriver>) | undefined,
+  tripId: string,
+  currentSnapshotHash: string | null,
+  content: string,
+): Promise<ConfirmationGateResult> {
+  if (!resolveStore || currentSnapshotHash === null) {
+    return {
+      ok: false,
+      code: 'storage',
+      error: '暂时无法验证这项修改确认。',
+      guidance: '请稍后重新发送修改请求，让 AI 重新分析当前行程。',
+    }
+  }
+
+  let store: TripPatchStoreDriver
+  let pending: Awaited<ReturnType<TripPatchStoreDriver['getPatchConfirmation']>>
+  try {
+    store = await resolveStore()
+    pending = await store.getPatchConfirmation(tripId)
+  } catch {
+    return {
+      ok: false,
+      code: 'storage',
+      error: '暂时无法读取修改确认。',
+      guidance: '请稍后重新发送修改请求，让 AI 重新分析当前行程。',
+    }
+  }
+  if (pending === null) {
+    return {
+      ok: false,
+      code: 'confirmation_required',
+      error: '没有可确认的修改方案，或这项方案已经使用过。',
+      guidance: '请先描述要修改的内容，让 AI 分析影响后再点击最新的确认选项。',
+    }
+  }
+  if (!pending.choices.includes(content.trim())) {
+    return {
+      ok: false,
+      code: 'confirmation_invalid',
+      error: '确认内容与当前修改方案不匹配。',
+      guidance: '请点击当前对话中最新的确认选项；如果行程刚发生变化，请重新发起修改分析。',
+    }
+  }
+  if (pending.snapshotHash !== currentSnapshotHash) {
+    return {
+      ok: false,
+      code: 'confirmation_stale',
+      error: '行程已发生变化，这份影响分析已经过期。',
+      guidance: '请重新发送修改请求，让 AI 基于最新行程分析影响。',
+    }
+  }
+  try {
+    if (await store.consumePatchConfirmation(tripId, pending.token, currentSnapshotHash)) return { ok: true }
+  } catch {
+    return {
+      ok: false,
+      code: 'storage',
+      error: '修改确认保存失败。',
+      guidance: '请稍后重新发送修改请求，让 AI 重新分析当前行程。',
+    }
+  }
+  return {
+    ok: false,
+    code: 'confirmation_required',
+    error: '这项修改确认已经使用过或已失效。',
+    guidance: '请重新发起修改分析后再选择方案。',
+  }
 }
 
 function conflictToWarning(conflict: TimeConstraintConflict): RoundWarning {

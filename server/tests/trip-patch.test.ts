@@ -486,3 +486,41 @@ test('real SQLite rolls back earlier patch writes when a later leg id belongs to
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('SQLite patch-explain confirmations survive restart and are consumed once', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'trip-confirmation-sqlite-'))
+  const dbPath = `file:${join(dir, 'trips.db')}`
+  const first = await createSqliteTripRepository(dbPath)
+  try {
+    const created = await first.repository.create({ title: '确认测试', startDate: '2026-10-02', endDate: '2026-10-02' })
+    assert.equal(created.ok, true)
+    if (!created.ok) return
+
+    const confirmation = {
+      token: 'confirmation-1',
+      snapshotHash: 'snapshot-1',
+      choices: ['确认方案：按这个重排'],
+      createdAt: '2026-09-12T00:00:00.000Z',
+    }
+    const store = new SqliteTripPatchStore(first.db)
+    await store.savePatchConfirmation(created.trip.id, confirmation)
+    assert.deepEqual(await store.getPatchConfirmation(created.trip.id), confirmation)
+  } finally {
+    await first.close()
+  }
+
+  const second = await createSqliteTripRepository(dbPath)
+  try {
+    const trips = await second.repository.list()
+    const trip = trips[0]
+    assert.ok(trip)
+    if (!trip) return
+    const store = new SqliteTripPatchStore(second.db)
+    assert.equal(await store.consumePatchConfirmation(trip.id, 'confirmation-1', 'snapshot-1'), true)
+    assert.equal(await store.getPatchConfirmation(trip.id), null)
+    assert.equal(await store.consumePatchConfirmation(trip.id, 'confirmation-1', 'snapshot-1'), false)
+  } finally {
+    await second.close()
+    await rm(dir, { recursive: true, force: true })
+  }
+})

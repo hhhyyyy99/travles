@@ -413,3 +413,22 @@ test('driver write failures surface as storage errors instead of throwing', asyn
   assert.equal(del.ok, false)
   if (!del.ok) assert.equal(del.error, '删除失败')
 })
+
+test('layout writes roll back cards and orders when the legs write fails late', async () => {
+  class FailLegReplacementDriver extends MemoryItemsAdminStoreDriver {
+    override async replaceLegs(): Promise<void> {
+      throw new Error('route write failed')
+    }
+  }
+
+  const driver = new FailLegReplacementDriver()
+  seedDriver(driver)
+  const repo = new ItemsAdminRepository(driver)
+  const beforeItems = [...driver.itemRows.entries()].map(([id, row]) => [id, { ...row }])
+  const beforeLegs = [...driver.legRows.entries()].map(([id, row]) => [id, { ...row }])
+
+  const result = await repo.createItem(TRIP, { dayId: 'day-1', title: '不应留下的卡片' })
+  assert.deepEqual(result, { ok: false, error: '保存失败', code: 'storage' })
+  assert.deepEqual([...driver.itemRows.entries()], beforeItems, 'the card upsert is rolled back')
+  assert.deepEqual([...driver.legRows.entries()], beforeLegs, 'the existing legs are rolled back')
+})

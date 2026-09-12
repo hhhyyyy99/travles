@@ -46,6 +46,8 @@ export interface ItemsAdminStoreDriver {
   listLegRows(tripId: string): Promise<LegRow[]>
   dayExists(tripId: string, dayId: string): Promise<boolean>
   getItemRow(itemId: string): Promise<ItemRow | null>
+  /** Run a layout mutation atomically; the callback receives the scoped driver. */
+  withTransaction<T>(fn: (store: ItemsAdminStoreDriver) => Promise<T>): Promise<T>
   upsertItemFull(tripId: string, item: ItemFullUpsert): Promise<void>
   /** Batch-rewrite day/order columns; rows outside the trip are ignored. */
   updateItemOrders(tripId: string, orders: ItemOrderPatch[]): Promise<void>

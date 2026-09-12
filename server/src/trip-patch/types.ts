@@ -60,6 +60,18 @@ export type TripPatchRecord = {
   patch: unknown
 }
 
+/**
+ * One pending patch-explain choice. The snapshot hash binds the user's chip
+ * to the itinerary the assistant described; `consumePatchConfirmation` makes
+ * the choice single-use even when two requests race.
+ */
+export type PatchConfirmationRecord = {
+  token: string
+  snapshotHash: string
+  choices: string[]
+  createdAt: string
+}
+
 /** Upsert payload for one day row (every field server-validated). */
 export interface TripPatchDayUpsert {
   id: string
@@ -118,6 +130,12 @@ export interface TripPatchStoreDriver {
   deleteLegsForItems(tripId: string, itemIds: string[]): Promise<void>
   /** Optional schedule repair shared with day-admin writes. */
   updateDaySchedule?(tripId: string, updates: DayScheduleUpdate[]): Promise<void>
+  /** Read the unconsumed patch-explain choice for a trip, if one exists. */
+  getPatchConfirmation(tripId: string): Promise<PatchConfirmationRecord | null>
+  /** Replace the pending choice for a trip; saving a new explanation resets use. */
+  savePatchConfirmation(tripId: string, record: PatchConfirmationRecord): Promise<void>
+  /** Atomically consume a matching, unconsumed choice. */
+  consumePatchConfirmation(tripId: string, token: string, snapshotHash: string): Promise<boolean>
 }
 
 /** Machine-readable failure class shared with the other repositories. */

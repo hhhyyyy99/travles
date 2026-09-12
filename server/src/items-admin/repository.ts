@@ -197,7 +197,9 @@ export class ItemsAdminRepository {
 
     const updated: CanvasItem = { ...current, title, note, images }
     try {
-      await this.driver.upsertItemFull(tripId, itemToUpsert(updated))
+      await this.driver.withTransaction(async (transactionDriver) => {
+        await transactionDriver.upsertItemFull(tripId, itemToUpsert(updated))
+      })
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
     }
@@ -215,9 +217,11 @@ export class ItemsAdminRepository {
     const nextItems = items.filter((item) => item.id !== itemId)
     const legs = renumberAndRecompute(nextItems, [removing.dayId], previousLegs)
     try {
-      await this.driver.deleteItemRow(tripId, itemId)
-      await this.driver.updateItemOrders(tripId, orderPatchesForDay(nextItems, removing.dayId))
-      await this.driver.replaceLegs(tripId, legs)
+      await this.driver.withTransaction(async (transactionDriver) => {
+        await transactionDriver.deleteItemRow(tripId, itemId)
+        await transactionDriver.updateItemOrders(tripId, orderPatchesForDay(nextItems, removing.dayId))
+        await transactionDriver.replaceLegs(tripId, legs)
+      })
     } catch {
       return { ok: false, error: '删除失败', code: 'storage' }
     }
@@ -275,9 +279,11 @@ export class ItemsAdminRepository {
     const nextLegs = recomputeTripLegs(normalizedItems, previousLegs)
     const orders = affectedDayIds.flatMap((dayId) => orderPatchesForDay(normalizedItems, dayId))
     try {
-      if (upsertAffectedItem) await this.driver.upsertItemFull(tripId, itemToUpsert(finalItem))
-      await this.driver.updateItemOrders(tripId, orders)
-      await this.driver.replaceLegs(tripId, nextLegs)
+      await this.driver.withTransaction(async (transactionDriver) => {
+        if (upsertAffectedItem) await transactionDriver.upsertItemFull(tripId, itemToUpsert(finalItem))
+        await transactionDriver.updateItemOrders(tripId, orders)
+        await transactionDriver.replaceLegs(tripId, nextLegs)
+      })
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
     }

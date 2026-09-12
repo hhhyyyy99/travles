@@ -181,6 +181,69 @@ test('modification is explained first and only the confirmation choice applies t
   assert.deepEqual(done.assistantMessage.meta?.compromises, ['为赶场次压缩国门游览时长。'])
 })
 
+test('a first-turn confirmation cannot authorize an unreviewed patch', async () => {
+  const model = scriptedModel([{ text: '不应被调用。' }])
+  const { app, trip, patchStore } = await makeApp(model)
+  await patchStore.upsertDayRow(trip.id, { id: 'day-1', idx: 0, date: '2026-10-02', theme: '原计划' })
+
+  const response = await app.request(
+    '/api/trips/' + trip.id + '/messages',
+    jsonRequest('POST', { content: '确认方案：未经分析直接改动' }),
+  )
+  assert.equal(response.status, 409)
+  const body = (await response.json()) as { code: string; error: string }
+  assert.equal(body.code, 'confirmation_required')
+  assert.match(body.error, /没有可确认的修改方案/)
+  assert.equal(model.prompts.length, 0, 'the model is not invoked for a forged confirmation')
+  assert.equal((await patchStore.listDayRows(trip.id))[0]?.theme, '原计划')
+})
+
+test('a patch-explain confirmation is single-use and rejects replay', async () => {
+  const model = scriptedModel([
+    { toolCalls: [{ toolName: 'emit_round_meta', input: EXPLAIN_META }, { toolName: 'apply_trip_patch', input: CONFIRMED_PATCH }] },
+    { text: '请先选择一个处理方式。' },
+    { toolCalls: [{ toolName: 'emit_round_meta', input: { ...EXPLAIN_META, compromises: ['压缩一个景点。'] } }, { toolName: 'apply_trip_patch', input: CONFIRMED_PATCH }] },
+    { text: '已按确认方案完成重排。' },
+  ])
+  const { app, trip, patchStore } = await makeApp(model)
+  await patchStore.upsertDayRow(trip.id, { id: 'day-1', idx: 0, date: '2026-10-02', theme: '原计划' })
+
+  const explain = await app.request('/api/trips/' + trip.id + '/messages', jsonRequest('POST', { content: '10/7 改住海拉尔，帮我重新安排' }))
+  assert.equal(explain.status, 200)
+  await explain.text()
+
+  const confirmed = await app.request('/api/trips/' + trip.id + '/messages', jsonRequest('POST', { content: '确认方案：调整整条环线，让满洲里提前' }))
+  assert.equal(confirmed.status, 200)
+  assert.ok((await confirmed.text()).includes('applied_patch'))
+  assert.equal((await patchStore.listDayRows(trip.id))[0]?.theme, '重排后：满洲里提前，国门游览压缩')
+
+  const replay = await app.request('/api/trips/' + trip.id + '/messages', jsonRequest('POST', { content: '确认方案：调整整条环线，让满洲里提前' }))
+  assert.equal(replay.status, 409)
+  const body = (await replay.json()) as { code: string }
+  assert.equal(body.code, 'confirmation_required')
+})
+
+test('a patch-explain choice is rejected when the itinerary changed meanwhile', async () => {
+  const model = scriptedModel([
+    { toolCalls: [{ toolName: 'emit_round_meta', input: EXPLAIN_META }, { toolName: 'apply_trip_patch', input: CONFIRMED_PATCH }] },
+    { text: '请先选择一个处理方式。' },
+  ])
+  const { app, trip, patchStore } = await makeApp(model)
+  await patchStore.upsertDayRow(trip.id, { id: 'day-1', idx: 0, date: '2026-10-02', theme: '原计划' })
+
+  const explain = await app.request('/api/trips/' + trip.id + '/messages', jsonRequest('POST', { content: '10/7 改住海拉尔，帮我重新安排' }))
+  assert.equal(explain.status, 200)
+  await explain.text()
+  await patchStore.upsertDayRow(trip.id, { id: 'day-1', idx: 0, date: '2026-10-02', theme: '另一浏览器已调整' })
+
+  const stale = await app.request('/api/trips/' + trip.id + '/messages', jsonRequest('POST', { content: '确认方案：调整整条环线，让满洲里提前' }))
+  assert.equal(stale.status, 409)
+  const body = (await stale.json()) as { code: string }
+  assert.equal(body.code, 'confirmation_stale')
+  assert.equal(model.prompts.length, 2, 'stale confirmations are rejected before the model runs')
+  assert.equal((await patchStore.listDayRows(trip.id))[0]?.theme, '另一浏览器已调整')
+})
+
 test('contradictory date and day constraints are reported before a patch can apply', async () => {
   const model = scriptedModel([
     {

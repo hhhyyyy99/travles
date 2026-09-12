@@ -8,7 +8,13 @@
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
 import { TripPatchIdConflictError } from './types.js'
-import type { TripPatchDayUpsert, TripPatchItemUpsert, TripPatchLegUpsert, TripPatchStoreDriver } from './types.js'
+import type {
+  PatchConfirmationRecord,
+  TripPatchDayUpsert,
+  TripPatchItemUpsert,
+  TripPatchLegUpsert,
+  TripPatchStoreDriver,
+} from './types.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
 export class SqliteTripPatchStore implements TripPatchStoreDriver {
@@ -161,6 +167,54 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
         tripId,
       ] as SqlValue[])
     }
+  }
+
+  async getPatchConfirmation(tripId: string): Promise<PatchConfirmationRecord | null> {
+    const { rows } = await this.db.run(
+      'SELECT token, snapshot_hash, choices, created_at FROM patch_confirmations WHERE trip_id = ? AND consumed_at IS NULL',
+      [tripId],
+    )
+    const row = rows[0]
+    if (!row || typeof row.token !== 'string' || typeof row.snapshot_hash !== 'string' || typeof row.created_at !== 'string') {
+      return null
+    }
+    let choices: unknown
+    try {
+      choices = JSON.parse(typeof row.choices === 'string' ? row.choices : '')
+    } catch {
+      return null
+    }
+    if (!Array.isArray(choices)) return null
+    const normalized = choices.filter((choice): choice is string => typeof choice === 'string' && choice.trim() !== '')
+    if (normalized.length === 0) return null
+    return {
+      token: row.token,
+      snapshotHash: row.snapshot_hash,
+      choices: normalized,
+      createdAt: row.created_at,
+    }
+  }
+
+  async savePatchConfirmation(tripId: string, record: PatchConfirmationRecord): Promise<void> {
+    await this.db.run(
+      `INSERT INTO patch_confirmations (trip_id, token, snapshot_hash, choices, created_at, consumed_at)
+       VALUES (?, ?, ?, ?, ?, NULL)
+       ON CONFLICT(trip_id) DO UPDATE SET
+         token = excluded.token,
+         snapshot_hash = excluded.snapshot_hash,
+         choices = excluded.choices,
+         created_at = excluded.created_at,
+         consumed_at = NULL`,
+      [tripId, record.token, record.snapshotHash, JSON.stringify(record.choices), record.createdAt] as SqlValue[],
+    )
+  }
+
+  async consumePatchConfirmation(tripId: string, token: string, snapshotHash: string): Promise<boolean> {
+    const result = await this.db.run(
+      'UPDATE patch_confirmations SET consumed_at = ? WHERE trip_id = ? AND token = ? AND snapshot_hash = ? AND consumed_at IS NULL',
+      [new Date().toISOString(), tripId, token, snapshotHash] as SqlValue[],
+    )
+    return result.rowsAffected > 0
   }
 
   private async ownerTripId(table: 'days' | 'items' | 'legs', id: string): Promise<string | null> {
