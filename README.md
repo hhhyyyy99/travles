@@ -1,113 +1,74 @@
-# 呼伦贝尔 · 慢慢走 —— 旅行手册（React + TypeScript + Vite + Tailwind）
+# AI 行程规划工作台 · 呼伦贝尔慢慢走
 
-旅行手册的 React + TypeScript + Vite + Tailwind CSS 迁移版（原原生 HTML/CSS/JS 实现已由 tickets 01–09 完整迁移并移除）。根入口 `/` 与原 `trip.html` 入口现在都进入同一个 React 应用；`trip.html` 保留原重定向语义（携带查询参数与锚点）。
+React + TypeScript + Vite 前端与 Hono + Mastra 后端组成的行程规划应用。支持多行程管理、AI 对话规划、按天画布与列表、路线地图、便签、清单、图库和推荐收藏。原呼伦贝尔旅行手册保留为独立指南，并自动导入一份内置示例行程。
 
-## 环境要求
+## 环境与启动
 
-- Node **>= 20.19**（`engines` 已在 `package.json` 声明；开发机使用 Node 24 验证）。
-- pnpm（`packageManager` 已声明为 `pnpm@11.17.0`；可用 corepack 自动选用：
-  `corepack enable && corepack prepare pnpm@11.17.0 --activate`）。
-
-## 安装
+- 完整应用需要 Node **>= 22.13.0**（Mastra 的运行要求；单独构建前端需要 >= 20.19）。
+- 使用 `pnpm@11.17.0`，依赖版本由 `pnpm-lock.yaml` 固定。
 
 ```bash
-pnpm install --frozen-lockfile   # 按 pnpm-lock.yaml 精确安装依赖（锁文件已提交）
+pnpm install --frozen-lockfile
+pnpm dev:server   # 终端 1：后端默认监听 4310
+pnpm dev          # 终端 2：Vite 默认监听 5173，代理 /api 到后端
 ```
 
-Playwright 浏览器按宿主环境预先放置；如缺失可 `pnpm exec playwright install chromium`。测试同时支持
-`PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定现成 Chromium 可执行文件。
+打开前端后进入行程列表，选择内置示例或创建自己的行程。后端未启动时根入口显示原旅行手册。
 
-## 开发 / 启动
+| 入口 | 用途 |
+| --- | --- |
+| `/?view=trips` | 行程列表与创建、重命名、删除 |
+| `/?view=workbench&trip=<id>` | 指定行程的三栏工作台 |
+| `/?view=settings` | 服务端 AI 接入配置 |
+| `/?view=guide` | 原呼伦贝尔指南、住宿管理与打印 |
+| `/trip.html` | 兼容旧入口，重定向并保留查询参数和锚点 |
+
+## 数据与 AI 接入
+
+行程、会话、工具面板和收藏保存在同一个 SQLite 文件中；Mastra memory 与业务数据共用此库。设置 `TRIPS_DB_PATH` 可指定数据库路径，默认由后端包使用 `server/data/trips.db`。首次启动写入内置示例；进入行程列表时会幂等迁移同源旧版 localStorage 中的清单和住宿数据。原指南仍可独立使用本地存储和备份导入导出。
+
+从行程列表打开 AI 设置，可保存多套 OpenAI 兼容配置并设为默认，支持 Chat Completions 和 Responses。保存前探测连通性、流式与工具调用能力；不支持工具调用时使用 JSON 文本工具协议。API Key 和自定义请求头保存在服务端，设置页只显示是否已保存及脱敏值。切换服务商后可继续同一行程的会话。
+
+也可用服务端环境变量作初始配置：`AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL`、`AI_PROTOCOL`，自定义请求头使用 `AI_HEADERS` JSON。未配置模型时行程编辑照常可用，对话提供配置指引。详见 [后端说明](server/README.md)。
+
+AI 先澄清关键约束，再生成结构化行程；修改、智能解析、全局或单日优化先展示建议，确认后由服务端校验并写入。手动编辑会同步到画布、地图与会话；同一后端进程下的其他浏览器通过 SSE 接收更新。
+
+## 地图配置
+
+Leaflet 用于显示路线与点位；无外部凭据时仍可查看内置参考路线。
+
+- 服务端 POI 检索和实测驾车路线需要 `AMAP_WEB_KEY`（高德 Web 服务 Key；兼容 `AMAP_KEY`）。未配置或查询失败时显示待查询或参考信息。
+- 原指南的浏览器高德能力使用仓库根目录 `amap-config.js`，格式参见 `amap-config.example.js`。浏览器 Key 与 Web 服务 Key 是两种配置。公开部署可通过 `serviceHost` 指定安全代理。
+- 坐标以 WGS-84 保存，在高德边界转换为 GCJ-02。
+
+## 构建与部署
 
 ```bash
-pnpm run dev    # Vite 开发服务器，默认端口 5173 → http://localhost:5173/
-pnpm start      # 构建后以生产产物预览方式启动（vite preview，默认端口 4173）
+pnpm build
+pnpm build:server
+pnpm --filter @hailar/server start
+pnpm preview
 ```
 
-- 根入口 `/` 与 `/trip.html`（重定向到 `/`，保留 `?query` 与 `#hash`）在开发与生产预览中都可访问。
-- 生产部署：把 `dist/` 放到任意静态托管即可，不依赖源码目录或 Node 服务器。
+前端产物位于 `dist/`，后端产物位于 `server/dist/`。完整工作台需要运行后端并将同源 `/api` 请求反向代理到后端；只托管静态文件可使用原旅行手册。SSE 路由应关闭代理缓冲，并允许长连接。`SERVER_PORT` 可修改后端端口，开发与预览代理使用同一个变量。
 
-> 开发（5173）、`start`（4173）与 `preview` 是**不同端口**，属于**不同的浏览器存储源**。
-> localStorage 按源（origin）隔离：在 5173 保存的数据不会在 4173 出现——这是特性，不是数据丢失。
-> 同源刷新即可恢复；跨源迁移使用「导出或恢复住宿备份」功能（住宿弹窗内入口）。
+当前为单部署、单 Node 进程的工作台，未实现账户登录、分享或多人冲突合并。部署者应通过自己的入口访问控制保护服务端 AI 设置。SQLite 文件应放在持久卷并纳入备份。
 
-## 构建 / 检查 / 预览
+## 检查与测试
 
-| 命令 | 作用 |
-|---|---|
-| `pnpm run typecheck` | 独立严格类型检查（`tsc --noEmit`，不依赖 Vite 转译） |
-| `pnpm run build` | 先 `typecheck` 再 `vite build`；产物输出到 `dist/`（入口 `index.html` + `trip.html`） |
-| `pnpm run preview` | `vite preview`，在本地预览 `dist/` 生产产物 |
+| 命令 | 覆盖范围 |
+| --- | --- |
+| `pnpm typecheck` | 前端及后端严格类型检查 |
+| `pnpm test` | 前端 domain 单测、真实后端 HTTP/SSE 与可注入仓储测试 |
+| `pnpm test:app` | Playwright 浏览器验收，包含既有指南与工作台功能 |
+| `pnpm test:app:prod` | 构建后在 Vite preview 上运行浏览器验收 |
 
-## 高德地图配置（可选）
+首次运行浏览器测试可用 `pnpm exec playwright install chromium` 安装浏览器；也可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指向已有 Chromium。测试 mock 外部模型和地图服务，不需要真实凭据。详细约定见 [测试说明](tests/README.md)。
 
-应用默认使用 Leaflet 参考地图与预置路线，无需任何凭据即可完整工作。配置高德后可启用实时驾车路线与地点搜索：
+## 目录
 
-- 本地开发：在**仓库根目录**放置 `amap-config.js`：
-  ```js
-  window.TIBET_AMAP_CONFIG = {
-    key: '你的高德 Web 端（JS API）Key',
-    securityJsCode: '你的安全密钥',
-    mapType: 'satellite',   // 或 'standard'
-    showRoadNet: true,
-    serviceHost: ''         // 可选：安全代理，以 /_AMapService 结尾
-  };
-  ```
-  （模板见 `amap-config.example.js`；`amap-config.js` 已被 `.gitignore` 忽略，不要提交真实凭据。）
-- 生产部署：把 `amap-config.js` 复制到 `dist/` 旁边（与 `index.html` 同级），页面会自动加载。
-- 未配置 / 加载失败 / Key 无权限：自动降级为参考地图与行程信息，页面其余功能不受影响；
-  路线查询失败会给出明确状态（如「路线未更新」），不会把旧估算当作新结果。
-- 注意：这是**浏览器端配置**，不是服务器秘密；公开部署时建议走安全代理（`serviceHost`）。
-
-## 测试
-
-| 命令 | 目标 |
-|---|---|
-| `pnpm test` | 纯逻辑测试（`node --import tsx --test tests/*.test.ts`；经 tsx 直接导入 TS 源码） |
-| `pnpm run test:browser` | 新版浏览器行为验收 `tests/app/*.browser.cjs`，跑在 Vite **开发**服务器 |
-| `pnpm run test:app` | 同上（开发服务器别名） |
-| `pnpm run test:app:prod` | 先 `pnpm run build`，再以 `APP_MODE=preview` 跑同一套验收，针对 **生产预览** |
-
-浏览器测试约定：Chromium headless（`tests/helpers/vite-app.cjs`，127.0.0.1 + 空闲端口 + `--strictPort`）、
-默认 8 秒超时、abort 所有非 127.0.0.1 请求、`page.addInitScript` 注入 provider fixture / 旧格式
-localStorage 种子。高德 provider fixture（`tests/helpers/amap-stub.cjs`）只替代外部地图服务，不实现
-应用住宿逻辑；自动化验收不需要真实高德凭据。
-
-`APP_MODE` 说明：`openApp` 默认读环境变量 `APP_MODE`（`dev` | `preview`），缺省 `dev`。
-
-本机注意：Playwright 1.62.1 期望的浏览器修订与机器缓存（chromium-1228）不一致，跑浏览器测试时
-建议设置 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指向缓存的完整 Chromium：
-
-```bash
-export PLAYWRIGHT_CHROMIUM_EXECUTABLE="$HOME/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
-```
-
-## 目录结构
-
-```
-index.html              根入口（React 应用壳；经典 <script> 加载 public/vendor/coordtransform.js）
-trip.html               旧入口重定向戳（保留 ?query 与 #hash）
-vite.config.ts          构建入口 index.html + trip.html
-src/main.tsx            React 挂载（<StrictMode>）
-src/App.tsx             页面骨架（topbar、行程、清单、住宿、打印）
-src/data/               itinerary.ts / roadRoutes.ts（旧 trip-plan.js / data/road-routes.js 的类型化迁移）
-src/domain/             纯业务逻辑（accommodation/checklist/routeStates/backup/geo 等，框架无关）
-src/services/           amap.ts（类型化高德边界）、map.ts（Leaflet 生命周期）等
-src/components/         行程、住宿弹窗、搜索、管理、备份、打印等 React 组件
-src/hooks/              accommodation/routeStates/amapLive 等 React 粘合
-src/index.css           @import "tailwindcss" + @theme 设计令牌 + 全局规则 + 打印样式
-tests/helpers/          vite-app.cjs（服务/浏览器 helper）、amap-stub.cjs（高德 provider fixture）
-tests/app/              浏览器行为验收（01–08 按功能划分）
-tests/*.test.ts         纯逻辑测试（accommodation-core / amap-utils / accommodation-search / print-itinerary）
-```
-
-设计令牌（`src/index.css` `@theme`）沿用旧版 trip.css：`ink/muted/green/line/paper/red` 六个语义色、
-PingFang SC 字体栈，以及命名的 `sm: 720px / md: 1050px / lg: 1500px` 断点（不是 Tailwind 默认断点）。
-打印样式（`@page` 14mm 13mm、分页规则、隐藏交互控件）保留为纯 CSS。
-
-## 数据与兼容
-
-- 行程与住宿数据：七天六晚、住宿基地/晚次、路线状态与出发清单的存储键、格式与旧版完全兼容
-  （`hailar-slow-trip-accommodation-v1`、`hailar-slow-trip-checklist-oct7-v2`、备份格式
-  `hailar-slow-trip-accommodation`）；同源刷新即可恢复旧数据，旧版有效备份可直接导入。
-- 坐标：持久化为 WGS-84 [lat, lng]；仅在高德边界转换 GCJ-02（保留既有转换语义）。
+- `src/components/workbench/`：对话、画布/列表、地图与辅助面板。
+- `src/domain/`、`src/services/`：前端业务逻辑、API 与地图适配。
+- `server/src/`：行程、仓储、TripPatch、AI 设置、模型工具及 SSE。
+- `tests/`、`server/tests/`：前端、浏览器和后端验收。
+- `.scratch/journey-planner-page/`：规格、PRD、分票与验收记录。
