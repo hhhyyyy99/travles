@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { parseTripUpdateEvent } from '../src/domain/tripEvents'
+import { parseTripReadyEvent, parseTripUpdateEvent } from '../src/domain/tripEvents'
 
 test('parseTripUpdateEvent accepts a committed canvas update and drops malformed payloads', () => {
   const event = parseTripUpdateEvent(
@@ -23,4 +23,13 @@ test('parseTripUpdateEvent accepts a committed canvas update and drops malformed
   })
   assert.equal(parseTripUpdateEvent('{"tripId":"trip-1","kind":"canvas"}'), null)
   assert.equal(parseTripUpdateEvent('not-json'), null)
+})
+
+test('parseTripReadyEvent accepts the server reconnect baseline and drops malformed payloads', () => {
+  assert.deepEqual(parseTripReadyEvent(JSON.stringify({ tripId: 'trip-1', revision: 4 })), {
+    tripId: 'trip-1',
+    revision: 4,
+  })
+  assert.equal(parseTripReadyEvent(JSON.stringify({ tripId: 'trip-1', revision: -1 })), null)
+  assert.equal(parseTripReadyEvent('not-json'), null)
 })

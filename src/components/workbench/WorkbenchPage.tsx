@@ -97,6 +97,11 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   const [canvasSyncing, setCanvasSyncing] = useState(false)
   const [pendingMutationCount, setPendingMutationCount] = useState(0)
   const isBusy = canvasSyncing || pendingMutationCount > 0
+  // Ignore a canvas response that started before a newer read or local write.
+  // SSE invalidation is asynchronous, so an older response could otherwise
+  // overwrite an optimistic card edit after it has settled.
+  const canvasReadSeqRef = useRef(0)
+  const localWriteEpochRef = useRef(0)
 
   // Latest ready data for async handlers (avoids stale-closure rollbacks).
   const readyData = state.status === 'ready' ? state.data : null
@@ -110,8 +115,10 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     setActionError('')
     setSelectedItemId(null)
     setProposalState({ status: 'idle' })
+    const requestSeq = ++canvasReadSeqRef.current
+    const writeEpoch = localWriteEpochRef.current
     void fetchTripCanvas(tripId).then((result) => {
-      if (cancelled) return
+      if (cancelled || requestSeq !== canvasReadSeqRef.current || writeEpoch !== localWriteEpochRef.current) return
       if (result.ok) setState({ status: 'ready', data: result.data })
       else setState({ status: 'error', error: result.error })
     })
@@ -140,11 +147,25 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
       onUpdate: (event) => {
         if (!active || (event.kind !== 'canvas' && event.kind !== 'trip')) return
         setCanvasSyncing(true)
+        const requestSeq = ++canvasReadSeqRef.current
+        const writeEpoch = localWriteEpochRef.current
         void fetchTripCanvas(tripId).then((result) => {
-          if (!active) return
+          if (!active || requestSeq !== canvasReadSeqRef.current || writeEpoch !== localWriteEpochRef.current) return
           if (result.ok) setState({ status: 'ready', data: result.data })
         }).finally(() => {
-          if (active) setCanvasSyncing(false)
+          if (active && requestSeq === canvasReadSeqRef.current) setCanvasSyncing(false)
+        })
+      },
+      onReconnect: () => {
+        if (!active) return
+        setCanvasSyncing(true)
+        const requestSeq = ++canvasReadSeqRef.current
+        const writeEpoch = localWriteEpochRef.current
+        void fetchTripCanvas(tripId).then((result) => {
+          if (!active || requestSeq !== canvasReadSeqRef.current || writeEpoch !== localWriteEpochRef.current) return
+          if (result.ok) setState({ status: 'ready', data: result.data })
+        }).finally(() => {
+          if (active && requestSeq === canvasReadSeqRef.current) setCanvasSyncing(false)
         })
       },
     })
@@ -203,17 +224,23 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   // trip changed server-side, so refetch /canvas and reproject all columns.
   const handleTripPatched = () => {
     setCanvasSyncing(true)
+    const requestSeq = ++canvasReadSeqRef.current
+    const writeEpoch = localWriteEpochRef.current
     void fetchTripCanvas(tripId).then((result) => {
+      if (requestSeq !== canvasReadSeqRef.current || writeEpoch !== localWriteEpochRef.current) return
       if (result.ok) {
         setState({ status: 'ready', data: result.data })
         requestRouteRefresh()
       }
       // Refetch failures keep the current canvas — the chat card still reports
       // the write; a later event or manual refresh recovers.
-    }).finally(() => setCanvasSyncing(false))
+    }).finally(() => {
+      if (requestSeq === canvasReadSeqRef.current) setCanvasSyncing(false)
+    })
   }
 
   const withPendingMutation = async <T,>(task: () => Promise<T>): Promise<T> => {
+    localWriteEpochRef.current += 1
     setPendingMutationCount((count) => count + 1)
     try {
       return await task()
