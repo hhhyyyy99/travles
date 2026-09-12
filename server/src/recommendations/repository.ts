@@ -92,7 +92,19 @@ export class RecommendationsRepository {
     // A favorite is also a pending idea until it is scheduled. Reusing the
     // same POI key keeps the stash id stable when the user toggles repeatedly.
     const stash = await this.addStash(tripId, poi, 'favorite')
-    if (!stash.ok) return stash as RecommendationWriteResult<FavoriteItem>
+    if (!stash.ok) {
+      // A favorite without its pending row is still useful when it was already
+      // scheduled, but this branch only runs for a newly inserted favorite.
+      // Compensate the first write so a storage failure cannot create a half
+      // persisted favorite that the next snapshot would expose.
+      try {
+        await this.driver.deleteFavoriteRow(tripId, favorite.id)
+      } catch {
+        // The driver may be unavailable for the compensating write; the
+        // original storage error remains the actionable result.
+      }
+      return stash as RecommendationWriteResult<FavoriteItem>
+    }
     return { ok: true, value: favorite }
   }
 
@@ -105,7 +117,24 @@ export class RecommendationsRepository {
       if (!removed) return { ok: false, error: '收藏点位不存在', code: 'not_found' }
       if (favorite) {
         const stash = current.stash.find((entry) => poiKey(entry.poi) === poiKey(favorite!.poi))
-        if (stash?.origin === 'favorite') await this.driver.deleteStashRow(tripId, stash.id)
+        if (stash?.origin === 'favorite') {
+          try {
+            await this.driver.deleteStashRow(tripId, stash.id)
+          } catch {
+            // Restore the favorite when its companion pending row could not be
+            // removed, keeping the two records consistent for a retry.
+            try {
+              await this.driver.insertFavoriteRow(tripId, {
+                id: favorite.id,
+                poi: JSON.stringify(favorite.poi),
+                createdAt: favorite.createdAt,
+              })
+            } catch {
+              // Best effort; the original storage error is still returned.
+            }
+            return { ok: false, error: '删除失败', code: 'storage' }
+          }
+        }
       }
       return { ok: true, value: null }
     } catch {
@@ -148,7 +177,7 @@ export function normalizePoi(value: unknown): RecommendationPoi | null {
         .slice(0, 12)
     : []
   return {
-    id: text(record.id, 120) || text(record.amapId, 120) || `poi-${name}`,
+    id: text(record.id, 120) || text(record.amapId, 120) || `poi-${name}-${lat.toFixed(5)}-${lng.toFixed(5)}`,
     amapId: text(record.amapId, 120),
     name,
     lat,

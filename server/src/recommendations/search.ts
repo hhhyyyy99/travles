@@ -1,4 +1,5 @@
 import type { PoiSearch, RecommendationPoi } from './types.js'
+import { gcj02ToWgs84LngLat } from './geo.js'
 
 /**
  * Server-side `search_poi` adapter. It talks to the AMap Web Service when a
@@ -10,7 +11,7 @@ export const searchAmapPoi: PoiSearch = async ({ query, region, type }) => {
   if (!key) return []
   const params = new URLSearchParams({
     key,
-    keywords: query || type || '景点',
+    keywords: query || typeKeyword(type) || '景点',
     offset: '20',
     page: '1',
     extensions: 'all',
@@ -29,13 +30,16 @@ function normalizeAmapPoi(poi: Record<string, unknown>, requestedType?: Recommen
   const name = text(poi.name)
   const location = text(poi.location)
   const coordinateParts = location.split(',')
-  const lng = Number(coordinateParts[0])
-  const lat = Number(coordinateParts[1])
-  if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  const sourceLng = Number(coordinateParts[0])
+  const sourceLat = Number(coordinateParts[1])
+  if (!name || !Number.isFinite(sourceLat) || !Number.isFinite(sourceLng)) return null
+  const [lng, lat] = gcj02ToWgs84LngLat(sourceLng, sourceLat)
   const category = text(poi.type)
   const type = requestedType ?? classifyType(category)
+  const business = poi.biz_ext !== null && typeof poi.biz_ext === 'object' ? (poi.biz_ext as Record<string, unknown>) : {}
+  const rating = finite(poi.rating) || finite(business.rating)
   return {
-    id: text(poi.id) || `amap-${name}-${location}`,
+    id: text(poi.id) || `amap-${name}-${sourceLng},${sourceLat}`,
     amapId: text(poi.id),
     name,
     lat,
@@ -43,11 +47,31 @@ function normalizeAmapPoi(poi: Record<string, unknown>, requestedType?: Recommen
     category,
     type,
     region: text(poi.adname) || text(poi.cityname) || text(poi.pname),
-    rating: finite(poi.rating),
+    rating,
     introSummary: text(poi.businessarea) || text(poi.address),
     address: text(poi.address),
-    images: [],
+    images: extractImages(poi.photos),
   }
+}
+
+function extractImages(value: unknown): Array<{ url: string; caption: string }> {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((entry) => {
+      if (entry === null || typeof entry !== 'object') return null
+      const record = entry as Record<string, unknown>
+      const url = text(record.url)
+      return url ? { url, caption: text(record.title) } : null
+    })
+    .filter((entry): entry is { url: string; caption: string } => entry !== null)
+    .slice(0, 12)
+}
+
+function typeKeyword(type: RecommendationPoi['type'] | null | undefined): string {
+  if (type === 'stay') return '酒店 民宿 住宿'
+  if (type === 'food') return '餐饮 美食'
+  if (type === 'attraction') return '景点 风景区'
+  return ''
 }
 
 function classifyType(category: string): RecommendationPoi['type'] {

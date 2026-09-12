@@ -12,7 +12,8 @@ import { createEmitRoundMetaTool } from './chat/round-meta.js'
 import { APPLY_TRIP_PATCH_TOOL_NAME, createApplyTripPatchTool } from './trip-patch/tool.js'
 import type { TripPatchStoreDriver } from './trip-patch/types.js'
 import { createSearchPoiTool } from './recommendations/tool.js'
-import type { PoiSearch } from './recommendations/types.js'
+import { createRouteLegsTool, createSearchStayReferenceTool } from './recommendations/tool.js'
+import type { PoiSearch, RouteLegSearch } from './recommendations/types.js'
 
 /**
  * The backend's Mastra wiring (tickets 06/07).
@@ -58,6 +59,10 @@ const PLANNER_INSTRUCTIONS = [
   '2. 输出正式计划正文：先逐日概览（每天一小段：日期 + 主题 + 当日亮点与路线走向），再给"关键提醒"3-6 条（预约限制、证件要求、天气穿衣、返程缓冲等）。',
   '3. 调用 apply_trip_patch 工具，把完整计划作为结构化 diff 一次写入行程（新建所有天与卡片）。',
   '4. 未确认的槽位（如还没定下来的酒店）：卡片 pending 设为 true，并在正文中显式标注"待定"。正文里的"待定"必须与 patch 中的 pending 卡片一致，不要编造未确认的细节。',
+  '',
+  '## 推荐、住宿与路线工具',
+  '需要发现地图点位时调用 search_poi；需要回答酒店/民宿参考或用户点击住宿追问 chip 时调用 search_stay_reference。两者只使用工具返回的 POI，不要编造坐标。',
+  '需要计算相邻卡片的驾车距离、时长或路线时调用 route_legs。返回 pending 表示路线服务不可用或坐标不足；pending/estimate 不得写成已核实的实测数据。',
   '',
   '## qa 回合',
   '直接、简洁地回答用户关于行程、目的地、路况、住宿的问题，必要时用短列表组织信息。',
@@ -107,6 +112,8 @@ export type CreateMastraOptions = {
   resolveTripPatchStore?: () => Promise<TripPatchStoreDriver>
   /** Shared `search_poi` provider used by both HTTP and Mastra tool paths. */
   searchPoi?: PoiSearch
+  /** Shared driving-route provider used by the `route_legs` tool. */
+  routeLegs?: RouteLegSearch
 }
 
 /**
@@ -149,6 +156,8 @@ export function createMastra(options: CreateMastraOptions = {}): Mastra {
         resolveStore: options.resolveTripPatchStore,
       }),
       search_poi: createSearchPoiTool(options.searchPoi),
+      route_legs: createRouteLegsTool(options.routeLegs),
+      search_stay_reference: createSearchStayReferenceTool(options.searchPoi),
     },
   })
 

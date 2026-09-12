@@ -3,12 +3,16 @@ import type { AppEnv } from '../app.js'
 import type { TripRepository } from '../trips/repository.js'
 import { readJsonBody } from '../http/body.js'
 import { normalizePoi, RecommendationsRepository } from './repository.js'
-import type { PoiSearch, RecommendationPoi } from './types.js'
+import { refreshTripLegs } from './route.js'
+import type { ItemsAdminStoreDriver } from '../items-admin/types.js'
+import type { PoiSearch, RecommendationPoi, RouteLegSearch } from './types.js'
 
 export type RecommendationsRouteOptions = {
   tripRepository: TripRepository
   resolveStore: () => Promise<import('./types.js').RecommendationsStoreDriver>
   searchPoi: PoiSearch
+  routeLegs?: RouteLegSearch
+  resolveItemsStore?: () => Promise<ItemsAdminStoreDriver>
 }
 
 /** Mounts the ticket 15 POI recommendation, stash, and favorite APIs. */
@@ -51,6 +55,19 @@ export function mountRecommendationsRoutes(app: Hono<AppEnv>, options: Recommend
       return c.json({ recommendations: [], pois: [], error: '推荐点位暂不可用' }, 200)
     }
   })
+
+  // Item-admin mutations keep the quick local estimate. This explicit refresh
+  // path upgrades those rows when a real routing provider is configured; a
+  // pending provider response leaves the existing numbers untouched.
+  if (options.resolveItemsStore) {
+    app.post('/api/trips/:id/legs/refresh', async (c) => {
+      const tripId = c.req.param('id')
+      if (await options.tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
+      const result = await refreshTripLegs(await options.resolveItemsStore!(), tripId, options.routeLegs)
+      if (!result.ok) return c.json({ error: result.error }, 500)
+      return c.json({ legs: result.legs })
+    })
+  }
 
   app.post('/api/trips/:id/stash', async (c) => {
     return writeWithTrip(c, options, async (repo, tripId, body) => {
@@ -107,12 +124,14 @@ function resultResponse(c: Context<AppEnv>, result: { ok: false; error: string; 
 function uniquePois(snapshot: { stash: Array<{ poi: RecommendationPoi }>; favorites: Array<{ poi: RecommendationPoi }> }, extra: RecommendationPoi[] = []): RecommendationPoi[] {
   const values = [...extra, ...snapshot.stash.map((entry) => entry.poi), ...snapshot.favorites.map((entry) => entry.poi)]
   const seen = new Set<string>()
-  return values.filter((poi) => {
+  const normalizedPois: RecommendationPoi[] = []
+  for (const poi of values) {
     const normalized = normalizePoi(poi)
-    if (!normalized) return false
+    if (!normalized) continue
     const key = normalized.amapId || normalized.id || `${normalized.name}|${normalized.lat}|${normalized.lng}`
-    if (seen.has(key)) return false
+    if (seen.has(key)) continue
     seen.add(key)
-    return true
-  })
+    normalizedPois.push(normalized)
+  }
+  return normalizedPois
 }

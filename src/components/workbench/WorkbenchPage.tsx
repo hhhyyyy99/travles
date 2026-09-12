@@ -206,7 +206,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     patchLegs(result.data.legs)
   }
 
-  const handleCreateCard = async (input: WorkbenchItemCreateInput): Promise<boolean> => {
+  const handleCreateCard = async (input: WorkbenchItemCreateInput): Promise<WorkbenchItem | null> => {
     const snapshot = dataRef.current
     setAddCardDay(null)
     const temp: WorkbenchItem = {
@@ -225,11 +225,11 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     const result = await createWorkbenchItem(tripId, input)
     if (!result.ok) {
       rollback(snapshot, result.error)
-      return false
+      return null
     }
     patchDays((days) => applyItemReplace(days, temp.id, result.data.item))
     patchLegs(result.data.legs)
-    return true
+    return result.data.item
   }
 
   /** Schedule a recommendation/stash item through the same card API as manual adds. */
@@ -237,10 +237,23 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     const targetDayId = dayId ?? dataRef.current?.days[0]?.id
     if (!targetDayId) return false
     const created = await handleCreateCard(recommendationCardInput(poi, targetDayId, index))
-    if (!created || !stashId) return created
+    if (!created || !stashId) return created !== null
     const removed = await removeFromStash(tripId, stashId)
     if (!removed.ok) {
       setActionError(removed.error)
+      // The card write already succeeded, but the stash delete did not. Try
+      // to undo the card so a retry cannot create a duplicate scheduled item.
+      const deleted = await deleteWorkbenchItem(tripId, created.id)
+      if (deleted.ok) {
+        patchDays((days) => applyItemRemove(days, created.id))
+        patchLegs(deleted.data.legs)
+      } else {
+        // If the compensating delete also failed, reload the authoritative
+        // canvas so the optimistic view cannot diverge from the server.
+        void fetchTripCanvas(tripId).then((result) => {
+          if (result.ok) setState({ status: 'ready', data: result.data })
+        })
+      }
       return false
     }
     return true
