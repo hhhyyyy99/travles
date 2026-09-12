@@ -228,6 +228,7 @@ test('reopening a failed date-pending draft restores its persisted sentence for 
 
 test('a failed history read blocks automatic intake until the user retries', async () => {
   let historyReads = 0
+  let historyUnavailable = true
   let chatCalls = 0
   const retryTrip = {
     ...trip,
@@ -245,7 +246,7 @@ test('a failed history read blocks automatic intake until the user retries', asy
         if (path.endsWith('/canvas')) return json(route, 200, { trip: retryTrip, days: [], legs: [] })
         if (path.endsWith('/messages') && request.method() === 'GET') {
           historyReads += 1
-          return historyReads < 3 ? json(route, 503, { error: '对话历史暂不可用' }) : json(route, 200, { messages: [] })
+          return historyUnavailable ? json(route, 503, { error: '对话历史暂不可用' }) : json(route, 200, { messages: [] })
         }
         if (path.endsWith('/messages') && request.method() === 'POST') {
           chatCalls += 1
@@ -270,6 +271,7 @@ test('a failed history read blocks automatic intake until the user retries', asy
   try {
     await page.locator('[data-action="retry-chat-history"]').waitFor()
     assert.equal(chatCalls, 0, 'a failed history read must not send the original sentence')
+    historyUnavailable = false
     await page.locator('[data-action="retry-chat-history"]').click()
     await page.locator('[data-chat-role="user"]').filter({ hasText: retryTrip.planningContext.originalSentence }).waitFor()
     assert.equal(chatCalls, 1, 'the sentence is sent only after a successful empty-history retry')
