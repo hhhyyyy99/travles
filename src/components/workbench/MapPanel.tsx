@@ -58,6 +58,14 @@ import {
   renderWorkbenchRoutes,
   type WorkbenchRouteDay,
 } from '../../services/workbenchMap'
+import { subscribeTripEvents } from '../../domain/tripEvents'
+
+const RECOMMENDATION_EVENT_REASONS = new Set([
+  'stash_added',
+  'stash_deleted',
+  'favorite_added',
+  'favorite_deleted',
+])
 
 export interface MapPanelProps {
   tripId: string
@@ -165,6 +173,24 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
     refreshRecommendations()
     // A map panel is mounted once per trip; the callback intentionally uses
     // the current trip id only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripId])
+
+  useEffect(() => {
+    let active = true
+    const unsubscribe = subscribeTripEvents(tripId, {
+      onUpdate: (event) => {
+        if (active && event.kind === 'canvas' && RECOMMENDATION_EVENT_REASONS.has(event.reason)) {
+          refreshRecommendations()
+        }
+      },
+    })
+    return () => {
+      active = false
+      unsubscribe()
+    }
+    // The subscription is trip-scoped; refreshRecommendations reads current
+    // recommendation state through its ref and stable React state setters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tripId])
 

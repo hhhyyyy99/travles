@@ -296,6 +296,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     }
   }
 
+  // Mount after resolving the repository so the long-lived stream can reject
+  // unknown trips before subscribing to the process-local event bus.
+  registerTripEventRoutes(app, { tripRepository, events: tripEvents })
+
   mountAiProviderRoutes(app, {
     repository: await resolveAiProviderRepository(),
     probe: options.aiProviderProbe,
@@ -466,6 +470,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     resolveStore: resolveRecommendationsStore,
     searchPoi: options.searchPoi ?? searchAmapPoi,
     routeLegs: options.routeLegs ?? routeAmapLeg,
+    onTripUpdated: (tripId, reason) => notifyTrip(tripId, 'canvas', reason),
     resolveItemsStore: async () => {
       if (!resolveItemsAdminStoreForRecommendations) throw new Error('路线存储尚未初始化')
       return resolveItemsAdminStoreForRecommendations()

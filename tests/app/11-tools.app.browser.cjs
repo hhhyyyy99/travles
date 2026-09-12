@@ -301,6 +301,7 @@ test('checklist: migrated legacy items are visible, toggleable, and the state pe
 
     // The six migrated legacy items are all listed.
     const items = page.locator('[data-checklist-id^="legacy-checklist-"]')
+    await items.nth(5).waitFor()
     assert.equal(await items.count(), 6)
     assert.equal(await items.nth(0).getAttribute('data-checklist-done'), 'true')
     assert.equal(await items.nth(1).getAttribute('data-checklist-done'), null)

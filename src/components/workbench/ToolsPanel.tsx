@@ -34,8 +34,24 @@ import {
 } from '../../domain/tools'
 import type { ToolPanelId } from '../../domain/workbenchTools'
 import type { WorkbenchDay } from '../../domain/workbench'
+import { subscribeTripEvents } from '../../domain/tripEvents'
 
 const PANEL_TITLES: Record<ToolPanelId, string> = { notes: '便签', checklist: '清单', gallery: '图库' }
+const PANEL_EVENT_REASONS: Record<ToolPanelId, ReadonlySet<string>> = {
+  notes: new Set(['note_created', 'note_updated', 'note_deleted']),
+  checklist: new Set(['checklist_created', 'checklist_updated', 'checklist_deleted']),
+  gallery: new Set(['gallery_added', 'gallery_deleted']),
+}
+
+function isPanelUpdate(panel: ToolPanelId, event: { kind: string; reason: string }): boolean {
+  return event.kind === 'canvas' && PANEL_EVENT_REASONS[panel].has(event.reason)
+}
+
+function mergeById<T extends { id: string }>(items: T[], next: T): T[] {
+  const index = items.findIndex((item) => item.id === next.id)
+  if (index < 0) return [...items, next]
+  return items.map((item, itemIndex) => (itemIndex === index ? next : item))
+}
 
 export default function ToolsPanel({
   tripId,
@@ -80,37 +96,77 @@ export default function ToolsPanel({
 
 function NotesPanel({ tripId }: { tripId: string }) {
   const [notes, setNotes] = useState<NoteItem[]>([])
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const dirtyNoteIds = useRef(new Set<string>())
   const [status, setStatus] = useState<{ kind: 'loading' | 'error' | 'ready'; message?: string }>({
     kind: 'loading',
   })
 
   useEffect(() => {
-    let cancelled = false
-    void fetchNotes(tripId).then((result) => {
-      if (cancelled) return
-      if (result.ok) {
-        setNotes(result.data)
-        setStatus({ kind: 'ready' })
-      } else {
-        setStatus({ kind: 'error', message: result.error })
-      }
+    let active = true
+    let requestId = 0
+    const reload = (): void => {
+      const currentRequestId = ++requestId
+      void fetchNotes(tripId).then((result) => {
+        if (!active || currentRequestId !== requestId) return
+        if (result.ok) {
+          setNotes(result.data)
+          // Keep only drafts the traveler is actively editing. Clean editors
+          // derive their value from the refreshed server snapshot below.
+          setDrafts((current) => {
+            const next = { ...current }
+            for (const id of Object.keys(next)) {
+              if (!dirtyNoteIds.current.has(id)) delete next[id]
+            }
+            return next
+          })
+          setStatus({ kind: 'ready' })
+        } else {
+          setStatus({ kind: 'error', message: result.error })
+        }
+      })
+    }
+
+    reload()
+    const unsubscribe = subscribeTripEvents(tripId, {
+      onUpdate: (event) => {
+        if (isPanelUpdate('notes', event)) reload()
+      },
     })
     return () => {
-      cancelled = true
+      active = false
+      requestId += 1
+      unsubscribe()
     }
   }, [tripId])
 
   const addNote = async () => {
     const result = await createNote(tripId)
-    if (result.ok) setNotes((prev) => [...prev, result.data])
+    if (result.ok) setNotes((prev) => mergeById(prev, result.data))
     else setStatus({ kind: 'error', message: result.error })
   }
 
   const saveNote = async (note: NoteItem, content: string) => {
-    if (content === note.content) return
+    if (content === note.content) {
+      dirtyNoteIds.current.delete(note.id)
+      setDrafts((current) => {
+        if (!(note.id in current)) return current
+        const next = { ...current }
+        delete next[note.id]
+        return next
+      })
+      return
+    }
     const result = await updateNote(tripId, note.id, content)
     if (result.ok) {
-      setNotes((prev) => prev.map((entry) => (entry.id === note.id ? result.data : entry)))
+      dirtyNoteIds.current.delete(note.id)
+      setDrafts((current) => {
+        if (!(note.id in current)) return current
+        const next = { ...current }
+        delete next[note.id]
+        return next
+      })
+      setNotes((prev) => mergeById(prev, result.data))
     } else {
       setStatus({ kind: 'error', message: result.error })
     }
@@ -145,9 +201,13 @@ function NotesPanel({ tripId }: { tripId: string }) {
           >
             <textarea
               data-note-editor
-              defaultValue={note.content}
+              value={drafts[note.id] ?? note.content}
               placeholder="写点什么…"
               rows={3}
+              onChange={(event) => {
+                dirtyNoteIds.current.add(note.id)
+                setDrafts((current) => ({ ...current, [note.id]: event.target.value }))
+              }}
               onBlur={(event) => void saveNote(note, event.target.value)}
               className="w-full resize-y bg-transparent text-[12px] leading-[1.6] text-ink outline-none"
             />
@@ -188,18 +248,31 @@ function ChecklistPanel({ tripId }: { tripId: string }) {
   })
 
   useEffect(() => {
-    let cancelled = false
-    void fetchChecklist(tripId).then((result) => {
-      if (cancelled) return
-      if (result.ok) {
-        setItems(result.data)
-        setStatus({ kind: 'ready' })
-      } else {
-        setStatus({ kind: 'error', message: result.error })
-      }
+    let active = true
+    let requestId = 0
+    const reload = (): void => {
+      const currentRequestId = ++requestId
+      void fetchChecklist(tripId).then((result) => {
+        if (!active || currentRequestId !== requestId) return
+        if (result.ok) {
+          setItems(result.data)
+          setStatus({ kind: 'ready' })
+        } else {
+          setStatus({ kind: 'error', message: result.error })
+        }
+      })
+    }
+
+    reload()
+    const unsubscribe = subscribeTripEvents(tripId, {
+      onUpdate: (event) => {
+        if (isPanelUpdate('checklist', event)) reload()
+      },
     })
     return () => {
-      cancelled = true
+      active = false
+      requestId += 1
+      unsubscribe()
     }
   }, [tripId])
 
@@ -208,7 +281,7 @@ function ChecklistPanel({ tripId }: { tripId: string }) {
     if (!content) return
     const result = await createChecklistEntry(tripId, content)
     if (result.ok) {
-      setItems((prev) => [...prev, result.data])
+      setItems((prev) => mergeById(prev, result.data))
       setDraft('')
     } else {
       setStatus({ kind: 'error', message: result.error })
@@ -220,9 +293,11 @@ function ChecklistPanel({ tripId }: { tripId: string }) {
     setItems((prev) => prev.map((entry) => (entry.id === item.id ? { ...entry, done: !entry.done } : entry)))
     const result = await toggleChecklistEntry(tripId, item.id, !item.done)
     if (result.ok) {
-      setItems((prev) => prev.map((entry) => (entry.id === item.id ? result.data : entry)))
+      setItems((prev) => mergeById(prev, result.data))
     } else {
-      setItems((prev) => prev.map((entry) => (entry.id === item.id ? item : entry)))
+      // If a remote refresh already supplied a newer value, preserve it. The
+      // rollback only applies while the optimistic value is still present.
+      setItems((prev) => prev.map((entry) => (entry.id === item.id && entry.done === !item.done ? item : entry)))
       setStatus({ kind: 'error', message: result.error })
     }
   }
@@ -317,18 +392,31 @@ function GalleryPanel({ tripId, days }: { tripId: string; days: WorkbenchDay[] }
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    let cancelled = false
-    void fetchGallery(tripId).then((result) => {
-      if (cancelled) return
-      if (result.ok) {
-        setUploads(result.data)
-        setStatus({ kind: 'ready' })
-      } else {
-        setStatus({ kind: 'error', message: result.error })
-      }
+    let active = true
+    let requestId = 0
+    const reload = (): void => {
+      const currentRequestId = ++requestId
+      void fetchGallery(tripId).then((result) => {
+        if (!active || currentRequestId !== requestId) return
+        if (result.ok) {
+          setUploads(result.data)
+          setStatus({ kind: 'ready' })
+        } else {
+          setStatus({ kind: 'error', message: result.error })
+        }
+      })
+    }
+
+    reload()
+    const unsubscribe = subscribeTripEvents(tripId, {
+      onUpdate: (event) => {
+        if (isPanelUpdate('gallery', event)) reload()
+      },
     })
     return () => {
-      cancelled = true
+      active = false
+      requestId += 1
+      unsubscribe()
     }
   }, [tripId])
 
@@ -345,7 +433,7 @@ function GalleryPanel({ tripId, days }: { tripId: string; days: WorkbenchDay[] }
       try {
         const dataUrl = await fileToDataUrl(file)
         const result = await addGalleryImage(tripId, dataUrl, file.name)
-        if (result.ok) setUploads((prev) => [...prev, result.data])
+        if (result.ok) setUploads((prev) => mergeById(prev, result.data))
         else setStatus({ kind: 'error', message: result.error })
       } catch {
         setStatus({ kind: 'error', message: '读取图片失败' })

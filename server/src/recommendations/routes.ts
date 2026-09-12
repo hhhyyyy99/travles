@@ -13,6 +13,8 @@ export type RecommendationsRouteOptions = {
   searchPoi: PoiSearch
   routeLegs?: RouteLegSearch
   resolveItemsStore?: () => Promise<ItemsAdminStoreDriver>
+  /** Broadcast successful stash/favorite writes to open workbenches. */
+  onTripUpdated?: (tripId: string, reason: string) => Promise<void> | void
 }
 
 /** Mounts the ticket 15 POI recommendation, stash, and favorite APIs. */
@@ -73,6 +75,7 @@ export function mountRecommendationsRoutes(app: Hono<AppEnv>, options: Recommend
     return writeWithTrip(c, options, async (repo, tripId, body) => {
       const result = await repo.addStash(tripId, body.poi, body.origin)
       if (!result.ok) return resultResponse(c, result)
+      await notifyTripUpdated(options, tripId, 'stash_added')
       return c.json({ item: result.value }, 201)
     })
   })
@@ -81,6 +84,7 @@ export function mountRecommendationsRoutes(app: Hono<AppEnv>, options: Recommend
     return writeWithTrip(c, options, async (repo, tripId) => {
       const result = await repo.removeStash(tripId, c.req.param('stashId'))
       if (!result.ok) return resultResponse(c, result)
+      await notifyTripUpdated(options, tripId, 'stash_deleted')
       return c.json({ ok: true })
     })
   })
@@ -89,6 +93,7 @@ export function mountRecommendationsRoutes(app: Hono<AppEnv>, options: Recommend
     return writeWithTrip(c, options, async (repo, tripId, body) => {
       const result = await repo.addFavorite(tripId, body.poi)
       if (!result.ok) return resultResponse(c, result)
+      await notifyTripUpdated(options, tripId, 'favorite_added')
       return c.json({ favorite: result.value }, 201)
     })
   })
@@ -97,9 +102,19 @@ export function mountRecommendationsRoutes(app: Hono<AppEnv>, options: Recommend
     return writeWithTrip(c, options, async (repo, tripId) => {
       const result = await repo.removeFavorite(tripId, c.req.param('favoriteId'))
       if (!result.ok) return resultResponse(c, result)
+      await notifyTripUpdated(options, tripId, 'favorite_deleted')
       return c.json({ ok: true })
     })
   })
+}
+
+async function notifyTripUpdated(options: RecommendationsRouteOptions, tripId: string, reason: string): Promise<void> {
+  try {
+    await options.onTripUpdated?.(tripId, reason)
+  } catch {
+    // A notification subscriber must never turn a committed write into a
+    // failed response. The next snapshot will still expose the saved row.
+  }
 }
 
 async function writeWithTrip(
