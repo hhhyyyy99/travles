@@ -69,8 +69,9 @@ export async function searchRecommendations(
     return { ok: false, error: REQUEST_ERROR }
   }
   if (!response.ok) return { ok: false, error: await responseError(response) }
-  const payload = (await response.json().catch(() => null)) as { recommendations?: unknown } | null
+  const payload = (await response.json().catch(() => null)) as { recommendations?: unknown; error?: unknown } | null
   if (!payload || !Array.isArray(payload.recommendations)) return { ok: false, error: '服务器返回的推荐数据无法解析。' }
+  if (typeof payload.error === 'string' && payload.error) return { ok: false, error: payload.error }
   return {
     ok: true,
     data: payload.recommendations.map(normalizePoi).filter((poi): poi is RecommendationPoi => poi !== null),
@@ -215,7 +216,12 @@ function normalizePoi(value: unknown): RecommendationPoi | null {
         .filter((entry): entry is { url: string; caption: string } => entry !== null)
     : []
   return {
-    id: typeof record.id === 'string' ? record.id : typeof record.amapId === 'string' ? record.amapId : `poi-${name}`,
+    id:
+      typeof record.id === 'string' && record.id
+        ? record.id
+        : typeof record.amapId === 'string' && record.amapId
+          ? record.amapId
+          : `poi-${name}-${lat.toFixed(5)}-${lng.toFixed(5)}`,
     amapId: typeof record.amapId === 'string' ? record.amapId : '',
     name,
     lat,
@@ -282,5 +288,9 @@ function finite(value: unknown): number {
 // Keep this import in the module's public surface for callers that already
 // have a canvas item and want to check whether a recommendation is scheduled.
 export function recommendationMatchesItem(poi: RecommendationPoi, item: WorkbenchItem): boolean {
-  return Boolean(item.poi && (item.poi.amapId === poi.amapId || (item.poi.name === poi.name && item.poi.lat === poi.lat && item.poi.lng === poi.lng)))
+  return Boolean(
+    item.poi &&
+      (((item.poi.amapId && poi.amapId && item.poi.amapId === poi.amapId) ||
+        (item.poi.name === poi.name && item.poi.lat === poi.lat && item.poi.lng === poi.lng))),
+  )
 }

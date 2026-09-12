@@ -138,12 +138,17 @@ export function mapPoiRef(value: unknown): PoiRef | null {
   const record = parsed as Record<string, unknown>
   const name = asText(record.name)
   if (!name) return null
-  const location = (record.location ?? {}) as Record<string, unknown>
+  const location = record.location !== null && typeof record.location === 'object'
+    ? (record.location as Record<string, unknown>)
+    : {}
   return {
     amapId: asText(record.amapId),
     name,
-    lat: asFiniteNumber(location.lat),
-    lng: asFiniteNumber(location.lng),
+    // Workbench writes the canonical flat PoiRef shape. Keep accepting the
+    // older nested `location` form so cards created before ticket 09 remain
+    // readable after a recommendation is scheduled.
+    lat: asFiniteNumber(location.lat ?? record.lat),
+    lng: asFiniteNumber(location.lng ?? record.lng),
     category: asText(record.category),
     rating: asFiniteNumber(record.rating),
     introSummary: asText(record.introSummary),

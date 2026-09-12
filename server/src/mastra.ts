@@ -18,7 +18,8 @@ import {
 } from './ai-proposals/tool.js'
 import type { TripPatchStoreDriver } from './trip-patch/types.js'
 import { createSearchPoiTool } from './recommendations/tool.js'
-import type { PoiSearch } from './recommendations/types.js'
+import { createRouteLegsTool, createSearchStayReferenceTool } from './recommendations/tool.js'
+import type { PoiSearch, RouteLegSearch } from './recommendations/types.js'
 
 /**
  * The backend's Mastra wiring (tickets 06/07/12).
@@ -69,6 +70,10 @@ const PLANNER_INSTRUCTIONS = [
   '当用户修改既有行程（换酒店、改航班、改变出行日期、调整某天节奏）时，先调用 emit_round_meta，round 填 patch-explain，并在 impacts/conflicts/warnings 中结构化列出影响日期、冲突和边界警示。正文先复述识别到的变更，再给出解决权衡；chips 的 value 必须以「确认方案：」开头。这个回合绝对不要调用 apply_trip_patch，等待用户选择方案。',
   '只有用户选择确认方案后才可调用 apply_trip_patch。确认后的回复必须逐日汇报新日期、安排和住宿，并在 compromises 中以及正文中说明为满足约束做出的妥协。',
   '如果出现相互矛盾的起止日期/天数/抵离时间，先指出矛盾并给出修正选项，不能静默取其中一个。跨天驾驶超过 6 小时时，明确建议拆成两段，增加中途休息或过夜点；同时在 warnings 中标记 kind 为 long-drive。',
+  '',
+  '## 推荐、住宿与路线工具',
+  '需要发现地图点位时调用 search_poi；需要回答酒店/民宿参考或用户点击住宿追问 chip 时调用 search_stay_reference。两者只使用工具返回的 POI，不要编造坐标。',
+  '需要计算相邻卡片的驾车距离、时长或路线时调用 route_legs。返回 pending 表示路线服务不可用或坐标不足；pending/estimate 不得写成已核实的实测数据。',
   '',
   '## qa 回合',
   '直接、简洁地回答用户关于行程、目的地、路况、住宿的问题，必要时用短列表组织信息。',
@@ -128,6 +133,8 @@ export type CreateMastraOptions = {
   resolveTripPatchStore?: () => Promise<TripPatchStoreDriver>
   /** Shared `search_poi` provider used by both HTTP and Mastra tool paths. */
   searchPoi?: PoiSearch
+  /** Shared driving-route provider used by the `route_legs` tool. */
+  routeLegs?: RouteLegSearch
 }
 
 /**
@@ -175,6 +182,8 @@ export function createMastra(options: CreateMastraOptions = {}): Mastra {
         resolveStore: options.resolveTripPatchStore,
       }),
       search_poi: createSearchPoiTool(options.searchPoi),
+      route_legs: createRouteLegsTool(options.routeLegs),
+      search_stay_reference: createSearchStayReferenceTool(options.searchPoi),
     },
   })
 

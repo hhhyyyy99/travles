@@ -5,9 +5,12 @@ import {
   filterRecommendations,
   recommendationCardInput,
   recommendationFilterCounts,
+  recommendationMatchesItem,
   recommendationTypeLabel,
+  searchRecommendations,
   type RecommendationPoi,
 } from '../src/domain/recommendations'
+import type { WorkbenchItem } from '../src/domain/workbench'
 
 const pois: RecommendationPoi[] = [
   {
@@ -39,4 +42,31 @@ test('a recommendation becomes a normal POI card request for an existing day', (
     poi: { amapId: 'a', name: '湿地', lat: 50, lng: 120, category: '景点', rating: 4.8, introSummary: '' },
     images: [],
   })
+})
+
+test('recommendation search surfaces a provider error returned with HTTP 200', async () => {
+  const result = await searchRecommendations('trip-1', '湿地', {}, async () =>
+    new Response(JSON.stringify({ recommendations: [], error: '推荐点位暂不可用' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  )
+  assert.deepEqual(result, { ok: false, error: '推荐点位暂不可用' })
+})
+
+test('recommendation identity requires a non-empty provider id before matching', () => {
+  const recommendation: RecommendationPoi = { ...pois[0]!, id: '', amapId: '' }
+  const item: WorkbenchItem = {
+    id: 'item-1',
+    dayId: 'day-1',
+    order: 0,
+    type: 'attraction',
+    title: '另一个点位',
+    note: '',
+    poi: { ...recommendation, name: '另一个点位', lat: 51, lng: 121 },
+    images: [],
+    pending: false,
+  }
+  assert.equal(recommendationMatchesItem(recommendation, item), false)
+  assert.equal(recommendationMatchesItem(recommendation, { ...item, poi: recommendation }), true)
 })

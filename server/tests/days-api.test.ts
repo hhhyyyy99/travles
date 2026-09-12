@@ -15,7 +15,7 @@ import { MemoryTripStoreDriver } from '../src/trips/driver-memory.js'
 import { TripRepository } from '../src/trips/repository.js'
 import { createSqliteTripRepository } from '../src/trips/factory.js'
 import { MemoryWorkbenchStoreDriver } from '../src/days/driver-memory.js'
-import { assembleCanvas } from '../src/days/repository.js'
+import { assembleCanvas, mapPoiRef } from '../src/days/repository.js'
 import type { TripSummary } from '../src/trips/types.js'
 
 async function createAppWithMemoryStores() {
@@ -216,6 +216,19 @@ test('assembleCanvas sorts days by idx and items by order, tolerating corrupt ro
     pending: false,
   })
   assert.equal(legs.length, 1)
+})
+
+test('canvas decoder accepts the flat PoiRef written by item-admin and the legacy nested location shape', () => {
+  assert.deepEqual(mapPoiRef(JSON.stringify({ name: '平面点位', lat: 49.4, lng: 119.9 })), {
+    amapId: '',
+    name: '平面点位',
+    lat: 49.4,
+    lng: 119.9,
+    category: '',
+    rating: 0,
+    introSummary: '',
+  })
+  assert.equal(mapPoiRef(POI_JSON)?.lat, 49.432)
 })
 
 test('canvas reads survive a SQLite database seeded directly (additive module, no schema change)', async () => {

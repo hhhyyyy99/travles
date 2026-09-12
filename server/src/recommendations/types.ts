@@ -91,3 +91,20 @@ export type PoiSearchInput = {
 }
 
 export type PoiSearch = (input: PoiSearchInput) => Promise<RecommendationPoi[]>
+
+export type RoutePoint = {
+  name?: string
+  lat: number
+  lng: number
+}
+
+export type RouteLegResult = {
+  status: 'ok' | 'pending'
+  source: 'amap' | 'pending'
+  distanceKm: number | null
+  durationMin: number | null
+  polyline: Array<[number, number]> | null
+  reason?: string
+}
+
+export type RouteLegSearch = (input: { from: RoutePoint; to: RoutePoint }) => Promise<RouteLegResult>

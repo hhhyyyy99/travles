@@ -126,6 +126,10 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
   // keep the detail-card toggle usable while the server-backed state remains
   // authoritative whenever the endpoint is available.
   const [localFavoriteKeys, setLocalFavoriteKeys] = useState<Set<string>>(new Set())
+  const [recommendationsApiAvailable, setRecommendationsApiAvailable] = useState(false)
+  const searchRequestRef = useRef(0)
+  const recommendationsEnabledRef = useRef(recommendationsEnabled)
+  recommendationsEnabledRef.current = recommendationsEnabled
   const onSelectItemRef = useRef(onSelectItem)
   onSelectItemRef.current = onSelectItem
 
@@ -140,10 +144,15 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
   const refreshRecommendations = (): void => {
     void fetchRecommendations(tripId).then((result) => {
       if (!result.ok) {
+        setRecommendationsApiAvailable(false)
         setRecommendationError(result.error)
         return
       }
-      setRecommendations(result.data.recommendations)
+      setRecommendationsApiAvailable(true)
+      // A refresh after a mutation should keep the active search result. The
+      // aggregate endpoint intentionally contains saved rows only, so
+      // replacing an active query with it would make other results disappear.
+      if (!recommendationsEnabledRef.current) setRecommendations(result.data.recommendations)
       setStash(result.data.stash)
       setFavorites(result.data.favorites)
       setRecommendationError('')
@@ -159,11 +168,19 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
 
   useEffect(() => {
     if (!recommendationsEnabled) return
+    const requestId = searchRequestRef.current + 1
+    searchRequestRef.current = requestId
     // Search is the same backend POI channel used by AI recommendation chips.
     // Saved rows remain visible when the provider is unavailable.
     void searchRecommendations(tripId, recommendationQuery, { region: regionFilter, type: typeFilter }).then((result) => {
-      if (result.ok) setRecommendations(result.data)
-      else setRecommendationError(result.error)
+      if (requestId !== searchRequestRef.current) return
+      if (result.ok) {
+        setRecommendations(result.data)
+        setRecommendationError('')
+      } else {
+        setRecommendations([])
+        setRecommendationError(result.error)
+      }
     })
   }, [recommendationsEnabled, recommendationQuery, regionFilter, typeFilter, tripId])
 
@@ -178,7 +195,10 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
     () => filterRecommendations(recommendationPool, { region: regionFilter, type: typeFilter }),
     [recommendationPool, regionFilter, typeFilter],
   )
-  const filterCounts = useMemo(() => recommendationFilterCounts(recommendationPool), [recommendationPool])
+  const filterCounts = useMemo(
+    () => recommendationFilterCounts(filterRecommendations(recommendationPool, { region: regionFilter, type: 'all' })),
+    [recommendationPool, regionFilter],
+  )
   const regions = useMemo(
     () => [...new Set(recommendationPool.map((poi) => poi.region).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     [recommendationPool],
@@ -318,6 +338,17 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
       setLocalFavoriteKeys((keys) => new Set([...keys, key]))
       const result = await addFavorite(tripId, target)
       if (!result.ok) {
+        // Keep the legacy local-only fallback for fixtures/older hosts that do
+        // not expose ticket 15 yet. A configured API must roll the optimistic
+        // state back so a failed write can be retried safely.
+        if (recommendationsApiAvailable) {
+          setLocalFavoriteKeys((keys) => {
+            const next = new Set(keys)
+            next.delete(key)
+            return next
+          })
+        }
+        setRecommendationError(result.error)
         return
       }
     }
@@ -744,7 +775,11 @@ function viewDropdownLabel(days: WorkbenchDay[], dayId: string): string {
 }
 
 function samePoi(a: Pick<RecommendationPoi, 'amapId' | 'id' | 'name' | 'lat' | 'lng'>, b: Pick<RecommendationPoi, 'amapId' | 'id' | 'name' | 'lat' | 'lng'>): boolean {
-  return Boolean((a.amapId && b.amapId && a.amapId === b.amapId) || a.id === b.id || (a.name === b.name && a.lat === b.lat && a.lng === b.lng))
+  return Boolean(
+    (a.amapId && b.amapId && a.amapId === b.amapId) ||
+      (a.id && b.id && a.id === b.id) ||
+      (a.name === b.name && a.lat === b.lat && a.lng === b.lng),
+  )
 }
 
 function poiKey(poi: Pick<RecommendationPoi, 'amapId' | 'name' | 'lat' | 'lng'> & { id?: string }): string {

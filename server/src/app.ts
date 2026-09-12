@@ -45,6 +45,7 @@ import { SqliteAiProviderStoreDriver } from './ai-providers/driver-sqlite.js'
 import { createProviderModel, providerFromEnv } from './ai-providers/model.js'
 import { mountAiProviderRoutes, type AiProviderProbe } from './ai-providers/routes.js'
 import type { AiProviderStoreDriver } from './ai-providers/types.js'
+import { routeAmapLeg } from './recommendations/route.js'
 
 export type AppEnv = {
   Bindings: HonoBindings
@@ -126,6 +127,8 @@ export type CreateAppOptions = {
   aiProviderStore?: AiProviderStoreDriver
   /** Injected provider probe (ticket 12; API tests avoid external services). */
   aiProviderProbe?: AiProviderProbe
+  /** Injected route lookup; production uses the AMap driving API. */
+  routeLegs?: import('./recommendations/types.js').RouteLegSearch
 }
 
 /** Default SQLite location: <server>/data/trips.db (gitignored). */
@@ -188,6 +191,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     // patch (the SQLite path opens the shared database only when actually hit).
     resolveTripPatchStore: resolveTripPatchStore,
     searchPoi: options.searchPoi ?? searchAmapPoi,
+    routeLegs: options.routeLegs ?? routeAmapLeg,
   })
   const memoryConfigured = options.plannerMemory !== undefined || !options.tripRepository
 
@@ -417,6 +421,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
   // in the pending pool.
   let recommendationsStore = options.recommendationsStore ?? null
   let recommendationsDb: SqlDatabase | null = workbenchDb
+  let resolveItemsAdminStoreForRecommendations: (() => Promise<ItemsAdminStoreDriver>) | null = null
   const resolveRecommendationsStore = async (): Promise<RecommendationsStoreDriver> => {
     if (recommendationsStore) return recommendationsStore
     if (!recommendationsDb) {
@@ -432,6 +437,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     tripRepository,
     resolveStore: resolveRecommendationsStore,
     searchPoi: options.searchPoi ?? searchAmapPoi,
+    routeLegs: options.routeLegs ?? routeAmapLeg,
+    resolveItemsStore: async () => {
+      if (!resolveItemsAdminStoreForRecommendations) throw new Error('路线存储尚未初始化')
+      return resolveItemsAdminStoreForRecommendations()
+    },
   })
 
   // ---- Day management writes (ticket 10, additive) --------------------------
@@ -509,6 +519,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     itemsAdminStore = createSqliteItemsAdminStore(workbenchDb as NonNullable<typeof workbenchDb>)
     return itemsAdminStore
   }
+  resolveItemsAdminStoreForRecommendations = resolveItemsAdminStore
   // Tolerant system-message seam; injected-only setups without a message
   // store fall back to the same process-lifetime memory driver chat uses.
   const systemMessages = new ChatMessageRepository(messageStore ?? new MemoryMessageStoreDriver())
