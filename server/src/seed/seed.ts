@@ -24,6 +24,7 @@ import {
   BUILTIN_TRIP_TITLE,
   classifyScheduleItem,
   seedDate,
+  type SeedDay,
 } from './builtin-trip-data.js'
 
 export type SeedResult = { seeded: boolean }
@@ -93,19 +94,21 @@ export async function seedBuiltinTrip(db: SqlDatabase): Promise<SeedResult> {
         })
       }
 
-      await db.run(
-        'INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [
-          `builtin-leg-day-${dayIndex}`,
-          BUILTIN_TRIP_ID,
-          `builtin-item-${dayIndex}-1`,
-          `builtin-item-${dayIndex}-2`,
-          'drive',
-          day.leg.distanceKm,
-          day.leg.durationMin,
-          JSON.stringify(day.leg.coordinates),
-        ] as SqlValue[],
-      )
+      for (const leg of splitReferenceLegs(dayIndex, day)) {
+        await db.run(
+          'INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [
+            leg.id,
+            BUILTIN_TRIP_ID,
+            leg.fromItemId,
+            leg.toItemId,
+            'drive',
+            leg.distanceKm,
+            leg.durationMin,
+            JSON.stringify(leg.coordinates),
+          ] as SqlValue[],
+        )
+      }
     }
 
     await db.run(
@@ -128,6 +131,12 @@ async function repairBuiltinTripMetadata(db: SqlDatabase): Promise<void> {
   const trip = await db.run('SELECT id FROM trips WHERE id = ?', [BUILTIN_TRIP_ID])
   if (trip.rows.length === 0) return
 
+  const legRows = await db.run(
+    'SELECT id, from_item_id, to_item_id, distance_km, duration_min, polyline FROM legs WHERE trip_id = ?',
+    [BUILTIN_TRIP_ID],
+  )
+  const legsById = new Map(legRows.rows.map((row) => [String(row.id ?? ''), row]))
+
   for (const [dayIndex, day] of BUILTIN_TRIP_DAYS.entries()) {
     for (const [pointIndex, pointKey] of (BUILTIN_TRIP_DAY_POINT_KEYS[dayIndex] ?? []).entries()) {
       const itemId = `builtin-item-${dayIndex}-${pointIndex + 1}`
@@ -147,11 +156,136 @@ async function repairBuiltinTripMetadata(db: SqlDatabase): Promise<void> {
       }
     }
 
-    await db.run(
-      "UPDATE legs SET from_item_id = CASE WHEN COALESCE(TRIM(from_item_id), '') = '' THEN ? ELSE from_item_id END, to_item_id = CASE WHEN COALESCE(TRIM(to_item_id), '') = '' THEN ? ELSE to_item_id END WHERE id = ? AND trip_id = ? AND (COALESCE(TRIM(from_item_id), '') = '' OR COALESCE(TRIM(to_item_id), '') = '')",
-      [`builtin-item-${dayIndex}-1`, `builtin-item-${dayIndex}-2`, `builtin-leg-day-${dayIndex}`, BUILTIN_TRIP_ID] as SqlValue[],
-    )
+    const routeLegs = splitReferenceLegs(dayIndex, day)
+    const base = routeLegs[0]
+    const existingBase = legsById.get(base?.id ?? '')
+    if (base && existingBase) {
+      const existingFrom = textValue(existingBase.from_item_id)
+      const existingTo = textValue(existingBase.to_item_id)
+      const canonicalPair = existingFrom === base.fromItemId && existingTo === base.toItemId
+      const missingPair = existingFrom === '' && existingTo === ''
+      const wholeReference =
+        samePolyline(existingBase.polyline, day.leg.coordinates) &&
+        sameNumber(existingBase.distance_km, day.leg.distanceKm) &&
+        sameNumber(existingBase.duration_min, day.leg.durationMin)
+
+      if (wholeReference && (canonicalPair || missingPair)) {
+        // The prior seed stored one aggregate polyline on the base row. It is
+        // safe to normalize only this untouched canonical representation.
+        await db.run(
+          'UPDATE legs SET from_item_id = ?, to_item_id = ?, distance_km = ?, duration_min = ?, polyline = ? WHERE id = ? AND trip_id = ?',
+          [
+            base.fromItemId,
+            base.toItemId,
+            base.distanceKm,
+            base.durationMin,
+            JSON.stringify(base.coordinates),
+            base.id,
+            BUILTIN_TRIP_ID,
+          ] as SqlValue[],
+        )
+        for (const extra of routeLegs.slice(1)) {
+          await insertRouteLegIfMissing(db, extra)
+        }
+      } else if (!canonicalPair) {
+        // A custom endpoint or geometry wins; fill only blank endpoint fields.
+        await db.run(
+          "UPDATE legs SET from_item_id = CASE WHEN COALESCE(TRIM(from_item_id), '') = '' THEN ? ELSE from_item_id END, to_item_id = CASE WHEN COALESCE(TRIM(to_item_id), '') = '' THEN ? ELSE to_item_id END WHERE id = ? AND trip_id = ?",
+          [base.fromItemId, base.toItemId, base.id, BUILTIN_TRIP_ID] as SqlValue[],
+        )
+      }
+    }
   }
+}
+
+type SeedRouteLeg = {
+  id: string
+  fromItemId: string
+  toItemId: string
+  distanceKm: number
+  durationMin: number
+  coordinates: readonly (readonly [number, number])[]
+}
+
+/** Split each reference polyline at the guide's actual adjacent waypoints. */
+function splitReferenceLegs(dayIndex: number, day: SeedDay): SeedRouteLeg[] {
+  const pointKeys = BUILTIN_TRIP_DAY_POINT_KEYS[dayIndex] ?? []
+  const coordinates = day.leg.coordinates
+  const segmentCount = Math.min(pointKeys.length, coordinates.length) - 1
+  if (segmentCount < 1) return []
+
+  const spans = Array.from({ length: segmentCount }, (_, index) =>
+    haversineKm(coordinates[index]!, coordinates[index + 1]!),
+  )
+  const totalSpan = spans.reduce((sum, span) => sum + span, 0)
+  let usedDistance = 0
+  let usedDuration = 0
+  return spans.map((span, index) => {
+    const ratio = totalSpan > 0 ? span / totalSpan : 1 / segmentCount
+    const distanceKm =
+      index === spans.length - 1
+        ? Math.max(0, Number((day.leg.distanceKm - usedDistance).toFixed(3)))
+        : Number((day.leg.distanceKm * ratio).toFixed(3))
+    const durationMin =
+      index === spans.length - 1
+        ? Math.max(0, Math.round(day.leg.durationMin - usedDuration))
+        : Math.max(0, Math.round(day.leg.durationMin * ratio))
+    usedDistance += distanceKm
+    usedDuration += durationMin
+    return {
+      id: index === 0 ? `builtin-leg-day-${dayIndex}` : `builtin-leg-day-${dayIndex}-${index}`,
+      fromItemId: `builtin-item-${dayIndex}-${index + 1}`,
+      toItemId: `builtin-item-${dayIndex}-${index + 2}`,
+      distanceKm,
+      durationMin,
+      coordinates: [coordinates[index]!, coordinates[index + 1]!],
+    }
+  })
+}
+
+/** Great-circle span used only to distribute approximate reference metrics. */
+function haversineKm(a: readonly [number, number], b: readonly [number, number]): number {
+  const toRad = (value: number) => (value * Math.PI) / 180
+  const lat1 = toRad(a[1])
+  const lat2 = toRad(b[1])
+  const dLat = lat2 - lat1
+  const dLng = toRad(b[0] - a[0])
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2
+  return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)))
+}
+
+function textValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function sameNumber(value: unknown, expected: number): boolean {
+  const actual = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(actual) && Math.abs(actual - expected) < 0.0001
+}
+
+function samePolyline(value: unknown, expected: readonly (readonly [number, number])[]): boolean {
+  if (typeof value !== 'string' || value.trim() === '') return false
+  try {
+    return JSON.stringify(JSON.parse(value)) === JSON.stringify(expected)
+  } catch {
+    return false
+  }
+}
+
+async function insertRouteLegIfMissing(db: SqlDatabase, leg: SeedRouteLeg): Promise<void> {
+  await db.run(
+    'INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
+    [
+      leg.id,
+      BUILTIN_TRIP_ID,
+      leg.fromItemId,
+      leg.toItemId,
+      'drive',
+      leg.distanceKm,
+      leg.durationMin,
+      JSON.stringify(leg.coordinates),
+    ] as SqlValue[],
+  )
 }
 
 async function insertItem(

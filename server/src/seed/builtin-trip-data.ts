@@ -23,7 +23,8 @@
  * - items:     `builtin-item-<dayIndex>-<order>`   (overview + schedule rows)
  * - stay item: `builtin-stay-day-<dayIndex>`       (one per overnight day;
  *              the ticket-03 localStorage migration UPSERTS these same ids)
- * - legs:      `builtin-leg-day-<dayIndex>`
+ * - legs:      `builtin-leg-day-<dayIndex>` (additional waypoint segments use
+ *              `builtin-leg-day-<dayIndex>-<segmentIndex>`)
  * - seed marker: app_meta key `builtin-trip.hailar-oct7`
  */
 
@@ -171,7 +172,7 @@ export interface SeedDay {
   desc: string
   tip: string
   schedule: readonly SeedScheduleRow[]
-  /** From roadRoutes.legs[legByDay[dayIndex]] (meters/seconds → km/minutes, [lng,lat] → polyline JSON). */
+  /** Aggregate reference route from roadRoutes.legs[legByDay[dayIndex]]. */
   leg: { distanceKm: number; durationMin: number; coordinates: readonly (readonly [number, number])[] }
 }
 
