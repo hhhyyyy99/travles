@@ -25,6 +25,10 @@ export type PoiRef = {
   lat: number
   lng: number
   address?: string
+  accommodationBaseId?: string
+  accommodationType?: 'area' | 'hotel'
+  accommodationNotes?: string
+  accommodationMigrationVersion?: number
   category: string
   rating: number
   introSummary: string
@@ -765,6 +769,18 @@ function normalizePoi(value: unknown): PoiRef | null {
     lat: finiteNumber(record.lat),
     lng: finiteNumber(record.lng),
     ...(typeof record.address === 'string' && record.address.trim() ? { address: record.address.trim() } : {}),
+    ...(typeof record.accommodationBaseId === 'string' && record.accommodationBaseId.trim()
+      ? { accommodationBaseId: record.accommodationBaseId.trim() }
+      : {}),
+    ...(record.accommodationType === 'area' || record.accommodationType === 'hotel'
+      ? { accommodationType: record.accommodationType }
+      : {}),
+    ...(typeof record.accommodationNotes === 'string' && record.accommodationNotes.trim()
+      ? { accommodationNotes: record.accommodationNotes.trim() }
+      : {}),
+    ...(Number.isInteger(Number(record.accommodationMigrationVersion)) && Number(record.accommodationMigrationVersion) > 0
+      ? { accommodationMigrationVersion: Number(record.accommodationMigrationVersion) }
+      : {}),
     category: typeof record.category === 'string' ? record.category : '',
     rating: finiteNumber(record.rating),
     introSummary: typeof record.introSummary === 'string' ? record.introSummary : '',

@@ -105,6 +105,31 @@ test('intake accepts natural Chinese duration and strips travel wording from the
   assert.equal(result.trip.planningContext?.destination, '呼伦贝尔')
 })
 
+test('intake recognizes full-year Chinese dates, keeps short dates tentative, and rejects span mismatches', async () => {
+  const { repo, driver } = setup()
+  const full = await repo.createFromIntake({ sentence: '去成都玩 7 天，2026年10月2日到2026年10月8日，慢节奏' })
+  assert.equal(full.ok, true)
+  if (full.ok) {
+    assert.deepEqual(
+      { startDate: full.trip.startDate, endDate: full.trip.endDate, dateStatus: full.trip.dateStatus },
+      { startDate: '2026-10-02', endDate: '2026-10-08', dateStatus: 'confirmed' },
+    )
+  }
+
+  const short = await repo.createFromIntake({ sentence: '去成都玩 7 天，10/2 到 10/8，慢节奏' })
+  assert.equal(short.ok, true)
+  if (short.ok) {
+    assert.equal(short.trip.startDate, '')
+    assert.equal(short.trip.endDate, '')
+    assert.equal(short.trip.dateStatus, 'tentative')
+    assert.match(short.trip.planningContext?.datePhrase ?? '', /10\/2/)
+  }
+
+  const mismatch = await repo.createFromIntake({ sentence: '去成都玩 5 天，2026-10-02 到 2026-10-08' })
+  assert.deepEqual(mismatch, { ok: false, error: '你说的是 5 天，但日期范围是 7 天，请确认日期或行程天数。', code: 'invalid' })
+  assert.equal(driver.rows.size, 2, 'the contradictory intake is rejected before persistence')
+})
+
 test('list returns created trips oldest-first and never throws', async () => {
   const { repo } = setup()
   assert.deepEqual(await repo.list(), [])

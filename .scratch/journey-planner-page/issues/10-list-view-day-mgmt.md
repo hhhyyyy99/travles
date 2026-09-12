@@ -4,12 +4,20 @@
 
 **Blocked by:** 04。
 
-**Status:** done (ticket 10 implemented on branch ticket/10-list-view)
+**Status:** resolved
 
 - [x] 画布/列表切换，两视图渲染同一份服务端数据
 - [x] 列表视图日期 tab 切换、纵向时间线渲染正确
 - [x] 天主题可编辑；天可增删（删天有确认，含卡一并删除）
 - [x] 两视图切换状态按行程记忆
+
+## Answer
+
+Implemented the list timeline, canvas/list toggle, day theme editing, add and
+delete flows, confirmation UI, per-trip view persistence, and incoming
+cross-day transfer rows. Final evidence is in the [shared acceptance report](../acceptance.md):
+149 frontend and 180 server tests passed, with both dev and preview browser
+sweeps at 113/113.
 
 ## Implementation notes
 

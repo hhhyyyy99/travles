@@ -4,12 +4,22 @@
 
 **Blocked by:** 04, 03。
 
-**Status:** done (implemented on ticket/14-panels)
+**Status:** resolved
 
 - [x] 三个面板可展开/收起，数据刷新后仍在
 - [x] 清单勾选状态持久化，迁移的既有清单项可见可勾
 - [x] 图库聚合展示卡片图片，支持手动上传
 - [x] 便签多条管理（增删改）
+
+## Answer
+
+Delivered persisted per-trip notes, checklist, and gallery panels with
+optimistic checklist updates, legacy checklist migration, card-image
+aggregation, upload validation, and cross-tab refresh. The current-trip print
+projection also reads the same server notes and checklist resources. Final
+evidence is in the [shared acceptance report](../acceptance.md): 149 frontend
+and 180 server tests passed, with both dev and preview browser sweeps at
+113/113.
 
 ## Implementation notes (ticket 14)
 

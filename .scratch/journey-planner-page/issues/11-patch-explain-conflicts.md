@@ -4,9 +4,19 @@
 
 **Blocked by:** 08, 09。
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 修改类指令触发影响分析回合：冲突指明 + 解决选项 chips
-- [ ] 选择方案后全环线重排正确，逐日汇报含妥协说明
-- [ ] 自相矛盾的时间约束被指出而非静默取其一（mock 模型测试）
-- [ ] >6h 驾车段在画布上可见警示，AI 侧给拆分建议
+- [x] 修改类指令触发影响分析回合：冲突指明 + 解决选项 chips
+- [x] 选择方案后全环线重排正确，逐日汇报含妥协说明
+- [x] 自相矛盾的时间约束被指出而非静默取其一（mock 模型测试）
+- [x] >6h 驾车段在画布上可见警示，AI 侧给拆分建议
+
+## Answer
+
+Added deterministic patch-explain gating with exact one-use confirmation
+chips bound to the current trip snapshot, conflict and time-order warnings,
+cross-day long-drive analysis, and full-trip patch rebuilds. Forged,
+replayed, stale, and storage-invalid confirmations are rejected before model
+write access. Final evidence is in the [shared acceptance report](../acceptance.md):
+149 frontend and 180 server tests passed, with both dev and preview browser
+sweeps at 113/113.

@@ -12,6 +12,15 @@
 - [x] 交通段展示距离与时长（数据来自服务端，重算留给后续工单）
 - [x] 画布渲染有 Playwright 浏览器测试（mock 服务端数据）
 
+## Answer
+
+Delivered the three-column workbench shell, server canvas projection, typed
+day/item/leg normalization, responsive column controls, and the current
+canvas/list/map integration used by later tickets. The workbench remains a
+projection of server data and keeps corrupt rows from breaking the UI. See the
+[shared acceptance report](../acceptance.md) for browser evidence;
+`pnpm test` passed 149 frontend and 180 server tests.
+
 ## 实现记录（供 05/06/09/10 沿用）
 
 **API（ticket 03 的写入 API 之外新增的只读读路径，全部为增量模块，未动 trips/repository.ts 与 schema.ts）：**

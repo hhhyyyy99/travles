@@ -28,12 +28,15 @@ import { defaultStorage, readState, type StorageLike } from './storage'
 import { CHECKLIST_ITEMS, loadChecklist, type ChecklistStorage } from './checklist'
 import { getDayStay, overnightDays } from './accommodation'
 import { fetchTrips, defaultFetch, type FetchLike } from './tripList'
+import type { AccommodationBase } from './types'
 
 /** Mirror of server/src/seed/builtin-trip-data.ts BUILTIN_TRIP_ID. */
 export const BUILTIN_TRIP_ID = 'builtin-hailar-oct7'
 
-/** Written (value "done") after a successful or empty-data migration. */
-export const SERVER_MIGRATION_MARKER_KEY = 'hailar-slow-trip-server-migration-v1'
+/** Written (value "done") after the versioned migration completes. */
+export const SERVER_MIGRATION_MARKER_KEY = 'hailar-slow-trip-server-migration-v2'
+/** Marker used by the original migration; its presence triggers metadata upgrade. */
+export const LEGACY_SERVER_MIGRATION_MARKER_KEY = 'hailar-slow-trip-server-migration-v1'
 
 /** Fixed id of the migrated stay item for a day (upserts the seeded row). */
 export function migratedStayItemId(dayIndex: number): string {
@@ -71,13 +74,14 @@ export async function migrateLegacyDataToServer(options: MigrationOptions = {}):
   const fetchLike = options.fetchLike ?? defaultFetch()
 
   if (readMarker(storage)) return { status: 'already-migrated' }
+  const legacyMarker = readLegacyMarker(storage)
 
   // Both codecs are 容错读取: corrupt JSON degrades to defaults here.
   const accommodation = readState(storage)
   const checked = loadChecklist(checklistStorage)
   const hasAccommodation = accommodation.bases.length > 0 || Object.keys(accommodation.stays).length > 0
   const hasChecklist = checked.length > 0
-  if (!hasAccommodation && !hasChecklist) {
+  if (!hasAccommodation && !hasChecklist && !legacyMarker) {
     writeMarker(storage)
     return { status: 'no-legacy-data' }
   }
@@ -90,7 +94,7 @@ export async function migrateLegacyDataToServer(options: MigrationOptions = {}):
   const days = await fetchDays(trip.id, fetchLike)
   if (!days.ok) return { status: 'failed' }
 
-  if (hasAccommodation) {
+  if (hasAccommodation || legacyMarker) {
     // Every overnight day gets its effective stay (default or override)
     // resolved to a base name — the same projection the guide page shows.
     const items = overnightDays
@@ -98,13 +102,17 @@ export async function migrateLegacyDataToServer(options: MigrationOptions = {}):
         const day = days.data.find((entry) => entry.idx === dayIndex)
         const stay = getDayStay(accommodation, dayIndex)
         if (!day || !stay) return null
+        const current = day.items?.find((item) => item.id === migratedStayItemId(dayIndex))
+        if (legacyMarker && !current) return null
         return {
           id: migratedStayItemId(dayIndex),
           dayId: day.id,
           itemOrder: 100,
           type: 'stay',
-          title: stay.name,
-          note: stay.address,
+          title: shouldReplaceSeedTitle(current?.title, dayIndex) ? stay.name : current?.title || stay.name,
+          note: shouldReplaceSeedNote(current?.note, dayIndex) ? stay.address ?? '' : current?.note ?? stay.address ?? '',
+          poi: current?.poi ?? accommodationPoi(stay),
+          pending: current?.pending ?? false,
         }
       })
       .filter((item): item is NonNullable<typeof item> => item !== null)
@@ -114,7 +122,7 @@ export async function migrateLegacyDataToServer(options: MigrationOptions = {}):
     }
   }
 
-  if (hasChecklist) {
+  if (hasChecklist && !legacyMarker) {
     // Migrate the full guide checklist with done flags so unchecked items
     // survive too (the checklist panel in ticket 14 needs all entries).
     const items = CHECKLIST_ITEMS.map((content, index) => ({
@@ -137,6 +145,7 @@ export async function migrateLegacyDataToServer(options: MigrationOptions = {}):
 interface DaySummary {
   id: string
   idx: number
+  items?: Array<{ id: string; title: string; note: string; pending: boolean; poi: Record<string, unknown> | null }>
 }
 
 async function fetchDays(tripId: string, fetchLike: FetchLike): Promise<{ ok: true; data: DaySummary[] } | { ok: false }> {
@@ -156,7 +165,19 @@ async function fetchDays(tripId: string, fetchLike: FetchLike): Promise<{ ok: tr
     const record = entry as Record<string, unknown>
     if (typeof record.id !== 'string' || !record.id) continue
     const idx = Number(record.idx)
-    data.push({ id: record.id, idx: Number.isInteger(idx) ? idx : 0 })
+    const items = Array.isArray(record.items)
+      ? record.items
+          .filter((item): item is Record<string, unknown> => item !== null && typeof item === 'object' && !Array.isArray(item))
+          .map((item) => ({
+            id: typeof item.id === 'string' ? item.id : '',
+            title: typeof item.title === 'string' ? item.title : '',
+            note: typeof item.note === 'string' ? item.note : '',
+            pending: item.pending === true || item.pending === 1,
+            poi: parseStoredPoi(item.poi),
+          }))
+          .filter((item) => item.id !== '')
+      : undefined
+    data.push({ id: record.id, idx: Number.isInteger(idx) ? idx : 0, ...(items ? { items } : {}) })
   }
   return { ok: true, data }
 }
@@ -183,10 +204,58 @@ function readMarker(storage: StorageLike): boolean {
   }
 }
 
+function readLegacyMarker(storage: StorageLike): boolean {
+  try {
+    return storage.getItem(LEGACY_SERVER_MIGRATION_MARKER_KEY) === 'done'
+  } catch {
+    return false
+  }
+}
+
 function writeMarker(storage: StorageLike): void {
   try {
     storage.setItem(SERVER_MIGRATION_MARKER_KEY, 'done')
+    storage.setItem(LEGACY_SERVER_MIGRATION_MARKER_KEY, 'done')
   } catch {
     // storage refusal — the next entry will simply retry the migration
+  }
+}
+
+function shouldReplaceSeedTitle(current: string | undefined, dayIndex: number): boolean {
+  const seed = typeof current === 'string' ? current.trim() : ''
+  return seed === '' || seed === `第 ${dayIndex + 1} 晚住宿` || new RegExp(`^.+ · 第 ${dayIndex + 1} 晚$`).test(seed)
+}
+
+function shouldReplaceSeedNote(current: string | undefined, dayIndex: number): boolean {
+  const note = typeof current === 'string' ? current.trim() : ''
+  return note === '' || note === `第 ${dayIndex + 1} 晚住宿`
+}
+
+function accommodationPoi(base: AccommodationBase): Record<string, unknown> {
+  return {
+    amapId: `legacy-accommodation:${base.id}`,
+    name: base.name,
+    lat: base.lat,
+    lng: base.lng,
+    ...(base.address ? { address: base.address } : {}),
+    accommodationBaseId: base.id,
+    accommodationType: base.type,
+    ...(base.notes ? { accommodationNotes: base.notes } : {}),
+    accommodationMigrationVersion: 2,
+    category: base.type === 'area' ? '住宿区域' : '酒店 / 民宿',
+    rating: 0,
+    introSummary: base.notes ?? '',
+  }
+}
+
+function parseStoredPoi(value: unknown): Record<string, unknown> | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
+  if (typeof value !== 'string' || value.trim() === '') return null
+  try {
+    const parsed = JSON.parse(value)
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null
+  } catch {
+    return null
   }
 }

@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import {
   crossDayTransfer,
   dayDateLabel,
@@ -12,6 +12,7 @@ import {
 } from '../../domain/workbench'
 import { fetchChecklist, fetchNotes, type ChecklistItem, type NoteItem } from '../../domain/tools'
 import { formatTripSchedule, type TripSummary } from '../../domain/tripList'
+import { fetchTripCanvas, type TripCanvasData } from '../../domain/workbench'
 
 export type WorkbenchPrintSheetProps = {
   trip: TripSummary
@@ -30,16 +31,38 @@ type AuxiliaryState = {
   checklistFailed: boolean
 }
 
+type PrintSnapshot = Pick<TripCanvasData, 'trip' | 'days' | 'legs'>
+
 /** Current-trip print projection; no legacy guide or browser accommodation state is read here. */
 const WorkbenchPrintSheet = forwardRef<WorkbenchPrintSheetHandle, WorkbenchPrintSheetProps>(function WorkbenchPrintSheet(
   { trip, days, legs },
   ref,
 ) {
+  const [snapshot, setSnapshot] = useState<PrintSnapshot>({ trip, days, legs })
+  const [canvasFailed, setCanvasFailed] = useState(false)
   const [auxiliary, setAuxiliary] = useState<AuxiliaryState>({ notes: null, checklist: null, notesFailed: false, checklistFailed: false })
+  const refreshSequence = useRef(0)
+
+  useEffect(() => {
+    setSnapshot({ trip, days, legs })
+    setCanvasFailed(false)
+  }, [trip, days, legs])
 
   const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current
     setAuxiliary((current) => ({ ...current, notes: null, checklist: null, notesFailed: false, checklistFailed: false }))
-    const [notes, checklist] = await Promise.all([fetchNotes(trip.id), fetchChecklist(trip.id)])
+    const [canvas, notes, checklist] = await Promise.all([
+      fetchTripCanvas(trip.id),
+      fetchNotes(trip.id),
+      fetchChecklist(trip.id),
+    ])
+    if (sequence !== refreshSequence.current) return
+    if (canvas.ok) {
+      setSnapshot(canvas.data)
+      setCanvasFailed(false)
+    } else {
+      setCanvasFailed(true)
+    }
     setAuxiliary({
       notes: notes.ok ? notes.data : null,
       checklist: checklist.ok ? checklist.data : null,
@@ -53,16 +76,18 @@ const WorkbenchPrintSheet = forwardRef<WorkbenchPrintSheetHandle, WorkbenchPrint
     void refresh()
   }, [refresh])
 
-  const schedule = [...days].sort((a, b) => a.index - b.index || a.id.localeCompare(b.id))
-  const scheduleLabel = formatTripSchedule(trip) || '日期待定'
+  const schedule = [...snapshot.days].sort((a, b) => a.index - b.index || a.id.localeCompare(b.id))
+  const scheduleLabel = formatTripSchedule(snapshot.trip) || '日期待定'
   return (
     <div id="print-itinerary">
       <section className="print-sheet-header">
         <p className="eyebrow">TRIP WORKBENCH / CURRENT PLAN</p>
-        <h1>{trip.title || '未命名行程'}</h1>
+        <h1>{snapshot.trip.title || '未命名行程'}</h1>
         <p className="print-sheet-summary">{scheduleLabel}</p>
         <p className="print-sheet-note">
-          {trip.dateStatus === 'unspecified' || trip.dateStatus === 'tentative'
+          {canvasFailed
+            ? '当前服务器行程快照暂不可用，本次打印保留上次已加载内容。'
+            : snapshot.trip.dateStatus === 'unspecified' || snapshot.trip.dateStatus === 'tentative'
             ? '日期待定；请先在圆周对话中确认出发日期，再安排具体天次。'
             : '行程内容来自当前服务器数据；路线出发前请以实时导航为准。'}
         </p>
@@ -144,6 +169,7 @@ function PrintItem({ item, order }: { item: WorkbenchItem; order: number }) {
         <strong>{item.title || '未命名安排'}</strong>
         {item.poi && <p>{item.poi.name}{item.poi.category ? ` · ${item.poi.category}` : ''}{item.poi.address ? ` · ${item.poi.address}` : ''}</p>}
         {item.note && <p><b>备注</b>{item.note}</p>}
+        {item.poi?.accommodationNotes && <p><b>住宿备注</b>{item.poi.accommodationNotes}</p>}
         {item.pending && <p className="print-workbench-pending">待定，需出发前确认</p>}
       </div>
       {image && <img src={image.url} alt="" />}

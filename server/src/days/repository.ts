@@ -158,6 +158,12 @@ export function mapPoiRef(value: unknown): PoiRef | null {
   const location = record.location !== null && typeof record.location === 'object'
     ? (record.location as Record<string, unknown>)
     : {}
+  const accommodationBaseId = asText(record.accommodationBaseId)
+  const accommodationType = record.accommodationType === 'area' || record.accommodationType === 'hotel'
+    ? record.accommodationType
+    : undefined
+  const accommodationNotes = asText(record.accommodationNotes)
+  const migrationVersion = Number(record.accommodationMigrationVersion)
   return {
     amapId: asText(record.amapId),
     name,
@@ -167,6 +173,10 @@ export function mapPoiRef(value: unknown): PoiRef | null {
     lat: asFiniteNumber(location.lat ?? record.lat),
     lng: asFiniteNumber(location.lng ?? record.lng),
     ...(asText(record.address) ? { address: asText(record.address) } : {}),
+    ...(accommodationBaseId ? { accommodationBaseId } : {}),
+    ...(accommodationType ? { accommodationType } : {}),
+    ...(accommodationNotes ? { accommodationNotes } : {}),
+    ...(Number.isInteger(migrationVersion) && migrationVersion > 0 ? { accommodationMigrationVersion: migrationVersion } : {}),
     category: asText(record.category),
     rating: asFiniteNumber(record.rating),
     introSummary: asText(record.introSummary),

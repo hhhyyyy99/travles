@@ -27,3 +27,7 @@ mounted Mastra metadata routes and provider errors are covered by secret-leak
 regression tests. Verification: server typecheck, frontend typecheck, 110
 existing server tests plus 8 focused provider tests, production Vite build,
 and a Chromium settings-route smoke check.
+
+Final acceptance evidence is consolidated in the [shared acceptance report](../acceptance.md):
+pnpm test passed 149 frontend and 180 server tests, and the dev and preview
+browser sweeps passed 113/113.

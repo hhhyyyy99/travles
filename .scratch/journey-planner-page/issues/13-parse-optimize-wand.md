@@ -21,3 +21,7 @@
 - TripPatch 的新增、移动、删除操作会持久化受影响天的最终卡片顺序，确保优化后的顺序不会因重复 order 值回退。
 
 验证：前端 `node --import tsx --test tests/*.test.ts`（132 pass）；后端 ticket 13 + TripPatch 聚焦套件（18 pass）；前端与后端 TypeScript 检查通过；`tests/app/14-ai-proposals.app.browser.cjs`（3 pass，含 apply 失败重试回归）。
+
+Final acceptance evidence is consolidated in the [shared acceptance report](../acceptance.md):
+pnpm test passed 149 frontend and 180 server tests, and the dev and preview
+browser sweeps passed 113/113.

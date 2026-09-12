@@ -4,13 +4,23 @@
 
 **Blocked by:** 05, 07。
 
-**Status:** done
+**Status:** resolved
 
 - [x] 澄清完成后 AI 产出计划，画布出现完整天/卡/交通段，地图路线同步重绘
 - [x] `apply_trip_patch` 服务端校验：非法 patch 被拒绝且回传模型重试（有测试）
 - [x] 应用的 patch 作为结构化记录随消息保存（可追溯 AI 改了什么）
 - [x] 待定槽位在画布有可见标记，AI 消息中显式声明
 - [x] mock 模型端到端测试：clarify → plan → patch 落库 → SSE 通知全链路
+
+## Answer
+
+Implemented the structured TripPatch plan path with server validation, retry
+feedback, durable applied-patch records, SSE updates, pending-slot handling,
+and full projected leg rebuilds. Card/day layout changes now include exact
+consecutive-day bridges while preserving atomic writes and measured/reference
+quality. Final evidence is in the [shared acceptance report](../acceptance.md):
+149 frontend and 180 server tests passed, with both dev and preview browser
+sweeps at 113/113.
 
 ## 实现记录（ticket 08）
 

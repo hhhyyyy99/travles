@@ -57,9 +57,9 @@ export class MemoryContentStoreDriver implements ContentStoreDriver {
       type: item.type,
       title: item.title,
       note: item.note,
-      poi: null,
+      poi: item.poiJson ?? null,
       images: null,
-      pending: 0,
+      pending: item.pending ? 1 : 0,
     })
   }
 

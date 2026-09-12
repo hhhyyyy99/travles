@@ -55,6 +55,8 @@ test('intake opens the current workbench, sends the sentence once, edits stays o
   }
   let notesReads = 0
   let checklistReads = 0
+  let canvasReads = 0
+  let failCanvasOnNextRead = false
   let intakeCalls = 0
   let chatCalls = 0
   let stayPatch = null
@@ -73,7 +75,14 @@ test('intake opens the current workbench, sends the sentence once, edits stays o
           intakeCalls += 1
           return json(route, 201, { trip, intake: planningContext })
         }
-        if (path.endsWith('/canvas') && request.method() === 'GET') return json(route, 200, currentCanvas)
+        if (path.endsWith('/canvas') && request.method() === 'GET') {
+          canvasReads += 1
+          if (failCanvasOnNextRead) {
+            failCanvasOnNextRead = false
+            return json(route, 503, { error: '当前快照不可用' })
+          }
+          return json(route, 200, currentCanvas)
+        }
         if (path.endsWith('/messages') && request.method() === 'GET') return json(route, 200, { messages: [] })
         if (path.endsWith('/messages') && request.method() === 'POST') {
           chatCalls += 1
@@ -135,14 +144,74 @@ test('intake opens the current workbench, sends the sentence once, edits stays o
     assert.equal(stayPatch.poi.address, '额尔古纳河畔 18 号')
     assert.equal(stayPatch.note, '晚到请提前联系')
 
+    // Change a server-only card after the page snapshot has settled. The
+    // print action must read the authoritative canvas rather than props held
+    // by the already-mounted workbench.
+    currentCanvas.days[0].items[1].title = '服务器更新景点'
     await page.locator('#workbench-print').click()
     await page.waitForFunction(() => (window.__printCalls || 0) === 1)
+    assert.ok(canvasReads >= 2, `print should refetch the authoritative canvas, got ${canvasReads}`)
     assert.ok(notesReads >= 2, `print refresh should refetch notes, got ${notesReads}`)
     assert.ok(checklistReads >= 2, `print refresh should refetch checklist, got ${checklistReads}`)
     assert.match(await page.locator('#print-itinerary').textContent(), /呼伦贝尔 · 7日行程/)
     assert.match(await page.locator('#print-itinerary').textContent(), /更新住宿/)
+    assert.match(await page.locator('#print-itinerary').textContent(), /服务器更新景点/)
     assert.match(await page.locator('#print-itinerary').textContent(), /最新便签/)
     assert.equal(await page.locator('#print-itinerary button, #print-itinerary input, #print-itinerary select, #print-itinerary textarea').count(), 0)
+
+    failCanvasOnNextRead = true
+    await page.locator('#workbench-print').click()
+    await page.waitForFunction(() => (window.__printCalls || 0) === 2)
+    assert.match(await page.locator('.print-sheet-note').textContent(), /服务器行程快照暂不可用/)
+  } finally {
+    await close()
+  }
+})
+
+test('reopening a failed date-pending draft restores its persisted sentence for one retry', async () => {
+  let chatCalls = 0
+  const failedTrip = {
+    id: 'trip-reopen-draft',
+    title: '成都 · 5日行程',
+    startDate: '',
+    endDate: '',
+    days: 0,
+    nights: 0,
+    durationDays: 5,
+    dateStatus: 'unspecified',
+    planningContext: {
+      destination: '成都',
+      durationDays: 5,
+      preferences: '成都 5 天，喜欢美食',
+      originalSentence: '成都 5 天，喜欢美食',
+      dateStatus: 'unspecified',
+    },
+    createdAt: '',
+    updatedAt: '',
+  }
+  const { page, close } = await openApp({
+    entry: `/?view=workbench&trip=${failedTrip.id}`,
+    setup: async ({ page }) => {
+      await page.route('**/api/trips/**', async (route) => {
+        const request = route.request()
+        const path = new URL(request.url()).pathname
+        if (path.endsWith('/canvas')) return json(route, 200, { trip: failedTrip, days: [], legs: [] })
+        if (path.endsWith('/messages') && request.method() === 'GET') return json(route, 200, { messages: [] })
+        if (path.endsWith('/messages') && request.method() === 'POST') {
+          chatCalls += 1
+          return json(route, 503, { error: '模型未配置', guidance: '请到 AI 接入设置' })
+        }
+        if (path.endsWith('/events')) return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: '' })
+        return json(route, 404, { error: '未处理请求' })
+      })
+    },
+  })
+  try {
+    await page.locator('[data-chat-role="user"]').filter({ hasText: failedTrip.planningContext.originalSentence }).waitFor()
+    assert.equal(chatCalls, 1)
+    await page.reload()
+    await page.locator('[data-chat-role="user"]').filter({ hasText: failedTrip.planningContext.originalSentence }).waitFor()
+    assert.equal(chatCalls, 2, 'the persisted sentence is retried once after reopening the empty-history draft')
   } finally {
     await close()
   }

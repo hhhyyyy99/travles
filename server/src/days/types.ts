@@ -32,6 +32,10 @@ export type PoiRef = {
   lat: number
   lng: number
   address?: string
+  accommodationBaseId?: string
+  accommodationType?: 'area' | 'hotel'
+  accommodationNotes?: string
+  accommodationMigrationVersion?: number
   category: string
   rating: number
   introSummary: string

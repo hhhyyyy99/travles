@@ -512,6 +512,7 @@ export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripI
     if (refresh) void refresh.then(() => print())
     else print()
   }
+  const plannerInitialPrompt = initialPrompt ?? (state.status === 'ready' ? state.data.trip.planningContext?.originalSentence : undefined)
 
   return (
     <>
@@ -564,7 +565,7 @@ export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripI
             >
               <ChatPanel
                 tripId={tripId}
-                initialPrompt={initialPrompt}
+                initialPrompt={plannerInitialPrompt}
                 onCollapse={() => toggle('ai')}
                 onFocusPoi={setMapFocus}
                 onTripPatched={handleTripPatched}

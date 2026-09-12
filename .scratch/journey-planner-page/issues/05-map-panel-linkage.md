@@ -4,10 +4,19 @@
 
 **Blocked by:** 04。
 
-**Status:** done
+**Status:** resolved
 
 - [x] 打开行程即见完整多日彩色路线与里程标签，日色与画布一致
 - [x] 点击画布卡片 → 地图聚焦 POI + 详情卡；关闭详情卡回到全览
 - [x] 点击地图标记 → 画布滚动定位并高亮对应卡片
 - [x] 路线绘制复用现有 Leaflet 主链路与 AMap 适配层，不新起地图方案
 - [x] 联动行为有 Playwright 浏览器测试（mock 地图与数据）
+
+## Answer
+
+The Leaflet workbench map now projects current per-day routes, reference versus
+measured quality, mileage labels, ordered POI markers, collision handling,
+details, and canvas/AI selection linkage. Consecutive-day bridges are shown on
+the incoming day and short bridges remain visible alongside long-drive
+warnings. Browser evidence is recorded in the [shared acceptance report](../acceptance.md);
+`pnpm test` passed 149 frontend and 180 server tests.

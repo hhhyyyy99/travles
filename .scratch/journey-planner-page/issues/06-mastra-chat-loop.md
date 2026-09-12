@@ -63,3 +63,12 @@
 - **07/08**：回合类型只改两处 —— `chat/routes.ts` 的 SSE `start.round` 与事件扩展（chips / TripPatch / 思考 / 来源均可作为新事件名追加，schema 向后兼容）；`messages` 表的 `think/sources/applied_patch` JSON 列已预留未写。消息渲染侧 `ChatPanel.tsx` 的 `ChatBubble` 是扩展点。
 - **12**：`ai_providers` 表已在 schema 预留；`modelConfigFromEnv()`（mastra.ts）是 env-only 模型解析点，接入设置页后替换为按 provider 行构建 `OpenAICompatibleConfig` 即可；`AI_PROTOCOL=responses` 未接线。
 - 前端 `src/domain/chat.ts` 的 `sendChatMessage` 对未知事件名宽容忽略，新增事件不会破坏现有解析。
+
+## Answer
+
+Implemented the Mastra planner, trip-scoped memory, streaming SSE chat loop,
+provider error guidance, persisted message history, and the durable intake
+context used by the planner. QA and plan rounds now expose next-step chips,
+while failed streams remain unpersisted. Final acceptance evidence is in the
+[shared acceptance report](../acceptance.md): 149 frontend and 180 server
+tests passed, with both dev and preview browser sweeps at 113/113.

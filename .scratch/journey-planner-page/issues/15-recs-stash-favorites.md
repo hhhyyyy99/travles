@@ -17,3 +17,7 @@
 Added the persisted recommendation workflow for the workbench. The server now exposes a shared `search_poi` Mastra tool plus recommendation search, stash, and favorites APIs backed by injectable memory/SQLite drivers. The map toolbar loads and filters recommendation POIs, renders Leaflet recommendation markers, supports favorites and pending stash actions, and allows pending items to be dragged into a day. Scheduling uses the existing card-admin route, so legs are recomputed by the existing server path. The completion pass also hardens failed-write rollback, normalizes AMap GCJ-02 coordinates/ratings/photos, exposes `route_legs` and `search_stay_reference` through the planner, and adds an explicit route refresh path that upgrades estimate legs when real routing data is available.
 
 Verification: `pnpm typecheck`; focused node tests for recommendations, route refresh, and canvas POI persistence (18 passing tests); `node --test tests/app/12-map-linkage.app.browser.cjs tests/app/15-recommendations.app.browser.cjs` (8 passing tests). The full server suite remains subject to this sandbox's local-listen/default-database restrictions in its existing environment-only cases.
+
+Final acceptance evidence is consolidated in the [shared acceptance report](../acceptance.md):
+pnpm test passed 149 frontend and 180 server tests, and the dev and preview
+browser sweeps passed 113/113.

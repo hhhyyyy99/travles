@@ -55,3 +55,12 @@ prop 即可完成聚焦 + POI 详情卡。
 tool-call / tool-result / error 分支），工具结果从 fullStream 的
 tool-result chunk 读取；`apply_trip_patch` 按同一模式加第二个工具即可，其
 校验失败重试语义在 tool result 里回传。流上多工具并存时分支按 toolName 区分。
+
+## Answer
+
+Added structured clarify metadata through the real agent stream, including
+framework-first rounds, one-variable chips, POI links, thinking summaries,
+sources, and persisted reload behavior. The shared chat renderer keeps the
+metadata optional and tolerant. Final acceptance evidence is in the [shared
+acceptance report](../acceptance.md): 149 frontend and 180 server tests
+passed, with both dev and preview browser sweeps at 113/113.

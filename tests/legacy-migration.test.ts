@@ -12,6 +12,7 @@ import assert from 'node:assert/strict'
 
 import {
   BUILTIN_TRIP_ID,
+  LEGACY_SERVER_MIGRATION_MARKER_KEY,
   SERVER_MIGRATION_MARKER_KEY,
   migrateLegacyDataToServer,
   migratedChecklistItemId,
@@ -69,7 +70,7 @@ interface RecordedCall {
 }
 
 /** Recording stub: routes guide-API calls; `failUrl` makes matching calls fail. */
-function recordingFetch(options: { trips?: unknown[]; failUrls?: string[]; throwOnAll?: boolean } = {}): {
+function recordingFetch(options: { trips?: unknown[]; days?: unknown; failUrls?: string[]; throwOnAll?: boolean } = {}): {
   fetchLike: FetchLike
   calls: RecordedCall[]
 } {
@@ -84,7 +85,7 @@ function recordingFetch(options: { trips?: unknown[]; failUrls?: string[]; throw
       return new Response(JSON.stringify({ trips: options.trips ?? [BUILTIN_TRIP_FIXTURE] }), { status: 200 })
     }
     if (url === `/api/trips/${BUILTIN_TRIP_ID}/days`) {
-      return new Response(JSON.stringify(DAYS_FIXTURE), { status: 200 })
+      return new Response(JSON.stringify(options.days ?? DAYS_FIXTURE), { status: 200 })
     }
     return new Response(JSON.stringify({ ok: true, upserted: 1 }), { status: 200 })
   }
@@ -129,6 +130,19 @@ test('migrates checklist and accommodation stays into the built-in trip, then ma
   assert.equal(items[1]?.title, '牧场民宿', 'the day-1 override resolves to the custom base name')
   assert.equal(items[1]?.type, 'stay')
   assert.equal(items[0]?.title, '海拉尔', 'unoverridden nights migrate the default base')
+  assert.deepEqual(items[1]?.poi, {
+    amapId: 'legacy-accommodation:custom-1',
+    name: '牧场民宿',
+    lat: 50.24,
+    lng: 120.18,
+    address: '额尔古纳牧场',
+    accommodationBaseId: 'custom-1',
+    accommodationType: 'hotel',
+    accommodationMigrationVersion: 2,
+    category: '酒店 / 民宿',
+    rating: 0,
+    introSummary: '',
+  }, 'custom base coordinates/type and its per-night id are retained')
   assert.ok(items.every((item) => item.dayId === `builtin-day-${items.indexOf(item)}`))
 
   // Checklist: all six guide items with done flags.
@@ -141,6 +155,41 @@ test('migrates checklist and accommodation stays into the built-in trip, then ma
     checklist.map((item) => item.done),
     [true, false, true, false, false, false],
   )
+})
+
+test('versioned migration upgrades an old marker with rich POI metadata without overwriting stay edits', async () => {
+  const storage = new MemoryStorage()
+  seedLegacyData(storage)
+  storage.setItem(LEGACY_SERVER_MIGRATION_MARKER_KEY, 'done')
+  const days = {
+    days: [0, 1, 2, 3, 4, 5, 6].map((idx) => ({
+      id: `builtin-day-${idx}`,
+      idx,
+      date: `2026-10-0${idx + 2}`,
+      theme: `第${idx + 1}天`,
+      color: '',
+      items: idx < 2 ? [{
+        id: migratedStayItemId(idx),
+        title: idx === 1 ? '用户编辑的住宿' : `海拉尔 · 第 ${idx + 1} 晚`,
+        note: idx === 1 ? '用户自己的备注' : '',
+        ...(idx === 1 ? { poi: { name: '用户选的住宿', lat: 50.3, lng: 120.4, address: '用户更新的地址' } } : {}),
+      }] : [],
+    })),
+  }
+  const { fetchLike, calls } = recordingFetch({ days })
+
+  const result = await migrateLegacyDataToServer({ storage, fetchLike })
+  assert.equal(result.status, 'migrated')
+  assert.equal(storage.peek(SERVER_MIGRATION_MARKER_KEY), 'done')
+  const itemsCall = putCalls(calls).find((call) => call.url.endsWith('/items'))
+  assert.ok(itemsCall)
+  const items = putBody(itemsCall).items as Array<Record<string, unknown>>
+  assert.equal(items.length, 2, 'an old completed migration does not resurrect user-deleted stay cards')
+  const edited = items.find((item) => item.id === migratedStayItemId(1))
+  assert.equal(edited?.title, '用户编辑的住宿')
+  assert.equal(edited?.note, '用户自己的备注')
+  assert.deepEqual(edited?.poi, { name: '用户选的住宿', lat: 50.3, lng: 120.4, address: '用户更新的地址' })
+  assert.equal(putCalls(calls).filter((call) => call.url.endsWith('/checklist')).length, 0, 'an old completed migration does not overwrite checklist edits')
 })
 
 test('is idempotent: the marker short-circuits repeated triggers', async () => {

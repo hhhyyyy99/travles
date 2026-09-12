@@ -34,3 +34,7 @@
 
 - Mastra 当前稳定版为 1.x（`@mastra/core` 1.66.x），其 `engines` 要求 Node ≥ 22.13.0；故 `server/package.json` 的 `engines.node` 为 `>=22.13.0`（根包保持 `>=20.19` 供前端使用），本机 Node 24.15 满足。这与工单原文"Node ≥ 20.19"的偏差即 Mastra 的版本要求，已按工单指示记录在 engines 字段。
 - 未添加数据库/存储/memory 配置（工单 02 范围）；server 当前无业务路由。
+
+Final acceptance evidence is consolidated in the [shared acceptance report](../acceptance.md):
+pnpm test passed 149 frontend and 180 server tests, and both dev and preview
+browser sweeps passed 113/113 before the final edge-case additions.

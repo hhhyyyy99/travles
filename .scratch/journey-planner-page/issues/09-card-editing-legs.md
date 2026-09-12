@@ -4,7 +4,7 @@
 
 **Blocked by:** 05。
 
-**Status:** done
+**Status:** resolved
 
 - [x] 拖拽排序当天生效，跨天拖拽生效，交通段与地图随之重算
 - [x] 卡片菜单五种操作（上移/下移/移动到/复制到/删除）全部可用
@@ -12,6 +12,16 @@
 - [x] 编辑失败自动回滚并提示，无静默丢失
 - [x] 手动编辑产生系统消息进入会话（AI 后续回复引用的是最新行程）
 - [x] Playwright 测试覆盖拖拽与跨天移动的联动
+
+## Answer
+
+Delivered atomic card create/move/copy/delete and field edits over memory and
+SQLite drivers, shared optimistic rollback, server leg recomputation, route
+refresh, and system-message context updates. Same-direction routes are reused,
+reverse routes are estimated safely, and consecutive-day boundary legs rebuild
+with the authoritative layout. Final evidence is in the [shared acceptance
+report](../acceptance.md): 149 frontend and 180 server tests passed, with both
+dev and preview browser sweeps at 113/113.
 
 ## Implementation notes (ticket 09)
 

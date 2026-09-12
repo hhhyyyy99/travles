@@ -147,6 +147,7 @@ function mapItemRow(row: ItemRow): ItemContent | null {
     title: asText(row?.title),
     note: asText(row?.note),
     pending: row?.pending === 1 || row?.pending === true,
+    ...(typeof row?.poi === 'string' && row.poi.trim() ? { poi: row.poi } : {}),
   }
 }
 
@@ -178,6 +179,15 @@ function readItemUpsert(input: Record<string, unknown>): ItemUpsert | null {
   const dayId = readId(input.dayId)
   if (!id || !dayId) return null
   const orderNumber = Number(input.itemOrder)
+  let poiJson: string | null = null
+  if (input.poi !== undefined && input.poi !== null) {
+    if (typeof input.poi !== 'object' || Array.isArray(input.poi)) return null
+    try {
+      poiJson = JSON.stringify(input.poi)
+    } catch {
+      return null
+    }
+  }
   return {
     id,
     dayId,
@@ -185,6 +195,8 @@ function readItemUpsert(input: Record<string, unknown>): ItemUpsert | null {
     type: typeof input.type === 'string' && input.type.trim() ? input.type.trim() : 'other',
     title: typeof input.title === 'string' ? input.title : '',
     note: typeof input.note === 'string' ? input.note : '',
+    poiJson,
+    pending: input.pending === true || input.pending === 1,
   }
 }
 

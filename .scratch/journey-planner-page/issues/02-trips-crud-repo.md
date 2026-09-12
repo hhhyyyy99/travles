@@ -11,3 +11,12 @@
 - [x] 服务重启后数据仍在（SQLite 持久化）
 - [x] 仓储层以可注入驱动测试（内存驱动），沿用"容错读取、永不 throw"的 codec 测试约定
 - [x] 删除有确认，误删无静默数据丢失
+
+## Answer
+
+Implemented server-backed trip CRUD with strict dated-trip validation, SQLite
+persistence, tolerant in-memory repository seams, and a confirmed delete flow.
+The quick-intake draft path also preserves date-pending metadata without
+changing the manual title/date form. Full unit verification is recorded in the
+[shared acceptance report](../acceptance.md): `pnpm test` passed 149 frontend
+and 180 server tests.

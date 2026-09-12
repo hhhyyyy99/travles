@@ -1,6 +1,6 @@
 # Spec: AI 行程规划工作台（前后端架构，Mastra AI）
 
-Status: ready-for-agent
+Status: resolved
 
 依据：[PRD](./PRD.md)（调研对象：圆周旅迹行程工作台）+ 用户决策：全量 PRD 范围；架构升级为前后端分离并接入 Mastra；本期不做分享；测试接缝为三处。
 

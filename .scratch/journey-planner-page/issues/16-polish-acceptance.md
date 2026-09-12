@@ -4,10 +4,20 @@
 
 **Blocked by:** 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 13, 14, 15。
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 双浏览器打开同一行程，A 编辑 B 在秒级可见
-- [ ] 7 天 × ~20 卡的行程拖拽流畅，交通段/地图重算有加载态
-- [ ] AI 回写期间画布有淡入/移动动画，无布局跳变
-- [ ] <1024px 三栏 Tab 切换可用，地图可呼出
-- [ ] `pnpm test` / `test:app` / `typecheck` 全绿
+- [x] 双浏览器打开同一行程，A 编辑 B 在秒级可见
+- [x] 7 天 × ~20 卡的行程拖拽流畅，交通段/地图重算有加载态
+- [x] AI 回写期间画布有淡入/移动动画，无布局跳变
+- [x] <1024px 三栏 Tab 切换可用，地图可呼出
+- [x] `pnpm test` / `test:app` / `typecheck` 全绿
+
+## Answer
+
+Completed the cross-view and multi-browser acceptance pass: SSE updates
+refresh the authoritative canvas, large 7×20-card moves rebuild 133 intra-day
+legs plus six day-boundary bridges, loading states preserve layout stability,
+compact view exposes chat/canvas/map tabs, and current POI output carries the
+reference disclaimer. Final evidence is in the [shared acceptance report](../acceptance.md):
+pnpm typecheck, pnpm build, pnpm build:server, and pnpm test (149 frontend +
+180 server) passed; dev and preview browser sweeps passed 113/113.

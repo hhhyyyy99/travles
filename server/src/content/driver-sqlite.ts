@@ -34,12 +34,12 @@ export class SqliteContentStoreDriver implements ContentStoreDriver {
 
   async upsertItemRow(tripId: string, item: ItemUpsert): Promise<void> {
     await this.db.run(
-      `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, poi, pending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          trip_id = excluded.trip_id, day_id = excluded.day_id, item_order = excluded.item_order,
-         type = excluded.type, title = excluded.title, note = excluded.note`,
-      [item.id, tripId, item.dayId, item.itemOrder, item.type, item.title, item.note] as SqlValue[],
+         type = excluded.type, title = excluded.title, note = excluded.note, poi = excluded.poi, pending = excluded.pending`,
+      [item.id, tripId, item.dayId, item.itemOrder, item.type, item.title, item.note, item.poiJson ?? null, item.pending ? 1 : 0] as SqlValue[],
     )
   }
 

@@ -51,6 +51,8 @@ export interface ItemUpsert {
   type: string
   title: string
   note: string
+  poiJson?: string | null
+  pending?: boolean
 }
 
 export interface ChecklistUpsert {
@@ -87,6 +89,7 @@ export interface ItemContent {
   title: string
   note: string
   pending: boolean
+  poi?: unknown
 }
 
 export interface DayContent {

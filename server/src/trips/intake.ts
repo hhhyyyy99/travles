@@ -11,8 +11,9 @@ export type ParsedTripIntake = {
 export type TripIntakeError = { ok: false; error: string } | { ok: true; value: ParsedTripIntake }
 
 const DURATION_PATTERN = /(\d{1,2}|[一二三四五六七八九十百两]+)\s*(?:天|日)/
-const DATE_PATTERN = /\d{4}[-/.]\d{1,2}[-/.]\d{1,2}/g
-const TENTATIVE_DATE_PATTERN = /国庆|暑假|寒假|周末|下周|本周|月底|月初|\d{1,2}\s*月|[一二三四五六七八九十]+月/
+const FULL_DATE_PATTERN = /(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{4}年\d{1,2}月\d{1,2}日?)/g
+const SHORT_DATE_PATTERN = /(?:\d{1,2}\s*月\s*\d{1,2}日?|\d{1,2}\s*[/.]\s*\d{1,2})/g
+const TENTATIVE_DATE_PATTERN = /国庆|暑假|寒假|周末|下周|本周|月底|月初|\d{1,2}\s*月|[一二三四五六七八九十]+月|\d{1,2}\s*[/.]\s*\d{1,2}/
 
 /** Parse only the minimum fields needed to preserve a one-sentence draft. */
 export function parseTripIntake(sentence: unknown): TripIntakeError {
@@ -28,16 +29,24 @@ export function parseTripIntake(sentence: unknown): TripIntakeError {
   const destination = extractDestination(originalSentence, durationMatch.index ?? originalSentence.length)
   if (!destination) return { ok: false, error: '请在一句话中写明目的地。' }
 
-  const dates = [...originalSentence.matchAll(DATE_PATTERN)].map((match) => normalizeDate(match[0] ?? '')).filter(Boolean)
+  const fullDateTokens = [...originalSentence.matchAll(FULL_DATE_PATTERN)].map((match) => match[0] ?? '')
+  const shortDateTokens = [...originalSentence.matchAll(SHORT_DATE_PATTERN)].map((match) => match[0] ?? '')
+  const dates = fullDateTokens.map(normalizeDate).filter(Boolean)
   const validRange = dates.length >= 2 && isValidDateString(dates[0]) && isValidDateString(dates[1]) && dates[1]! >= dates[0]!
-  const dateStatus: TripDateStatus = validRange ? 'confirmed' : TENTATIVE_DATE_PATTERN.test(originalSentence) ? 'tentative' : 'unspecified'
+  if (validRange) {
+    const span = inclusiveDaySpan(dates[0]!, dates[1]!)
+    if (span !== durationDays) {
+      return { ok: false, error: `你说的是 ${durationDays} 天，但日期范围是 ${span} 天，请确认日期或行程天数。` }
+    }
+  }
+  const dateStatus: TripDateStatus = validRange ? 'confirmed' : fullDateTokens.length > 0 || shortDateTokens.length > 0 || TENTATIVE_DATE_PATTERN.test(originalSentence) ? 'tentative' : 'unspecified'
   const context: TripPlanningContext = {
     destination,
     durationDays,
     preferences: originalSentence,
     originalSentence,
     dateStatus,
-    ...(dateStatus !== 'unspecified' ? { datePhrase: extractDatePhrase(originalSentence, dates) } : {}),
+    ...(dateStatus !== 'unspecified' ? { datePhrase: extractDatePhrase(originalSentence, [...fullDateTokens, ...shortDateTokens]) } : {}),
   }
   return {
     ok: true,
@@ -81,13 +90,19 @@ function parseDuration(value: string): number {
 }
 
 function normalizeDate(value: string): string {
+  const chinese = value.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日?$/)
+  if (chinese) return `${chinese[1]}-${chinese[2]!.padStart(2, '0')}-${chinese[3]!.padStart(2, '0')}`
   const parts = value.split(/[-/.]/)
   if (parts.length !== 3) return ''
   return `${parts[0]}-${parts[1]!.padStart(2, '0')}-${parts[2]!.padStart(2, '0')}`
 }
 
-function extractDatePhrase(sentence: string, dates: string[]): string {
-  if (dates.length >= 2) return dates.slice(0, 2).join(' 至 ')
+function extractDatePhrase(sentence: string, tokens: string[]): string {
+  if (tokens.length >= 2) return tokens.slice(0, 2).join(' 至 ')
   const match = sentence.match(TENTATIVE_DATE_PATTERN)
   return match?.[0] ?? ''
+}
+
+function inclusiveDaySpan(startDate: string, endDate: string): number {
+  return Math.round((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000) + 1
 }
