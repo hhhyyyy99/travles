@@ -9,6 +9,7 @@ import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
 import { TripPatchIdConflictError } from './types.js'
 import type { TripPatchDayUpsert, TripPatchItemUpsert, TripPatchLegUpsert, TripPatchStoreDriver } from './types.js'
+import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
 export class SqliteTripPatchStore implements TripPatchStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
@@ -149,6 +150,17 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
       `DELETE FROM legs WHERE trip_id = ? AND (from_item_id IN (${placeholders}) OR to_item_id IN (${placeholders}))`,
       [tripId, ...itemIds, ...itemIds] as SqlValue[],
     )
+  }
+
+  async updateDaySchedule(tripId: string, updates: DayScheduleUpdate[]): Promise<void> {
+    for (const update of updates) {
+      await this.db.run('UPDATE days SET idx = ?, date = ? WHERE id = ? AND trip_id = ?', [
+        update.idx,
+        update.date,
+        update.id,
+        tripId,
+      ] as SqlValue[])
+    }
   }
 
   private async ownerTripId(table: 'days' | 'items' | 'legs', id: string): Promise<string | null> {

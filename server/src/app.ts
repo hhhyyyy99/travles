@@ -46,6 +46,9 @@ import { createProviderModel, providerFromEnv } from './ai-providers/model.js'
 import { mountAiProviderRoutes, type AiProviderProbe } from './ai-providers/routes.js'
 import type { AiProviderStoreDriver } from './ai-providers/types.js'
 import { routeAmapLeg } from './recommendations/route.js'
+import { TripEventHub } from './trip-events/hub.js'
+import { registerTripEventRoutes } from './trip-events/routes.js'
+import { synchronizeTripSchedule } from './trip-events/schedule.js'
 
 export type AppEnv = {
   Bindings: HonoBindings
@@ -129,6 +132,8 @@ export type CreateAppOptions = {
   aiProviderProbe?: AiProviderProbe
   /** Injected route lookup; production uses the AMap driving API. */
   routeLegs?: import('./recommendations/types.js').RouteLegSearch
+  /** Process-local fan-out bus for workbench near-real-time updates. */
+  tripEvents?: TripEventHub
 }
 
 /** Default SQLite location: <server>/data/trips.db (gitignored). */
@@ -146,6 +151,11 @@ function defaultDatabaseUrl(): string {
  */
 export async function createApp(options: CreateAppOptions = {}): Promise<Hono<AppEnv>> {
   const app = new Hono<AppEnv>()
+  const tripEvents = options.tripEvents ?? new TripEventHub()
+
+  const notifyTrip = (tripId: string, kind: 'canvas' | 'chat' | 'trip', reason: string): void => {
+    tripEvents.publish(tripId, kind, reason)
+  }
 
   // Provider settings and the planner model share the app database, but the
   // resolver is intentionally lazy so injected in-memory test apps never open
@@ -291,6 +301,17 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     probe: options.aiProviderProbe,
   })
 
+  // The event stream is mounted after the repository is resolved so it can
+  // reject unknown trips before opening a long-lived connection.
+  registerTripEventRoutes(app, { tripRepository, events: tripEvents })
+
+  const synchronizeSchedule = async (
+    tripId: string,
+    store: Parameters<typeof synchronizeTripSchedule>[1],
+    compactDates = false,
+  ): Promise<void> => {
+    await synchronizeTripSchedule(tripRepository, store, tripId, { compactDates })
+  }
 
   // ---- Trip CRUD (ticket 02) ------------------------------------------------
   // Responses stay forward-compatible with later tickets: list/create/rename/
@@ -325,12 +346,15 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     }
     const result = await tripRepository.update(c.req.param('id'), patch)
     if (!result.ok) return tripError(c, result.error, result.code)
+    notifyTrip(c.req.param('id'), 'trip', 'trip_updated')
     return c.json({ trip: result.trip })
   })
 
   app.delete('/api/trips/:id', async (c) => {
-    const result = await tripRepository.remove(c.req.param('id'))
+    const tripId = c.req.param('id')
+    const result = await tripRepository.remove(tripId)
     if (!result.ok) return tripError(c, result.error, result.code)
+    notifyTrip(tripId, 'trip', 'trip_deleted')
     return c.json({ ok: true })
   })
 
@@ -413,7 +437,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     toolsStore = createSqliteToolsStore(toolsDb)
     return toolsStore
   }
-  mountToolsRoutes(app, { tripRepository, resolveToolsStore })
+  mountToolsRoutes(app, {
+    tripRepository,
+    resolveToolsStore,
+    onTripUpdated: (tripId, reason) => notifyTrip(tripId, 'canvas', reason),
+  })
 
   // ---- Recommendations / stash / favorites (ticket 15) ---------------------
   // The map consumes one aggregate snapshot; mutations remain separate so a
@@ -461,6 +489,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
       color: body.color,
     })
     if (!result.ok) return tripError(c, result.error, result.code)
+    await synchronizeSchedule(tripId, await resolveDaysAdminStore(), true)
+    notifyTrip(tripId, 'canvas', 'day_created')
     return c.json({ day: result.day }, 201)
   })
 
@@ -477,6 +507,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
       patch,
     )
     if (!result.ok) return tripError(c, result.error, result.code)
+    await synchronizeSchedule(tripId, await resolveDaysAdminStore(), true)
+    notifyTrip(tripId, 'canvas', 'day_updated')
     return c.json({ day: result.day })
   })
 
@@ -486,6 +518,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
       c.req.param('dayId'),
     )
     if (!result.ok) return tripError(c, result.error, result.code)
+    await synchronizeSchedule(c.req.param('id'), await resolveDaysAdminStore(), true)
+    notifyTrip(c.req.param('id'), 'canvas', 'day_deleted')
     return c.json({ ok: true, removedItems: result.removedItems })
   })
 
@@ -532,6 +566,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).createItem(tripId, body)
     if (!result.ok) return tripError(c, result.error, result.code)
     await systemMessages.recordSystemMessage(tripId, `手动添加卡片「${result.item.title}」`)
+    notifyTrip(tripId, 'canvas', 'item_created')
+    notifyTrip(tripId, 'chat', 'manual_edit')
     return c.json({ item: result.item, legs: result.legs }, 201)
   })
 
@@ -546,6 +582,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     )
     if (!result.ok) return tripError(c, result.error, result.code)
     await systemMessages.recordSystemMessage(tripId, `手动调整顺序：移动卡片「${result.item.title}」`)
+    notifyTrip(tripId, 'canvas', 'item_moved')
+    notifyTrip(tripId, 'chat', 'manual_edit')
     return c.json({ item: result.item, legs: result.legs })
   })
 
@@ -560,6 +598,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     )
     if (!result.ok) return tripError(c, result.error, result.code)
     await systemMessages.recordSystemMessage(tripId, `手动复制卡片「${result.item.title}」`)
+    notifyTrip(tripId, 'canvas', 'item_copied')
+    notifyTrip(tripId, 'chat', 'manual_edit')
     return c.json({ item: result.item, legs: result.legs }, 201)
   })
 
@@ -582,6 +622,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     )
     if (!result.ok) return tripError(c, result.error, result.code)
     await systemMessages.recordSystemMessage(tripId, `手动编辑卡片「${result.item.title}」`)
+    notifyTrip(tripId, 'canvas', 'item_updated')
+    notifyTrip(tripId, 'chat', 'manual_edit')
     return c.json({ item: result.item })
   })
 
@@ -594,6 +636,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     )
     if (!result.ok) return tripError(c, result.error, result.code)
     await systemMessages.recordSystemMessage(tripId, `手动删除卡片`)
+    notifyTrip(tripId, 'canvas', 'item_deleted')
+    notifyTrip(tripId, 'chat', 'manual_edit')
     return c.json({ ok: true, legs: result.legs })
   })
 
@@ -626,6 +670,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     modelConfigured: async () => (await resolveProviderModel()) !== null,
     memoryConfigured,
     resolveTripPatchStore,
+    events: tripEvents,
+    onTripPatched: async (tripId) => {
+      const store = await resolveTripPatchStore()
+      await synchronizeSchedule(tripId, store, true)
+      notifyTrip(tripId, 'canvas', 'ai_patch')
+    },
   })
 
   // Ticket 13: AI proposals are read-only until the user confirms them. The

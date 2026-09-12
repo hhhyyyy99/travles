@@ -30,9 +30,22 @@ export type ListViewColumnProps = {
   onThemeSave?: (dayId: string, theme: string) => void
   onDeleteDay?: (day: WorkbenchDay) => void
   onOptimizeDay?: (day: WorkbenchDay) => void
+  syncing?: boolean
+  onCardClick?: (itemId: string) => void
+  highlightItemId?: string | null
 }
 
-export default function ListViewColumn({ days, legs, onAddDay, onThemeSave, onDeleteDay, onOptimizeDay }: ListViewColumnProps) {
+export default function ListViewColumn({
+  days,
+  legs,
+  onAddDay,
+  onThemeSave,
+  onDeleteDay,
+  onOptimizeDay,
+  syncing = false,
+  onCardClick,
+  highlightItemId,
+}: ListViewColumnProps) {
   const legLookup = legsByPair(legs)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // Days seen so far, so a freshly added day can auto-select itself.
@@ -45,10 +58,26 @@ export default function ListViewColumn({ days, legs, onAddDay, onThemeSave, onDe
     if (fresh) setSelectedId(fresh.id)
   }, [days])
 
+  useEffect(() => {
+    if (!highlightItemId) return
+    const containingDay = days.find((day) => day.items.some((item) => item.id === highlightItemId))
+    if (containingDay) setSelectedId(containingDay.id)
+  }, [days, highlightItemId])
+
   const selected = days.find((day) => day.id === selectedId) ?? days[0] ?? null
 
   return (
-    <div id="workbench-list" className="flex min-h-0 flex-1 flex-col bg-paper">
+    <div id="workbench-list" className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-paper" aria-busy={syncing}>
+      {syncing && (
+        <div
+          data-list-syncing
+          className="pointer-events-none absolute right-[14px] top-[58px] z-[10] inline-flex items-center gap-[5px] rounded-[5px] border border-line bg-white/95 px-[8px] py-[4px] text-[11px] text-muted shadow-sm"
+          aria-live="polite"
+        >
+          <span aria-hidden="true" className="workbench-spinner h-[11px] w-[11px] rounded-full border-2 border-line border-t-green" />
+          路线重算中…
+        </div>
+      )}
       <div
         id="workbench-list-tabs"
         role="tablist"
@@ -107,6 +136,8 @@ export default function ListViewColumn({ days, legs, onAddDay, onThemeSave, onDe
           onThemeSave={onThemeSave}
           onDeleteDay={onDeleteDay}
           onOptimizeDay={onOptimizeDay}
+          onCardClick={onCardClick}
+          highlightItemId={highlightItemId}
         />
       )}
     </div>
@@ -119,12 +150,16 @@ function DayTimeline({
   onThemeSave,
   onDeleteDay,
   onOptimizeDay,
+  onCardClick,
+  highlightItemId,
 }: {
   day: WorkbenchDay
   legLookup: Map<string, WorkbenchLeg>
   onThemeSave?: (dayId: string, theme: string) => void
   onDeleteDay?: (day: WorkbenchDay) => void
   onOptimizeDay?: (day: WorkbenchDay) => void
+  onCardClick?: (itemId: string) => void
+  highlightItemId?: string | null
 }) {
   const accent = dayAccentColor(day.color, day.index)
   const dateLabel = dayDateLabel(day.date) || `D${day.index + 1}`
@@ -182,7 +217,22 @@ function DayTimeline({
         {day.items.map((item, i) => (
           <div key={item.id} className="flex flex-col gap-[12px]">
             {i > 0 && <LegRow leg={legLookup.get(`${day.items[i - 1]?.id}|${item.id}`) ?? null} />}
-            {item.type === 'stay' ? <StayRow item={item} accent={accent} /> : <CanvasCard item={item} order={i + 1} accent={accent} />}
+            {item.type === 'stay' ? (
+              <StayRow
+                item={item}
+                accent={accent}
+                onClick={onCardClick ? () => onCardClick(item.id) : undefined}
+                highlighted={highlightItemId === item.id}
+              />
+            ) : (
+              <CanvasCard
+                item={item}
+                order={i + 1}
+                accent={accent}
+                onClick={onCardClick ? () => onCardClick(item.id) : undefined}
+                highlighted={highlightItemId === item.id}
+              />
+            )}
           </div>
         ))}
       </div>
@@ -191,14 +241,32 @@ function DayTimeline({
 }
 
 /** 住宿行 — the stay card's compact list form (bed icon + title + note). */
-function StayRow({ item, accent }: { item: WorkbenchItem; accent: string }) {
+function StayRow({
+  item,
+  accent,
+  onClick,
+  highlighted = false,
+}: {
+  item: WorkbenchItem
+  accent: string
+  onClick?: () => void
+  highlighted?: boolean
+}) {
   const cover = item.images[0]?.url ?? null
   return (
     <article
       data-list-stay={item.id}
       data-card-type={item.type}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (onClick && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault()
+          onClick()
+        }
+      }}
+      tabIndex={onClick ? 0 : undefined}
       className="flex items-center gap-[10px] overflow-hidden rounded-[6px] border border-line border-l-[3px] bg-white px-[10px] py-[8px] shadow-sm"
-      style={{ borderLeftColor: accent }}
+      style={{ borderLeftColor: accent, ...(highlighted ? { boxShadow: `0 0 0 2px ${accent}` } : {}) }}
     >
       <span
         aria-hidden="true"

@@ -44,6 +44,7 @@ import {
   type AiProposalState,
   type ProposalRequest,
 } from '../../domain/aiProposals'
+import { subscribeTripEvents } from '../../domain/tripEvents'
 import { AI_WIDTH_MAX, AI_WIDTH_MIN } from '../../domain/workbenchLayout'
 import type { WorkbenchView } from '../../domain/workbenchLayout'
 import { useWorkbenchLayout } from '../../hooks/useWorkbenchLayout'
@@ -64,6 +65,8 @@ type LoadState =
   | { status: 'error'; error: string }
   | { status: 'ready'; data: TripCanvasData }
 
+type MobilePane = 'chat' | 'canvas' | 'map'
+
 export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBack: () => void }) {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   // Canvas ↔ map linkage (ticket 05): one shared selection — canvas card
@@ -83,6 +86,11 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   // Ticket 13: one active proposal at a time. Generation is read-only; only
   // the explicit confirm action below calls the server apply route.
   const [proposalState, setProposalState] = useState<AiProposalState>({ status: 'idle' })
+  const [compactViewport, setCompactViewport] = useState(false)
+  const [mobilePane, setMobilePane] = useState<MobilePane>('canvas')
+  const [canvasSyncing, setCanvasSyncing] = useState(false)
+  const [pendingMutationCount, setPendingMutationCount] = useState(0)
+  const isBusy = canvasSyncing || pendingMutationCount > 0
 
   // Latest ready data for async handlers (avoids stale-closure rollbacks).
   const readyData = state.status === 'ready' ? state.data : null
@@ -105,6 +113,40 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     }
   }, [tripId])
 
+  // The desktop three-column layout becomes a single full-width pane below
+  // 1024px. Keep the media query in JS because tab selection controls which
+  // stateful panel is mounted in the compact layout.
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 1023px)')
+    const sync = () => setCompactViewport(media.matches)
+    sync()
+    media.addEventListener?.('change', sync)
+    return () => media.removeEventListener?.('change', sync)
+  }, [])
+
+  // Any committed write from another tab/process instance invalidates the
+  // current projection. A fresh canvas read keeps cards, legs, and the trip
+  // badge on one authoritative snapshot.
+  useEffect(() => {
+    let active = true
+    const unsubscribe = subscribeTripEvents(tripId, {
+      onUpdate: (event) => {
+        if (!active || (event.kind !== 'canvas' && event.kind !== 'trip')) return
+        setCanvasSyncing(true)
+        void fetchTripCanvas(tripId).then((result) => {
+          if (!active) return
+          if (result.ok) setState({ status: 'ready', data: result.data })
+        }).finally(() => {
+          if (active) setCanvasSyncing(false)
+        })
+      },
+    })
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [tripId])
+
   /** Local day-list patch on the ready state (no-op when not ready). */
   const patchDays = (update: (days: WorkbenchDay[]) => WorkbenchDay[]) => {
     setState((prev) =>
@@ -116,11 +158,21 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   // The chat panel calls this when an `applied_patch` SSE event arrives: the
   // trip changed server-side, so refetch /canvas and reproject all columns.
   const handleTripPatched = () => {
+    setCanvasSyncing(true)
     void fetchTripCanvas(tripId).then((result) => {
       if (result.ok) setState({ status: 'ready', data: result.data })
       // Refetch failures keep the current canvas — the chat card still reports
-      // the write; a manual refresh recovers.
-    })
+      // the write; a later event or manual refresh recovers.
+    }).finally(() => setCanvasSyncing(false))
+  }
+
+  const withPendingMutation = async <T,>(task: () => Promise<T>): Promise<T> => {
+    setPendingMutationCount((count) => count + 1)
+    try {
+      return await task()
+    } finally {
+      setPendingMutationCount((count) => Math.max(0, count - 1))
+    }
   }
 
   const handleProposalRequest = async (request: ProposalRequest) => {
@@ -161,7 +213,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   // ---- Day management (ticket 10) -------------------------------------------
 
   /** Append a day; the server answers with the created day (next date). */
-  const handleAddDay = async () => {
+  const handleAddDay = () => withPendingMutation(async () => {
     setActionError('')
     const result = await createWorkbenchDay(tripId)
     if (!result.ok) {
@@ -169,10 +221,10 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
       return
     }
     patchDays((days) => [...days, result.data].sort((a, b) => a.index - b.index))
-  }
+  })
 
   /** Optimistic theme edit; reverts the day's theme when the write fails. */
-  const handleThemeSave = async (dayId: string, theme: string) => {
+  const handleThemeSave = (dayId: string, theme: string) => withPendingMutation(async () => {
     const previous = dataRef.current?.days.find((day) => day.id === dayId)?.theme ?? ''
     setActionError('')
     patchDays((days) => days.map((day) => (day.id === dayId ? { ...day, theme } : day)))
@@ -181,12 +233,12 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
       patchDays((days) => days.map((day) => (day.id === dayId ? { ...day, theme: previous } : day)))
       setActionError(result.error)
     }
-  }
+  })
 
   /** Optimistic day delete; restores the whole day (with its cards) on failure. */
   const handleDeleteDay = (day: WorkbenchDay) => setPendingDelete(day)
 
-  const confirmDeleteDay = async () => {
+  const confirmDeleteDay = () => withPendingMutation(async () => {
     const day = pendingDelete
     if (!day) return
     setPendingDelete(null)
@@ -198,7 +250,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
       if (snapshot) setState({ status: 'ready', data: snapshot })
       setActionError(result.error)
     }
-  }
+  })
 
   const pendingDeleteLabel = pendingDelete
     ? `${pendingDelete.date ? pendingDelete.date : `D${pendingDelete.index + 1}`}${pendingDelete.theme ? ` ${pendingDelete.theme}` : ''}`
@@ -224,7 +276,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   const findItem = (days: WorkbenchDay[], itemId: string): WorkbenchItem | undefined =>
     days.flatMap((day) => day.items).find((item) => item.id === itemId)
 
-  const handleMoveItem = async (itemId: string, toDayId: string, toIndex: number) => {
+  const handleMoveItem = (itemId: string, toDayId: string, toIndex: number) => withPendingMutation(async () => {
     const snapshot = dataRef.current
     setActionError('')
     patchDays((days) => applyItemMove(days, itemId, toDayId, toIndex))
@@ -234,9 +286,9 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
       return
     }
     patchLegs(result.data.legs)
-  }
+  })
 
-  const handleCopyItem = async (itemId: string, toDayId: string, toIndex?: number) => {
+  const handleCopyItem = (itemId: string, toDayId: string, toIndex?: number) => withPendingMutation(async () => {
     const snapshot = dataRef.current
     const source = snapshot ? findItem(snapshot.days, itemId) : undefined
     if (!source) return
@@ -250,9 +302,9 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     }
     patchDays((days) => applyItemReplace(days, temp.id, result.data.item))
     patchLegs(result.data.legs)
-  }
+  })
 
-  const handleCreateCard = async (input: WorkbenchItemCreateInput): Promise<WorkbenchItem | null> => {
+  const handleCreateCard = (input: WorkbenchItemCreateInput): Promise<WorkbenchItem | null> => withPendingMutation(async () => {
     const snapshot = dataRef.current
     setAddCardDay(null)
     const temp: WorkbenchItem = {
@@ -276,7 +328,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     patchDays((days) => applyItemReplace(days, temp.id, result.data.item))
     patchLegs(result.data.legs)
     return result.data.item
-  }
+  })
 
   /** Schedule a recommendation/stash item through the same card API as manual adds. */
   const handleSchedulePoi = async (poi: RecommendationPoi, stashId?: string, dayId?: string, index?: number): Promise<boolean> => {
@@ -305,7 +357,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     return true
   }
 
-  const handleDeleteItem = async (itemId: string) => {
+  const handleDeleteItem = (itemId: string) => withPendingMutation(async () => {
     const snapshot = dataRef.current
     setActionError('')
     patchDays((days) => applyItemRemove(days, itemId))
@@ -315,9 +367,9 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
       return
     }
     patchLegs(result.data.legs)
-  }
+  })
 
-  const handleNoteSave = async (itemId: string, note: string) => {
+  const handleNoteSave = (itemId: string, note: string) => withPendingMutation(async () => {
     const snapshot = dataRef.current
     setActionError('')
     patchDays((days) => applyItemPatch(days, itemId, { note }))
@@ -328,9 +380,9 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     }
     // Server normalization (e.g. image captions) wins on field edits.
     patchDays((days) => applyItemPatch(days, itemId, result.data))
-  }
+  })
 
-  const handleImageAdd = async (itemId: string, url: string) => {
+  const handleImageAdd = (itemId: string, url: string) => withPendingMutation(async () => {
     const snapshot = dataRef.current
     const current = snapshot ? findItem(snapshot.days, itemId) : undefined
     if (!current) return
@@ -343,10 +395,18 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
       return
     }
     patchDays((days) => applyItemPatch(days, itemId, result.data))
-  }
+  })
+
+  const aiVisible = compactViewport ? mobilePane === 'chat' : !layout.aiCollapsed
+  const canvasVisible = compactViewport ? mobilePane === 'canvas' : !layout.canvasCollapsed
+  const mapVisible = compactViewport ? mobilePane === 'map' : !layout.mapCollapsed
 
   return (
-    <div className="flex h-screen min-h-0 flex-col bg-paper text-ink">
+    <div
+      className={`flex h-screen min-h-0 flex-col bg-paper text-ink ${compactViewport ? 'workbench-compact' : ''}`}
+      data-workbench-mode={compactViewport ? 'tabs' : 'columns'}
+      aria-busy={state.status === 'loading' || isBusy}
+    >
       {state.status === 'ready' && (
         <WorkbenchTopbar
           trip={state.data.trip}
@@ -376,21 +436,16 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
         </header>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      {compactViewport && <MobileWorkbenchTabs active={mobilePane} onChange={setMobilePane} />}
+
+      <div className={`flex min-h-0 flex-1 ${compactViewport ? 'flex-col' : ''}`} data-workbench-panels>
         {/* 左栏 AI —— 可拖拽调宽、可收起 */}
-        {layout.aiCollapsed ? (
-          <CollapsedRail
-            id="workbench-rail-ai"
-            label="圆周 AI"
-            icon={<MessageCircle aria-hidden="true" className="w-[16px]" />}
-            onExpand={() => toggle('ai')}
-          />
-        ) : (
+        {aiVisible ? (
           <>
             <div
               id="workbench-column-ai"
-              className="flex shrink-0 flex-col border-r border-line bg-white"
-              style={{ width: layout.aiWidth }}
+              className={`flex min-h-0 shrink-0 flex-col border-r border-line bg-white ${compactViewport ? 'w-full flex-1 border-r-0' : ''}`}
+              style={compactViewport ? undefined : { width: layout.aiWidth }}
             >
               <ChatPanel
                 tripId={tripId}
@@ -404,23 +459,29 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
                 onRetryProposal={handleProposalRetry}
               />
             </div>
-            <AiResizeHandle width={layout.aiWidth} onResize={resizeAi} />
+            {!compactViewport && <AiResizeHandle width={layout.aiWidth} onResize={resizeAi} />}
           </>
+        ) : (
+          <CollapsedRail
+            id="workbench-rail-ai"
+            label="圆周 AI"
+            icon={<MessageCircle aria-hidden="true" className="w-[16px]" />}
+            onExpand={() => toggle('ai')}
+          />
         )}
 
         {/* 中栏 行程画布 —— 可收起 */}
-        {layout.canvasCollapsed ? (
-          <CollapsedRail
-            id="workbench-rail-canvas"
-            label="行程画布"
-            icon={<Sparkles aria-hidden="true" className="w-[16px]" />}
-            onExpand={() => toggle('canvas')}
-          />
-        ) : (
-          <div className="flex min-w-0 flex-1 flex-col">
-            <div className="flex items-center border-b border-line bg-white px-[14px] py-[8px] text-[13px] font-[550]">
+        {canvasVisible ? (
+          <div id="workbench-column-canvas" className={`flex min-h-0 min-w-0 flex-1 flex-col ${compactViewport ? 'w-full' : ''}`}>
+            <div className="flex shrink-0 items-center border-b border-line bg-white px-[14px] py-[8px] text-[13px] font-[550]">
               行程画布
               <ViewToggle view={layout.view} onChange={setView} />
+              {isBusy && (
+                <span data-workbench-syncing className="ml-[10px] inline-flex items-center gap-[5px] text-[11px] font-normal text-muted" aria-live="polite">
+                  <span aria-hidden="true" className="workbench-spinner h-[11px] w-[11px] rounded-full border-2 border-line border-t-green" />
+                  正在同步路线
+                </span>
+              )}
               <button
                 type="button"
                 data-action="collapse-canvas"
@@ -438,7 +499,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
               </p>
             )}
             {state.status === 'ready' ? (
-              <div className="flex min-h-0 flex-1">
+              <div className="flex min-h-0 min-w-0 flex-1" data-workbench-updating={canvasSyncing || undefined}>
                 {/* 画布左缘「工具」入口 + 停靠面板（ticket 14） */}
                 <ToolsRail active={toolsOpen} onToggle={toggleTools} />
                 {toolsOpen !== null && (
@@ -452,6 +513,9 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
                     onThemeSave={handleThemeSave}
                     onDeleteDay={handleDeleteDay}
                     onOptimizeDay={(day) => void handleProposalRequest({ kind: 'day-optimize', dayId: day.id })}
+                    syncing={isBusy}
+                    onCardClick={setSelectedItemId}
+                    highlightItemId={selectedItemId}
                   />
                 ) : (
                   <CanvasColumn
@@ -470,29 +534,28 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
                     onDropStash={(stashId, poi, dayId, index) => void handleSchedulePoi(poi, stashId, dayId, index)}
                     onNoteSave={handleNoteSave}
                     onImageAdd={handleImageAdd}
+                    syncing={isBusy}
                   />
                 )}
               </div>
             ) : (
-              <div className="grid flex-1 place-items-center text-[13px] text-muted">
-                {state.status === 'loading' ? '加载行程中…' : state.error}
-              </div>
+              <WorkbenchLoadingSkeleton error={state.status === 'error' ? state.error : undefined} />
             )}
           </div>
+        ) : (
+          <CollapsedRail
+            id="workbench-rail-canvas"
+            label="行程画布"
+            icon={<Sparkles aria-hidden="true" className="w-[16px]" />}
+            onExpand={() => toggle('canvas')}
+          />
         )}
 
         {/* 右栏 地图 —— 可收起（ticket 05：真实路线投影 + 画布联动） */}
-        {layout.mapCollapsed ? (
-          <CollapsedRail
-            id="workbench-rail-map"
-            label="路线地图"
-            icon={<MapIcon aria-hidden="true" className="w-[16px]" />}
-            onExpand={() => toggle('map')}
-          />
-        ) : (
+        {mapVisible ? (
           <div
             id="workbench-column-map"
-            className="flex w-[320px] shrink-0 flex-col border-l border-line bg-white"
+            className={`flex min-h-0 shrink-0 flex-col border-l border-line bg-white ${compactViewport ? 'w-full flex-1 border-l-0' : 'w-[320px]'}`}
           >
             <MapPanel
               tripId={tripId}
@@ -503,8 +566,16 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
               onCollapse={() => toggle('map')}
               focus={mapFocus}
               onSchedulePoi={handleSchedulePoi}
+              syncing={isBusy}
             />
           </div>
+        ) : (
+          <CollapsedRail
+            id="workbench-rail-map"
+            label="路线地图"
+            icon={<MapIcon aria-hidden="true" className="w-[16px]" />}
+            onExpand={() => toggle('map')}
+          />
         )}
       </div>
 
@@ -530,6 +601,71 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
         onConfirm={confirmDeleteDay}
         onCancel={() => setPendingDelete(null)}
       />
+    </div>
+  )
+}
+
+function MobileWorkbenchTabs({ active, onChange }: { active: MobilePane; onChange: (pane: MobilePane) => void }) {
+  const tabs: { id: MobilePane; label: string; icon: React.ReactNode }[] = [
+    { id: 'chat', label: '圆周 AI', icon: <MessageCircle aria-hidden="true" className="w-[15px]" /> },
+    { id: 'canvas', label: '行程画布', icon: <Sparkles aria-hidden="true" className="w-[15px]" /> },
+    { id: 'map', label: '路线地图', icon: <MapIcon aria-hidden="true" className="w-[15px]" /> },
+  ]
+  return (
+    <nav
+      id="workbench-mobile-tabs"
+      role="tablist"
+      aria-label="工作台视图"
+      className="flex h-[46px] shrink-0 items-center gap-[4px] border-b border-line bg-white px-[8px]"
+    >
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={active === tab.id}
+          aria-controls={`workbench-column-${tab.id === 'chat' ? 'ai' : tab.id}`}
+          data-workbench-mobile-tab={tab.id}
+          onClick={() => onChange(tab.id)}
+          className={`flex h-[32px] min-w-0 flex-1 items-center justify-center gap-[5px] rounded-[5px] px-[8px] text-[12px] transition-colors ${
+            active === tab.id ? 'bg-green text-white' : 'text-muted hover:bg-paper hover:text-ink'
+          }`}
+        >
+          {tab.icon}
+          {tab.label}
+        </button>
+      ))}
+    </nav>
+  )
+}
+
+function WorkbenchLoadingSkeleton({ error }: { error?: string }) {
+  if (error) {
+    return (
+      <div id="workbench-loading" data-workbench-loading className="flex flex-1 flex-col items-center justify-center gap-[12px] px-[20px] text-center text-[13px] text-red">
+        <p data-workbench-load-error>{error}</p>
+        <p className="text-[12px] text-muted">请返回行程列表后重试。</p>
+      </div>
+    )
+  }
+  return (
+    <div id="workbench-loading" data-workbench-loading className="flex min-h-0 flex-1 flex-col gap-[14px] overflow-hidden p-[16px]" aria-live="polite">
+      <div data-workbench-skeleton className="h-[18px] w-[38%] rounded-[4px] bg-line/70" />
+      <div className="grid min-h-0 flex-1 gap-[12px] sm:grid-cols-2">
+        {[0, 1].map((column) => (
+          <div key={column} className="flex min-h-[220px] flex-col gap-[12px] rounded-[8px] border border-line bg-white p-[12px]">
+            <div className="h-[16px] w-[45%] rounded-[4px] bg-line/70" />
+            {[0, 1, 2].map((row) => (
+              <div key={row} className="h-[56px] shrink-0 rounded-[6px] bg-paper">
+                <div className="mx-[10px] pt-[12px]">
+                  <div className="h-[10px] w-[70%] rounded-[3px] bg-line/70" />
+                  <div className="mt-[8px] h-[8px] w-[45%] rounded-[3px] bg-line/50" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

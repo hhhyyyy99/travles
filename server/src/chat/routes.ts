@@ -117,6 +117,7 @@ import {
   createPatchTurnState,
 } from '../trip-patch/tool.js'
 import type { TripPatchStoreDriver } from '../trip-patch/types.js'
+import type { TripEventHub } from '../trip-events/hub.js'
 
 export type ChatRouteOptions = {
   tripRepository: TripRepository
@@ -131,6 +132,10 @@ export type ChatRouteOptions = {
    * absent the tool answers "storage unavailable" instead of writing.
    */
   resolveTripPatchStore?: () => Promise<TripPatchStoreDriver>
+  /** Broadcast a committed patch so other workbench tabs refetch the canvas. */
+  onTripPatched?: (tripId: string) => Promise<void> | void
+  /** Broadcast persisted chat turns to other tabs showing this trip. */
+  events?: TripEventHub
 }
 
 /** Total `apply_trip_patch` calls allowed per turn (initial + 2 retries). */
@@ -371,6 +376,15 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         return
       }
 
+      if (patchTurn.applied !== null) {
+        try {
+          await options.onTripPatched?.(tripId)
+        } catch {
+          // The patch itself is already committed. A later event or manual
+          // refresh can repair schedule metadata if this side effect fails.
+        }
+      }
+
       // Ticket 07: persist the round metadata on the assistant row (think /
       // sources / meta columns) and echo it as a `meta` event before done.
       if (meta !== null) {
@@ -408,6 +422,7 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         event: 'done',
         data: JSON.stringify({ userMessage: userSaved.message, assistantMessage: assistantSaved.message }),
       })
+      options.events?.publish(tripId, 'chat', 'message_created')
     })
   })
 }

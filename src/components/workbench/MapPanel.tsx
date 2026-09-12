@@ -75,6 +75,8 @@ export interface MapPanelProps {
   focus?: { name: string; lat: number; lng: number; amapId?: string } | null
   /** Schedule a recommendation through the existing item-admin write path. */
   onSchedulePoi?: (poi: RecommendationPoi, stashId?: string, dayId?: string, index?: number) => Promise<boolean>
+  /** A card edit or remote update is recomputing the route projection. */
+  syncing?: boolean
 }
 
 function findSelectedItem(days: WorkbenchDay[], itemId: string | null): { item: WorkbenchItem; day: WorkbenchDay } | null {
@@ -86,7 +88,7 @@ function findSelectedItem(days: WorkbenchDay[], itemId: string | null): { item: 
   return null
 }
 
-export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectItem, onCollapse, focus, onSchedulePoi }: MapPanelProps) {
+export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectItem, onCollapse, focus, onSchedulePoi, syncing = false }: MapPanelProps) {
   const { containerRef, handleRef, tileError } = useRouteMap({
     onDaySelect: () => {},
     onMapReady: () => {
@@ -371,7 +373,7 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" aria-busy={syncing}>
       <div className="flex items-center gap-[8px] border-b border-line px-[14px] py-[10px] text-[13px] font-[550]">
         <MapIcon aria-hidden="true" className="w-[15px] text-green" />
         路线地图
@@ -392,6 +394,16 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
         {tileError && (
           <div id="workbench-map-error" className="absolute inset-x-[10px] top-[8px] rounded-[5px] bg-white/95 px-[10px] py-[6px] text-[11px] text-muted shadow-sm">
             底图暂不可用，地点与路线示意仍可查看。
+          </div>
+        )}
+        {syncing && (
+          <div
+            data-map-syncing
+            className="pointer-events-none absolute left-[8px] top-[8px] z-[510] inline-flex items-center gap-[5px] rounded-[5px] border border-line bg-white/95 px-[8px] py-[4px] text-[11px] text-muted shadow-sm"
+            aria-live="polite"
+          >
+            <span aria-hidden="true" className="workbench-spinner h-[11px] w-[11px] rounded-full border-2 border-line border-t-green" />
+            路线重算中…
           </div>
         )}
 
@@ -572,6 +584,10 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
                 {poi.introSummary}
               </p>
             )}
+
+            <p data-reference-disclaimer className="mt-[8px] text-[11px] leading-[1.6] text-muted">
+              信息仅供参考，出发前请以官方信息与实时导航为准。
+            </p>
 
             <div className="mt-[10px] flex items-center gap-[8px]">
               <button

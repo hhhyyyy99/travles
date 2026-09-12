@@ -17,6 +17,7 @@
    * driver performs the cleanup explicitly).
  */
 import type { DayRow } from '../days/types.js'
+import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
 /** Validated insert payload (every field a server-checked value). */
 export interface DayInsert {
@@ -57,6 +58,8 @@ export interface DaysAdminStoreDriver {
   deleteItemsForDay(dayId: string): Promise<void>
   /** Delete the day row itself. */
   deleteDayRow(dayId: string): Promise<void>
+  /** Reindex a trip's days after a delete or AI patch; optional for old seams. */
+  updateDaySchedule?(tripId: string, updates: DayScheduleUpdate[]): Promise<void>
 }
 
 /** Machine-readable failure class shared with the other repositories. */

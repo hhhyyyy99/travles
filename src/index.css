@@ -98,6 +98,70 @@
   html {
     scroll-behavior: auto;
   }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@keyframes workbench-card-refresh {
+  from {
+    opacity: 0.45;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes workbench-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Workbench projections reserve their own space while a remote snapshot is
+ * applied, so route recalculation never changes the surrounding columns. */
+#workbench-column-ai,
+#workbench-column-map,
+#workbench-canvas,
+#workbench-list {
+  min-width: 0;
+  contain: layout paint;
+}
+
+[data-workbench-updating="true"] [data-canvas-card],
+[data-workbench-updating="true"] [data-list-stay] {
+  animation: workbench-card-refresh 220ms ease-out both;
+}
+
+[data-workbench-updating="true"] [data-canvas-card]:nth-child(2n),
+[data-workbench-updating="true"] [data-list-stay]:nth-child(2n) {
+  animation-delay: 30ms;
+}
+
+.workbench-spinner {
+  animation: workbench-spin 850ms linear infinite;
+}
+
+@media (max-width: 1023px) {
+  #workbench-column-ai,
+  #workbench-column-map,
+  #workbench-list,
+  #workbench-canvas {
+    width: 100%;
+    min-width: 0;
+  }
+
+  #workbench-list-tabs {
+    min-width: 0;
+  }
 }
 
 /*
