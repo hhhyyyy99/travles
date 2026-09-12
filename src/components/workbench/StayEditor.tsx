@@ -106,11 +106,11 @@ export default function StayEditor({ days, onSave, onClose }: StayEditorProps) {
               <form className="mt-[14px] grid gap-[10px]" onSubmit={save}>
                 <label className="block text-[12px] text-muted">
                   住宿名称
-                  <input value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} className="mt-[5px] h-[36px] w-full rounded-[5px] border border-line bg-paper px-[10px] text-[13px] text-ink focus:border-green focus:outline-none" />
+                  <input id="workbench-stay-title" data-stay-editor-title value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} className="mt-[5px] h-[36px] w-full rounded-[5px] border border-line bg-paper px-[10px] text-[13px] text-ink focus:border-green focus:outline-none" />
                 </label>
                 <label className="block text-[12px] text-muted">
                   地址
-                  <input value={address} maxLength={500} onChange={(event) => setAddress(event.target.value)} className="mt-[5px] h-[36px] w-full rounded-[5px] border border-line bg-paper px-[10px] text-[13px] text-ink focus:border-green focus:outline-none" />
+                  <input id="workbench-stay-address" data-stay-editor-address value={address} maxLength={500} onChange={(event) => setAddress(event.target.value)} className="mt-[5px] h-[36px] w-full rounded-[5px] border border-line bg-paper px-[10px] text-[13px] text-ink focus:border-green focus:outline-none" />
                 </label>
                 <div className="grid grid-cols-2 gap-[8px]">
                   <label className="block text-[12px] text-muted">
@@ -124,7 +124,7 @@ export default function StayEditor({ days, onSave, onClose }: StayEditorProps) {
                 </div>
                 <label className="block text-[12px] text-muted">
                   住宿备注
-                  <textarea value={note} maxLength={2000} rows={3} onChange={(event) => setNote(event.target.value)} className="mt-[5px] w-full resize-y rounded-[5px] border border-line bg-paper px-[10px] py-[7px] text-[13px] text-ink focus:border-green focus:outline-none" />
+                  <textarea id="workbench-stay-note" data-stay-editor-note value={note} maxLength={2000} rows={3} onChange={(event) => setNote(event.target.value)} className="mt-[5px] w-full resize-y rounded-[5px] border border-line bg-paper px-[10px] py-[7px] text-[13px] text-ink focus:border-green focus:outline-none" />
                 </label>
                 {error && <p data-stay-editor-error className="text-[12px] text-red">{error}</p>}
                 <div className="flex justify-end gap-[8px] pt-[4px]">

@@ -65,6 +65,7 @@ export default function WorkbenchTopbar({
       {onPrint && (
         <button
           type="button"
+          id="workbench-print"
           data-action="print-workbench"
           title="打印当前行程"
           aria-label="打印当前行程"

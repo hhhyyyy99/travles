@@ -236,6 +236,7 @@ test('poiFromPlace maps the AMap search result onto PoiRef and rejects nameless 
     name: '莫尔格勒河景区',
     lat: 49.42,
     lng: 119.85,
+    address: '呼伦贝尔',
     category: '呼伦贝尔',
     rating: 0,
     introSummary: '呼伦贝尔',
