@@ -29,6 +29,8 @@ export interface RouteMapHandle {
   workbenchRouteLayer: L.LayerGroup
   workbenchLabelLayer: L.LayerGroup
   workbenchPoiLayer: L.LayerGroup
+  /** Ticket 15: recommendation POIs shown while the map toggle is on. */
+  workbenchRecommendationLayer: L.LayerGroup
   destroy(): void
 }
 
@@ -114,6 +116,7 @@ export function createRouteMap(container: HTMLElement, options: RouteMapOptions)
   const workbenchRouteLayer = L.layerGroup().addTo(map)
   const workbenchLabelLayer = L.layerGroup().addTo(map)
   const workbenchPoiLayer = L.layerGroup().addTo(map)
+  const workbenchRecommendationLayer = L.layerGroup().addTo(map)
 
   // Static reference markers, one per point key (trip.js:137–138). The
   // workbench map (ticket 05) renders trip data instead and opts out.
@@ -158,6 +161,7 @@ export function createRouteMap(container: HTMLElement, options: RouteMapOptions)
     workbenchRouteLayer,
     workbenchLabelLayer,
     workbenchPoiLayer,
+    workbenchRecommendationLayer,
     destroy() {
       if (destroyed) return
       destroyed = true

@@ -4,10 +4,16 @@
 
 **Blocked by:** 05, 08。
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 推荐 toggle 展示沿途推荐点位，点击可入行程或收藏
-- [ ] 待计划池点位可拖入某天成为卡片，入列后从池中移除
-- [ ] 收藏列表可查看、取消收藏、从收藏加入行程
-- [ ] 地区/类型筛选正确过滤且计数准确
-- [ ] 推荐点位入行程后走既有 patch 校验与联动重算
+- [x] 推荐 toggle 展示沿途推荐点位，点击可入行程或收藏
+- [x] 待计划池点位可拖入某天成为卡片，入列后从池中移除
+- [x] 收藏列表可查看、取消收藏、从收藏加入行程
+- [x] 地区/类型筛选正确过滤且计数准确
+- [x] 推荐点位入行程后走既有 patch 校验与联动重算
+
+## Answer
+
+Added the persisted recommendation workflow for the workbench. The server now exposes a shared `search_poi` Mastra tool plus recommendation search, stash, and favorites APIs backed by injectable memory/SQLite drivers. The map toolbar loads and filters recommendation POIs, renders Leaflet recommendation markers, supports favorites and pending stash actions, and allows pending items to be dragged into a day. Scheduling uses the existing card-admin route, so legs are recomputed by the existing server path.
+
+Verification: `pnpm typecheck`; `pnpm test`; `node --test tests/app/12-map-linkage.app.browser.cjs` (6 passing tests); `node --test tests/app/15-recommendations.app.browser.cjs` (2 passing tests).

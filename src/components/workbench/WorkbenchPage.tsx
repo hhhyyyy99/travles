@@ -57,6 +57,7 @@ import ConfirmDialog from './ConfirmDialog'
 import MapPanel from './MapPanel'
 import ToolsRail from './ToolsRail'
 import ToolsPanel from './ToolsPanel'
+import { recommendationCardInput, removeFromStash, type RecommendationPoi } from '../../domain/recommendations'
 
 type LoadState =
   | { status: 'loading' }
@@ -250,7 +251,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     patchLegs(result.data.legs)
   }
 
-  const handleCreateCard = async (input: WorkbenchItemCreateInput) => {
+  const handleCreateCard = async (input: WorkbenchItemCreateInput): Promise<boolean> => {
     const snapshot = dataRef.current
     setAddCardDay(null)
     const temp: WorkbenchItem = {
@@ -269,10 +270,25 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     const result = await createWorkbenchItem(tripId, input)
     if (!result.ok) {
       rollback(snapshot, result.error)
-      return
+      return false
     }
     patchDays((days) => applyItemReplace(days, temp.id, result.data.item))
     patchLegs(result.data.legs)
+    return true
+  }
+
+  /** Schedule a recommendation/stash item through the same card API as manual adds. */
+  const handleSchedulePoi = async (poi: RecommendationPoi, stashId?: string, dayId?: string, index?: number): Promise<boolean> => {
+    const targetDayId = dayId ?? dataRef.current?.days[0]?.id
+    if (!targetDayId) return false
+    const created = await handleCreateCard(recommendationCardInput(poi, targetDayId, index))
+    if (!created || !stashId) return created
+    const removed = await removeFromStash(tripId, stashId)
+    if (!removed.ok) {
+      setActionError(removed.error)
+      return false
+    }
+    return true
   }
 
   const handleDeleteItem = async (itemId: string) => {
@@ -437,6 +453,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
                     onCopyItem={handleCopyItem}
                     onDeleteItem={handleDeleteItem}
                     onAddCard={setAddCardDay}
+                    onDropStash={(stashId, poi, dayId, index) => void handleSchedulePoi(poi, stashId, dayId, index)}
                     onNoteSave={handleNoteSave}
                     onImageAdd={handleImageAdd}
                   />
@@ -464,12 +481,14 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
             className="flex w-[320px] shrink-0 flex-col border-l border-line bg-white"
           >
             <MapPanel
+              tripId={tripId}
               days={state.status === 'ready' ? state.data.days : []}
               legs={state.status === 'ready' ? state.data.legs : []}
               selectedItemId={selectedItemId}
               onSelectItem={setSelectedItemId}
               onCollapse={() => toggle('map')}
               focus={mapFocus}
+              onSchedulePoi={handleSchedulePoi}
             />
           </div>
         )}
