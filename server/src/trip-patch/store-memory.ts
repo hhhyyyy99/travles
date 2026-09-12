@@ -9,12 +9,8 @@ import type {
   ItemRow,
   LegRow,
 } from '../days/types.js'
-import type {
-  TripPatchDayUpsert,
-  TripPatchItemUpsert,
-  TripPatchLegUpsert,
-  TripPatchStoreDriver,
-} from './types.js'
+import { TripPatchIdConflictError } from './types.js'
+import type { TripPatchDayUpsert, TripPatchItemUpsert, TripPatchLegUpsert, TripPatchStoreDriver } from './types.js'
 
 interface StoredDayRow extends DayRow {
   id: string
@@ -66,11 +62,31 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
     return this.legRows.filter((row) => row.trip_id === tripId)
   }
 
-  async withTransaction<T>(fn: () => Promise<T>): Promise<T> {
-    return fn()
+  async getDayTripId(dayId: string): Promise<string | null> {
+    return this.dayRows.find((row) => row.id === dayId)?.trip_id ?? null
+  }
+
+  async getItemTripId(itemId: string): Promise<string | null> {
+    return this.itemRows.find((row) => row.id === itemId)?.trip_id ?? null
+  }
+
+  async withTransaction<T>(fn: (store: TripPatchStoreDriver) => Promise<T>): Promise<T> {
+    const days = this.dayRows.map((row) => ({ ...row }))
+    const items = this.itemRows.map((row) => ({ ...row }))
+    const legs = this.legRows.map((row) => ({ ...row }))
+    try {
+      return await fn(this)
+    } catch (error) {
+      this.dayRows.splice(0, this.dayRows.length, ...days)
+      this.itemRows.splice(0, this.itemRows.length, ...items)
+      this.legRows.splice(0, this.legRows.length, ...legs)
+      throw error
+    }
   }
 
   async upsertDayRow(tripId: string, day: TripPatchDayUpsert): Promise<void> {
+    const owner = await this.getDayTripId(day.id)
+    if (owner !== null && owner !== tripId) throw new TripPatchIdConflictError('day', day.id, owner)
     const existing = this.dayRows.find((row) => row.id === day.id && row.trip_id === tripId)
     if (existing) {
       existing.idx = day.idx
@@ -102,6 +118,10 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
   }
 
   async upsertItemRow(tripId: string, item: TripPatchItemUpsert): Promise<void> {
+    const owner = await this.getItemTripId(item.id)
+    if (owner !== null && owner !== tripId) throw new TripPatchIdConflictError('item', item.id, owner)
+    const dayOwner = await this.getDayTripId(item.dayId)
+    if (dayOwner !== null && dayOwner !== tripId) throw new TripPatchIdConflictError('day', item.dayId, dayOwner)
     const existing = this.itemRows.find((row) => row.id === item.id && row.trip_id === tripId)
     if (existing) {
       existing.day_id = item.dayId
@@ -128,6 +148,12 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
   }
 
   async upsertLegRow(tripId: string, leg: TripPatchLegUpsert): Promise<void> {
+    const owner = this.legRows.find((row) => row.id === leg.id)?.trip_id
+    if (owner !== undefined && owner !== tripId) throw new TripPatchIdConflictError('leg', leg.id, owner)
+    for (const itemId of [leg.fromItemId, leg.toItemId]) {
+      const itemOwner = await this.getItemTripId(itemId)
+      if (itemOwner !== null && itemOwner !== tripId) throw new TripPatchIdConflictError('item', itemId, itemOwner)
+    }
     const existing = this.legRows.find((row) => row.id === leg.id && row.trip_id === tripId)
     if (existing) {
       existing.from_item_id = leg.fromItemId
