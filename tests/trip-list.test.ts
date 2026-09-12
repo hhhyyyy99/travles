@@ -9,10 +9,12 @@ import assert from 'node:assert/strict'
 import {
   TRIPS_NETWORK_ERROR,
   createTrip,
+  createTripFromSentence,
   deleteTrip,
   fetchTrips,
   formatDateBadge,
   formatDuration,
+  formatTripSchedule,
   previewDaysNights,
   probeTripsApi,
   renameTrip,
@@ -107,6 +109,29 @@ test('createTrip POSTs the form payload and surfaces server validation errors', 
   const invalid = stubFetch(() => ({ status: 400, body: { error: '结束日期不能早于开始日期' } }))
   const failed = await createTrip({ title: 'x', startDate: '2026-10-08', endDate: '2026-10-02' }, invalid)
   assert.deepEqual(failed, { ok: false, error: '结束日期不能早于开始日期' })
+})
+
+test('createTripFromSentence posts the one-line intake and keeps its draft metadata', async () => {
+  const context = {
+    destination: '呼伦贝尔',
+    durationDays: 7,
+    preferences: '我想去呼伦贝尔 7 天，慢节奏，自驾',
+    originalSentence: '我想去呼伦贝尔 7 天，慢节奏，自驾',
+    dateStatus: 'unspecified' as const,
+  }
+  const seen: Array<{ url: string; init?: RequestInit }> = []
+  const fetchLike: FetchLike = async (url, init) => {
+    seen.push({ url, init })
+    return new Response(JSON.stringify({
+      trip: { ...tripFixture, title: '呼伦贝尔 · 7日行程', startDate: '', endDate: '', days: 0, nights: 0, durationDays: 7, dateStatus: 'unspecified', planningContext: context },
+    }), { status: 201 })
+  }
+  const result = await createTripFromSentence({ sentence: context.originalSentence }, fetchLike)
+  assert.equal(result.ok, true)
+  if (result.ok) assert.equal(result.data.planningContext?.durationDays, 7)
+  assert.equal(seen[0]?.url, '/api/trips/intake')
+  assert.deepEqual(JSON.parse(String(seen[0]?.init?.body)), { sentence: context.originalSentence })
+  assert.equal(formatTripSchedule({ startDate: '', endDate: '', days: 0, nights: 0, durationDays: 7, dateStatus: 'unspecified' }), '日期待定 · 7天6晚')
 })
 
 test('renameTrip PATCHes the encoded trip id; deleteTrip DELETEs it', async () => {

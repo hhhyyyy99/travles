@@ -211,6 +211,27 @@ test('seed metadata repair splits an untouched aggregate route from the prior se
   }
 })
 
+test('seed metadata repair backfills NULL quality on canonical split routes only', async () => {
+  const { db, dir, close } = await setup()
+  try {
+    await seedBuiltinTrip(db)
+    await db.run("UPDATE legs SET quality = NULL WHERE id LIKE 'builtin-leg-day-1%'")
+    await db.run("UPDATE legs SET quality = 'measured' WHERE id = 'builtin-leg-day-1-1'")
+
+    assert.deepEqual(await seedBuiltinTrip(db), { seeded: false })
+    const rows = await db.run(
+      "SELECT id, quality FROM legs WHERE id LIKE 'builtin-leg-day-1%' ORDER BY id",
+    )
+    assert.deepEqual(rows.rows, [
+      { id: 'builtin-leg-day-1', quality: 'reference' },
+      { id: 'builtin-leg-day-1-1', quality: 'measured' },
+    ])
+  } finally {
+    await close()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('seed metadata repair fills only missing canonical fields and preserves user edits', async () => {
   const { db, dir, close } = await setup()
   try {

@@ -20,9 +20,24 @@ export type TripSummary = {
   nights: number
   createdAt: string
   updatedAt: string
+  durationDays?: number
+  dateStatus?: TripDateStatus
+  planningContext?: TripPlanningContext
+}
+
+export type TripDateStatus = 'confirmed' | 'unspecified' | 'tentative'
+
+export type TripPlanningContext = {
+  destination: string
+  durationDays: number
+  preferences: string
+  originalSentence: string
+  dateStatus: TripDateStatus
+  datePhrase?: string
 }
 
 export type TripFormInput = { title: string; startDate: string; endDate: string }
+export type TripIntakeInput = { sentence: string }
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
@@ -50,6 +65,14 @@ export async function createTrip(
   fetchLike: FetchLike = defaultFetch(),
 ): Promise<ApiResult<TripSummary>> {
   return tripMutation(fetchLike, '/api/trips', 'POST', input)
+}
+
+/** POST /api/trips/intake — persist one sentence as a private draft trip. */
+export async function createTripFromSentence(
+  input: TripIntakeInput,
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<TripSummary>> {
+  return tripMutation(fetchLike, '/api/trips/intake', 'POST', input)
 }
 
 /** PATCH /api/trips/:id — rename (or re-date) a trip. */
@@ -108,6 +131,17 @@ export function formatDateBadge(startDate: string, endDate: string): string {
 export function formatDuration(days: number, nights: number): string {
   if (!Number.isFinite(days) || days <= 0) return ''
   return nights > 0 ? `${days}天${nights}晚` : `${days}天`
+}
+
+/** Shared schedule badge for dated trips and date-pending intake drafts. */
+export function formatTripSchedule(trip: Pick<TripSummary, 'startDate' | 'endDate' | 'days' | 'nights' | 'durationDays' | 'dateStatus'>): string {
+  const date = formatDateBadge(trip.startDate, trip.endDate)
+  const durationDays = trip.durationDays ?? trip.days
+  const duration = formatDuration(durationDays, Math.max(0, durationDays - 1))
+  if (!date && (trip.dateStatus === 'unspecified' || trip.dateStatus === 'tentative')) {
+    return duration ? `日期待定 · ${duration}` : '日期待定'
+  }
+  return [date, formatDuration(trip.days, trip.nights)].filter(Boolean).join(' ')
 }
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
@@ -196,6 +230,7 @@ export function normalizeTrip(value: unknown): TripSummary | null {
     typeof record.nights === 'number' && Number.isFinite(record.nights) && record.nights >= 0
       ? record.nights
       : computed.nights
+  const planningContext = normalizePlanningContext(record.planningContext)
   return {
     id,
     title: typeof record.title === 'string' ? record.title.trim() : '',
@@ -205,5 +240,26 @@ export function normalizeTrip(value: unknown): TripSummary | null {
     nights,
     createdAt: typeof record.createdAt === 'string' ? record.createdAt : '',
     updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : '',
+    ...(planningContext
+      ? {
+          durationDays: planningContext.durationDays,
+          dateStatus: planningContext.dateStatus,
+          planningContext,
+        }
+      : {}),
   }
+}
+
+function normalizePlanningContext(value: unknown): TripPlanningContext | null {
+  if (value === null || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  const destination = typeof record.destination === 'string' ? record.destination.trim() : ''
+  const preferences = typeof record.preferences === 'string' ? record.preferences.trim() : ''
+  const originalSentence = typeof record.originalSentence === 'string' ? record.originalSentence.trim() : ''
+  const durationDays = typeof record.durationDays === 'number' ? record.durationDays : Number(record.durationDays)
+  const dateStatus = record.dateStatus
+  if (!destination || !preferences || !originalSentence || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 60) return null
+  if (dateStatus !== 'confirmed' && dateStatus !== 'unspecified' && dateStatus !== 'tentative') return null
+  const datePhrase = typeof record.datePhrase === 'string' && record.datePhrase.trim() ? record.datePhrase.trim() : undefined
+  return { destination, durationDays, preferences, originalSentence, dateStatus, ...(datePhrase ? { datePhrase } : {}) }
 }

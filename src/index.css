@@ -1983,6 +1983,7 @@
 
   /* page-level: hide the interactive app shell, dialogs, map chrome */
   .topbar,
+  .workbench-shell,
   .days-panel,
   main > .intro,
   main > .summary,
@@ -2107,11 +2108,13 @@
     text-align: right;
     overflow-wrap: anywhere;
   }
-  .print-route.is-stale {
+  .print-route.is-stale,
+  .print-route[data-route-status='partial'] {
     border-color: #d9b5a8;
     background: #fffaf8;
   }
-  .print-route.is-stale > b {
+  .print-route.is-stale > b,
+  .print-route[data-route-status='partial'] > b {
     color: #b75342;
   }
   .print-route p {
@@ -2197,6 +2200,82 @@
     font-size: 8.5pt;
     overflow-wrap: anywhere;
     break-inside: avoid;
+  }
+  .print-workbench-cards {
+    display: grid;
+    gap: 5px;
+    margin-top: 9px;
+  }
+  .print-workbench-item {
+    display: grid;
+    grid-template-columns: 7mm minmax(0, 1fr) auto;
+    gap: 7px;
+    align-items: start;
+    padding: 5px 7px;
+    border: 1px solid #dce3de;
+    break-inside: avoid;
+    overflow-wrap: anywhere;
+  }
+  .print-workbench-item.print-stay {
+    margin-top: 0;
+    border-left: 3px solid #236a51;
+  }
+  .print-workbench-item-order {
+    color: #236a51;
+    font-size: 9pt;
+    font-variant-numeric: tabular-nums;
+  }
+  .print-workbench-item strong {
+    font-size: 9.5pt;
+    font-weight: 600;
+  }
+  .print-workbench-item p {
+    margin-top: 2px;
+    color: #64716b;
+    font-size: 8.5pt;
+    overflow-wrap: anywhere;
+  }
+  .print-workbench-item p b {
+    margin-right: 4px;
+    font-weight: 600;
+  }
+  .print-workbench-item img {
+    width: 22mm;
+    max-height: 16mm;
+    object-fit: cover;
+  }
+  .print-workbench-pending {
+    color: #b75342 !important;
+  }
+  .print-workbench-notes,
+  .print-workbench-checklist {
+    margin-top: 14px;
+    padding-top: 8px;
+    border-top: 1px solid #dce3de;
+    break-inside: avoid;
+    overflow-wrap: anywhere;
+  }
+  .print-workbench-notes h2,
+  .print-workbench-checklist h2 {
+    font-size: 12pt;
+    line-height: 1.3;
+  }
+  .print-workbench-notes ul,
+  .print-workbench-checklist ul {
+    margin-top: 5px;
+    padding-left: 18px;
+  }
+  .print-workbench-notes li,
+  .print-workbench-checklist li,
+  .print-workbench-notes > p,
+  .print-workbench-checklist > p,
+  .print-workbench-unavailable {
+    color: #64716b;
+    font-size: 8.5pt;
+    overflow-wrap: anywhere;
+  }
+  .print-workbench-unavailable {
+    margin-top: 8px;
   }
 }
 /* --- workbench map panel (ticket 05) --- */

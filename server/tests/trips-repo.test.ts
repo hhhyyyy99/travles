@@ -76,6 +76,25 @@ test('create accepts a same-day trip (1 day, 0 nights)', async () => {
   }
 })
 
+test('createFromIntake preserves the original sentence and allows a date-pending draft to be renamed', async () => {
+  const { repo } = setup()
+  const created = await repo.createFromIntake({ sentence: '我想去呼伦贝尔 7 天，慢节奏，自驾' })
+  assert.equal(created.ok, true)
+  if (!created.ok) return
+  assert.equal(created.trip.days, 0)
+  assert.equal(created.trip.durationDays, 7)
+  assert.equal(created.trip.dateStatus, 'unspecified')
+  assert.equal(created.trip.planningContext?.originalSentence, '我想去呼伦贝尔 7 天，慢节奏，自驾')
+
+  const renamed = await repo.rename(created.trip.id, '我的呼伦贝尔计划')
+  assert.equal(renamed.ok, true)
+  if (renamed.ok) {
+    assert.equal(renamed.trip.title, '我的呼伦贝尔计划')
+    assert.equal(renamed.trip.dateStatus, 'unspecified')
+    assert.equal(renamed.trip.planningContext?.durationDays, 7)
+  }
+})
+
 test('list returns created trips oldest-first and never throws', async () => {
   const { repo } = setup()
   assert.deepEqual(await repo.list(), [])

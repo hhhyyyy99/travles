@@ -24,6 +24,7 @@ export type PoiRef = {
   name: string
   lat: number
   lng: number
+  address?: string
   category: string
   rating: number
   introSummary: string
@@ -485,7 +486,7 @@ export type WorkbenchItemCreateInput = {
 }
 
 /** Field-edit patch for an existing card. */
-export type WorkbenchItemPatch = { title?: string; note?: string; images?: ItemImage[] }
+export type WorkbenchItemPatch = { title?: string; note?: string; images?: ItemImage[]; poi?: PoiRef | null }
 
 /** Move/copy target: dayId omitted keeps the day; index omitted appends. */
 export type WorkbenchItemTarget = { dayId?: string; index?: number }
@@ -700,6 +701,7 @@ export function poiFromPlace(place: {
     name,
     lat: Number.isFinite(lat) ? lat : 0,
     lng: Number.isFinite(lng) ? lng : 0,
+    ...(typeof place.address === 'string' && place.address.trim() ? { address: place.address.trim() } : {}),
     category: typeof place.city === 'string' ? place.city : '',
     rating: 0,
     introSummary: typeof place.address === 'string' ? place.address : '',
@@ -762,6 +764,7 @@ function normalizePoi(value: unknown): PoiRef | null {
     name,
     lat: finiteNumber(record.lat),
     lng: finiteNumber(record.lng),
+    ...(typeof record.address === 'string' && record.address.trim() ? { address: record.address.trim() } : {}),
     category: typeof record.category === 'string' ? record.category : '',
     rating: finiteNumber(record.rating),
     introSummary: typeof record.introSummary === 'string' ? record.introSummary : '',

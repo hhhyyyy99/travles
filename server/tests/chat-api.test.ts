@@ -210,10 +210,10 @@ test('qa round: mock model streams through SSE, deltas arrive in order, both mes
 
   const events = parseSSE(await res.text())
 
-  // Event sequence: start → delta… → done, no error.
+  // Event sequence: start → delta… → next-step meta → done, no error.
   assert.deepEqual(
     events.map((e) => e.event),
-    ['start', 'delta', 'delta', 'delta', 'done'],
+    ['start', 'delta', 'delta', 'delta', 'meta', 'done'],
   )
   assert.deepEqual((events[0] as { data: { round: string } }).data, { round: 'qa' })
   const deltas = events.filter((e) => e.event === 'delta') as { data: { text: string } }[]
@@ -221,6 +221,9 @@ test('qa round: mock model streams through SSE, deltas arrive in order, both mes
     deltas.map((d) => d.data.text),
     ['海拉尔', '的秋天', '很适合看草原。'],
   )
+  const nextSteps = events.find((event) => event.event === 'meta') as { data: { round: string; chips: { value: string }[] } }
+  assert.equal(nextSteps.data.round, 'qa')
+  assert.ok(nextSteps.data.chips.length >= 1, 'successful QA turns expose next-step choices')
 
   // `done` echoes the persisted user + assistant messages with server ids.
   const done = events[events.length - 1] as {
@@ -516,7 +519,7 @@ test('AI_* env routing: full loop through a real OpenAI-compatible endpoint, mem
       const events = parseSSE(await res.text())
       assert.deepEqual(
         events.map((e) => e.event),
-        ['start', 'delta', 'done'],
+        ['start', 'delta', 'meta', 'done'],
       )
       const deltas = events.filter((e) => e.event === 'delta') as { data: { text: string } }[]
       assert.equal(deltas.map((d) => d.data.text).join(''), '白天 8 度，带抓绒。')

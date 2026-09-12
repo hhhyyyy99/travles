@@ -158,6 +158,14 @@ async function repairBuiltinTripMetadata(db: SqlDatabase): Promise<void> {
     }
 
     const routeLegs = splitReferenceLegs(dayIndex, day)
+    for (const expected of routeLegs) {
+      const existing = legsById.get(expected.id)
+      if (!existing || !sameReferenceLeg(existing, expected)) continue
+      await db.run(
+        "UPDATE legs SET quality = 'reference' WHERE id = ? AND trip_id = ? AND COALESCE(TRIM(quality), '') = ''",
+        [expected.id, BUILTIN_TRIP_ID] as SqlValue[],
+      )
+    }
     const base = routeLegs[0]
     const existingBase = legsById.get(base?.id ?? '')
     if (base && existingBase) {
@@ -198,6 +206,17 @@ async function repairBuiltinTripMetadata(db: SqlDatabase): Promise<void> {
       }
     }
   }
+}
+
+/** Match one untouched split seed row without overwriting explicit user/provider quality. */
+function sameReferenceLeg(row: Record<string, unknown>, expected: SeedRouteLeg): boolean {
+  return (
+    textValue(row.from_item_id) === expected.fromItemId &&
+    textValue(row.to_item_id) === expected.toItemId &&
+    sameNumber(row.distance_km, expected.distanceKm) &&
+    sameNumber(row.duration_min, expected.durationMin) &&
+    samePolyline(row.polyline, expected.coordinates)
+  )
 }
 
 type SeedRouteLeg = {

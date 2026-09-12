@@ -97,7 +97,7 @@ import type { Hono } from 'hono'
 import { RequestContext } from '@mastra/core/request-context'
 import type { Agent } from '@mastra/core/agent'
 import type { TripRepository } from '../trips/repository.js'
-import type { TripSummary } from '../trips/types.js'
+import type { TripPlanningContext, TripSummary } from '../trips/types.js'
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
 import { ChatMessageRepository } from './repository.js'
 import type { AppEnv } from '../app.js'
@@ -406,6 +406,16 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         return
       }
 
+      const completedRound = patchTurn.applied !== null ? 'plan' : round ?? 'qa'
+      if (completedRound === 'qa' || completedRound === 'plan') {
+        const current = meta ?? { round: completedRound }
+        meta = {
+          ...current,
+          round: completedRound,
+          ...(current.chips && current.chips.length > 0 ? {} : { chips: nextStepChips(completedRound) }),
+        }
+      }
+
       if (patchTurn.applied !== null) {
         try {
           await options.onTripPatched?.(tripId, patchTurn.applied)
@@ -488,6 +498,7 @@ type TripTurnAnalysis = {
   snapshotHash: string | null
   warnings: RoundWarning[]
   conflicts: TimeConstraintConflict[]
+  planningContext?: TripPlanningContext
 }
 
 type TripRows = { days: DayRow[]; items: ItemRow[]; legs: LegRow[] }
@@ -521,6 +532,7 @@ async function analyzeTripTurn(
       snapshotHash: null,
       warnings: explicitConflicts.map(conflictToWarning),
       conflicts: explicitConflicts,
+      planningContext: trip.planningContext,
     }
   }
   try {
@@ -540,6 +552,7 @@ async function analyzeTripTurn(
       snapshotHash,
       warnings: [...longDriveWarnings(legRows, itemRows, dayRows), ...conflicts.map(conflictToWarning)],
       conflicts,
+      planningContext: trip.planningContext,
     }
   } catch {
     return {
@@ -549,6 +562,7 @@ async function analyzeTripTurn(
       snapshotHash: null,
       warnings: explicitConflicts.map(conflictToWarning),
       conflicts: explicitConflicts,
+      planningContext: trip.planningContext,
     }
   }
 }
@@ -569,6 +583,12 @@ async function readLongDriveWarnings(
 
 function buildPlannerPrompt(content: string, analysis: TripTurnAnalysis, allowPatchApply: boolean): string {
   const parts = [content]
+  if (analysis.planningContext) {
+    const context = analysis.planningContext
+    parts.push(
+      `\n[创建意图上下文]\n目的地：${context.destination}\n行程天数：${context.durationDays} 天\n用户偏好：${context.preferences}\n日期状态：${context.dateStatus}${context.datePhrase ? `（${context.datePhrase}）` : ''}\n请保留这些信息；日期未确认时先澄清日期，不要把占位日期当作已确认。`,
+    )
+  }
   if (analysis.conflicts.length > 0) {
     parts.push(
       `\n[边界约束]\n${analysis.conflicts.map((conflict) => `${conflict.message} ${conflict.suggestion}`).join('\n')}\n先指出冲突，不得静默选择，也不要调用 apply_trip_patch。`,
@@ -596,6 +616,18 @@ function buildPlannerPrompt(content: string, analysis: TripTurnAnalysis, allowPa
 function isPatchConfirmation(content: string): boolean {
   const text = content.trim()
   return /确认方案|确认并执行|按这个(?:方案)?(?:重排|执行)|就按.*(?:重排|调整|执行)|同意.*(?:重排|调整|执行)/.test(text)
+}
+
+function nextStepChips(round: 'qa' | 'plan'): { label: string; value: string }[] {
+  return round === 'plan'
+    ? [
+        { label: '查看路线', value: '查看路线' },
+        { label: '继续调整计划', value: '继续调整计划' },
+      ]
+    : [
+        { label: '继续完善行程', value: '继续完善行程' },
+        { label: '查看路线', value: '查看路线' },
+      ]
 }
 
 type ConfirmationGateResult =

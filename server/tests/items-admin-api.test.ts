@@ -117,7 +117,7 @@ test('POST /items/:id/move reorders and returns the recomputed legs', async () =
   const body = (await res.json()) as { item: { id: string; dayId: string; order: number }; legs: unknown[] }
   assert.equal(body.item.id, 'i1')
   assert.equal(body.item.order, 1)
-  assert.equal(body.legs.length, 1, 'day-1 is [i2, i1] → one pair')
+  assert.equal(body.legs.length, 2, 'day-1 is [i2, i1] plus the bridge into day-2')
   assert.ok(systemRows(bundle.messages.messageRows.filter((row) => row.trip_id === trip.id)).length >= 1)
 
   // The write driver shows the same layout (order patches persisted).
@@ -194,6 +194,48 @@ test('PATCH /items/:id edits the one-line note and images', async () => {
     headers: { 'content-type': 'application/json' },
   })
   assert.equal(noFields.status, 400)
+})
+
+test('PATCH /items/:id persists structured stay location and rejects it on non-stay cards', async () => {
+  const bundle = await createAppWithMemoryStores()
+  const trip = await createTripViaApi(bundle.app)
+  seedCards(bundle, trip.id)
+  const stay = itemRow('stay-card', 'day-1', 2, { name: '原住宿', lat: 49.2, lng: 119.7 }, trip.id)
+  stay.type = 'stay'
+  bundle.itemsAdmin.itemRows.set('stay-card', stay)
+
+  const updated = await bundle.app.request(`/api/trips/${trip.id}/items/stay-card`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      title: '北境民宿',
+      note: '晚到请提前联系',
+      poi: { name: '北境民宿', address: '额尔古纳河畔 18 号', lat: 50.12, lng: 119.98, category: '住宿' },
+    }),
+    headers: { 'content-type': 'application/json' },
+  })
+  assert.equal(updated.status, 200)
+  const body = (await updated.json()) as { item: { title: string; note: string; poi: { name: string; address?: string; lat: number; lng: number } } }
+  assert.deepEqual({
+    title: body.item.title,
+    note: body.item.note,
+    poi: body.item.poi && {
+      name: body.item.poi.name,
+      address: body.item.poi.address,
+      lat: body.item.poi.lat,
+      lng: body.item.poi.lng,
+    },
+  }, {
+    title: '北境民宿',
+    note: '晚到请提前联系',
+    poi: { name: '北境民宿', address: '额尔古纳河畔 18 号', lat: 50.12, lng: 119.98 },
+  })
+
+  const rejected = await bundle.app.request(`/api/trips/${trip.id}/items/i1`, {
+    method: 'PATCH',
+    body: JSON.stringify({ poi: { name: '不应更新', lat: 1, lng: 1 } }),
+    headers: { 'content-type': 'application/json' },
+  })
+  assert.equal(rejected.status, 400)
 })
 
 test('card routes validate the trip, the body and storage failures', async () => {

@@ -7,7 +7,7 @@
  * corrupt rows; `nextWriteError` simulates storage failures for the
  * {ok:false} write paths.
  */
-import type { TripRow, TripStoreDriver } from './types.js'
+import type { TripInsertRow, TripRow, TripStoreDriver } from './types.js'
 
 export class MemoryTripStoreDriver implements TripStoreDriver {
   readonly rows = new Map<string, TripRow>()
@@ -30,14 +30,14 @@ export class MemoryTripStoreDriver implements TripStoreDriver {
     return this.rows.get(id) ?? null
   }
 
-  async insertTripRow(row: Required<TripRow>): Promise<void> {
+  async insertTripRow(row: TripInsertRow): Promise<void> {
     this.failNextWrite()
     this.rows.set(row.id as string, { ...row })
   }
 
   async updateTripRow(
     id: string,
-    patch: { title: string; startDate: string; endDate: string; updatedAt: string },
+    patch: { title: string; startDate: string; endDate: string; updatedAt: string; planningContext: string | null },
   ): Promise<boolean> {
     this.failNextWrite()
     const row = this.rows.get(id)
@@ -48,6 +48,7 @@ export class MemoryTripStoreDriver implements TripStoreDriver {
       start_date: patch.startDate,
       end_date: patch.endDate,
       updated_at: patch.updatedAt,
+      planning_context: patch.planningContext,
     })
     return true
   }

@@ -22,6 +22,21 @@ export type TripSummary = {
   nights: number
   createdAt: string
   updatedAt: string
+  /** Present for quick-intake drafts whose dates are not confirmed yet. */
+  durationDays?: number
+  dateStatus?: TripDateStatus
+  planningContext?: TripPlanningContext
+}
+
+export type TripDateStatus = 'confirmed' | 'unspecified' | 'tentative'
+
+export type TripPlanningContext = {
+  destination: string
+  durationDays: number
+  preferences: string
+  originalSentence: string
+  dateStatus: TripDateStatus
+  datePhrase?: string
 }
 
 /** Raw driver row; values unknown so corrupt storage can be represented. */
@@ -32,6 +47,17 @@ export interface TripRow {
   end_date: unknown
   created_at: unknown
   updated_at: unknown
+  planning_context?: unknown
+}
+
+export type TripInsertRow = {
+  id: string
+  title: string
+  start_date: string
+  end_date: string
+  created_at: string
+  updated_at: string
+  planning_context?: string | null
 }
 
 export type TripUpdate = {
@@ -51,11 +77,11 @@ export type TripMutationResult = { ok: true } | { ok: false; error: string; code
 export interface TripStoreDriver {
   listTripRows(): Promise<TripRow[]>
   getTripRow(id: string): Promise<TripRow | null>
-  insertTripRow(row: Required<TripRow>): Promise<void>
+  insertTripRow(row: TripInsertRow): Promise<void>
   /** Returns false when the trip does not exist. */
   updateTripRow(
     id: string,
-    patch: { title: string; startDate: string; endDate: string; updatedAt: string },
+    patch: { title: string; startDate: string; endDate: string; updatedAt: string; planningContext: string | null },
   ): Promise<boolean>
   /** Returns false when the trip does not exist. */
   deleteTripRow(id: string): Promise<boolean>

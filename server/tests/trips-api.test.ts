@@ -61,6 +61,40 @@ test('POST /api/trips validates the payload', async () => {
   assert.equal(notObject.status, 400)
 })
 
+test('POST /api/trips/intake persists a date-pending sentence without inventing dates', async () => {
+  const app = await createApp({ tripRepository: new TripRepository(new MemoryTripStoreDriver()) })
+  const response = await app.request('/api/trips/intake', jsonRequest('POST', {
+    sentence: '我想去呼伦贝尔 7 天，慢节奏，自驾',
+  }))
+  assert.equal(response.status, 201)
+  const body = (await response.json()) as { trip: TripSummary; intake: TripSummary['planningContext'] }
+  assert.equal(body.trip.title, '呼伦贝尔 · 7日行程')
+  assert.equal(body.trip.startDate, '')
+  assert.equal(body.trip.endDate, '')
+  assert.equal(body.trip.days, 0)
+  assert.equal(body.trip.durationDays, 7)
+  assert.equal(body.trip.dateStatus, 'unspecified')
+  assert.deepEqual(body.intake, body.trip.planningContext)
+  assert.equal(body.trip.planningContext?.destination, '呼伦贝尔')
+  assert.match(body.trip.planningContext?.preferences ?? '', /慢节奏，自驾/)
+
+  const reloaded = await app.request(`/api/trips/${body.trip.id}`)
+  assert.equal(((await reloaded.json()) as { trip: TripSummary }).trip.planningContext?.originalSentence, '我想去呼伦贝尔 7 天，慢节奏，自驾')
+
+  const explicit = await app.request('/api/trips/intake', jsonRequest('POST', {
+    sentence: '去呼伦贝尔 7 天，2026-10-02 到 2026-10-08，自驾',
+  }))
+  assert.equal(explicit.status, 201)
+  const explicitTrip = ((await explicit.json()) as { trip: TripSummary }).trip
+  assert.deepEqual(
+    { startDate: explicitTrip.startDate, endDate: explicitTrip.endDate, dateStatus: explicitTrip.dateStatus },
+    { startDate: '2026-10-02', endDate: '2026-10-08', dateStatus: 'confirmed' },
+  )
+
+  const invalid = await app.request('/api/trips/intake', jsonRequest('POST', { sentence: '我想去呼伦贝尔，慢节奏' }))
+  assert.equal(invalid.status, 400)
+})
+
 test('GET /api/trips/:id returns the trip or 404', async () => {
   const app = await createApp({ tripRepository: new TripRepository(new MemoryTripStoreDriver()) })
   const trip = await createTrip(app, '环线', '2026-10-02', '2026-10-04')

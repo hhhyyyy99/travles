@@ -331,6 +331,15 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     return c.json({ trip: result.trip }, 201)
   })
 
+  app.post('/api/trips/intake', async (c) => {
+    const body = await readJsonBody(c)
+    if (body === null) return c.json({ error: '请求体必须是有效的 JSON' }, 400)
+    const result = await tripRepository.createFromIntake({ sentence: body.sentence })
+    if (!result.ok) return tripError(c, result.error, result.code)
+    notifyTrip(result.trip.id, 'trip', 'trip_created')
+    return c.json({ trip: result.trip, intake: result.trip.planningContext ?? null }, 201)
+  })
+
   app.get('/api/trips/:id', async (c) => {
     const trip = await tripRepository.get(c.req.param('id'))
     if (trip === null) return c.json({ error: '行程不存在' }, 404)
@@ -611,11 +620,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     if (await tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
     const body = await readJsonBody(c)
     if (body === null) return c.json({ error: '请求体必须是有效的 JSON' }, 400)
-    const patch: { title?: unknown; note?: unknown; images?: unknown } = {}
+    const patch: { title?: unknown; note?: unknown; images?: unknown; poi?: unknown } = {}
     if ('title' in body) patch.title = body.title
     if ('note' in body) patch.note = body.note
     if ('images' in body) patch.images = body.images
-    if (patch.title === undefined && patch.note === undefined && patch.images === undefined) {
+    if ('poi' in body) patch.poi = body.poi
+    if (patch.title === undefined && patch.note === undefined && patch.images === undefined && patch.poi === undefined) {
       return c.json({ error: '没有可更新的字段' }, 400)
     }
     const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).updateItem(

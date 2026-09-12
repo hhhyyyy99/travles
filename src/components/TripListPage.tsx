@@ -2,13 +2,15 @@ import { useCallback, useEffect, useState } from 'react'
 import { BookOpen, CalendarDays, MapPin, Pencil, Plus, Settings, Trash2, X } from 'lucide-react'
 import {
   createTrip,
+  createTripFromSentence,
   deleteTrip,
   fetchTrips,
-  formatDateBadge,
   formatDuration,
+  formatTripSchedule,
   previewDaysNights,
   renameTrip,
   type TripFormInput,
+  type TripIntakeInput,
   type TripSummary,
 } from '../domain/tripList'
 import { migrateLegacyDataToServer } from '../domain/migration'
@@ -29,7 +31,7 @@ export default function TripListPage({
   /** Deployment-only AI provider settings entry. */
   onOpenSettings?: () => void
   /** Optional so the component stays usable without a workbench (tests). */
-  onOpenTrip?: (tripId: string) => void
+  onOpenTrip?: (tripId: string, initialPrompt?: string) => void
 }) {
   const [trips, setTrips] = useState<TripSummary[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -42,6 +44,9 @@ export default function TripListPage({
   const [deleting, setDeleting] = useState<TripSummary | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [migrationNote, setMigrationNote] = useState<string | null>(null)
+  const [intake, setIntake] = useState<TripIntakeInput>({ sentence: '' })
+  const [intakeError, setIntakeError] = useState<string | null>(null)
+  const [intakeSubmitting, setIntakeSubmitting] = useState(false)
 
   const reload = useCallback(async () => {
     setLoadError(null)
@@ -88,6 +93,27 @@ export default function TripListPage({
     }
     setForm({ title: '', startDate: '', endDate: '' })
     setTrips((prev) => [...(prev ?? []), result.data])
+  }
+
+  const handleIntake = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (intakeSubmitting) return
+    setIntakeError(null)
+    setActionError(null)
+    if (!intake.sentence.trim()) {
+      setIntakeError('请写一句目的地、天数和偏好。')
+      return
+    }
+    setIntakeSubmitting(true)
+    const result = await createTripFromSentence(intake)
+    setIntakeSubmitting(false)
+    if (!result.ok) {
+      setIntakeError(result.error)
+      return
+    }
+    setIntake({ sentence: '' })
+    setTrips((prev) => [...(prev ?? []), result.data])
+    onOpenTrip?.(result.data.id, result.data.planningContext?.originalSentence ?? intake.sentence.trim())
   }
 
   const startRename = (trip: TripSummary) => {
@@ -159,6 +185,36 @@ export default function TripListPage({
             </p>
           )}
         </section>
+
+        <form
+          id="trip-intake-form"
+          onSubmit={handleIntake}
+          className="border border-green/35 rounded-[8px] bg-[#f8fbf7] p-[18px] mb-[18px] max-sm:p-[14px]"
+        >
+          <label className="block text-[12px] text-muted">
+            一句话开始规划
+            <textarea
+              id="trip-intake-input"
+              value={intake.sentence}
+              maxLength={500}
+              placeholder="例：我想去呼伦贝尔 7 天，慢节奏，自驾"
+              onChange={(event) => setIntake({ sentence: event.target.value })}
+              rows={2}
+              className="mt-[6px] min-h-[42px] w-full resize-y rounded-[5px] border border-line bg-white px-[12px] py-[9px] text-[14px] text-ink focus:outline-none focus:border-green"
+            />
+          </label>
+          <div className="mt-[9px] flex items-center gap-[10px]">
+            <button
+              id="trip-intake-submit"
+              type="submit"
+              disabled={intakeSubmitting}
+              className="h-[36px] rounded-[5px] bg-green px-[15px] text-[12px] font-[550] text-white disabled:opacity-50"
+            >
+              {intakeSubmitting ? '准备中…' : '开始规划'}
+            </button>
+            {intakeError && <span id="trip-intake-error" className="text-[12px] text-red">{intakeError}</span>}
+          </div>
+        </form>
 
         {/* 创建行程 */}
         <form
@@ -279,7 +335,7 @@ export default function TripListPage({
                     <h2 className="text-[17px] font-[600] truncate">{trip.title}</h2>
                     <p className="trip-badge mt-[6px] inline-flex items-center gap-[6px] text-[12px] text-green border border-line rounded-[999px] px-[10px] py-[3px] bg-paper">
                       <CalendarDays aria-hidden="true" className="w-[13px]" />
-                      {[formatDateBadge(trip.startDate, trip.endDate), formatDuration(trip.days, trip.nights)].filter(Boolean).join(' ')}
+                      {formatTripSchedule(trip)}
                     </p>
                   </div>
                   <button

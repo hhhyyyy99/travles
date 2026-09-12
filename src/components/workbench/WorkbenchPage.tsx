@@ -36,6 +36,7 @@ import {
   type WorkbenchDay,
   type WorkbenchItem,
   type WorkbenchItemCreateInput,
+  type WorkbenchItemPatch,
 } from '../../domain/workbench'
 import type { ChatPoiLink } from '../../domain/chat'
 import {
@@ -51,6 +52,7 @@ import type { WorkbenchView } from '../../domain/workbenchLayout'
 import { useWorkbenchLayout } from '../../hooks/useWorkbenchLayout'
 import { useToolsPanel } from '../../hooks/useToolsPanel'
 import WorkbenchTopbar from './WorkbenchTopbar'
+import StayEditor from './StayEditor'
 import AddCardDialog from './AddCardDialog'
 import CanvasColumn from './CanvasColumn'
 import ChatPanel from './ChatPanel'
@@ -60,6 +62,8 @@ import MapPanel from './MapPanel'
 import ToolsRail from './ToolsRail'
 import ToolsPanel from './ToolsPanel'
 import { recommendationCardInput, removeFromStash, type RecommendationPoi } from '../../domain/recommendations'
+import { usePrint } from '../../hooks/usePrint'
+import WorkbenchPrintSheet, { type WorkbenchPrintSheetHandle } from './WorkbenchPrintSheet'
 
 type LoadState =
   | { status: 'loading' }
@@ -68,7 +72,7 @@ type LoadState =
 
 type MobilePane = 'chat' | 'canvas' | 'map'
 
-export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBack: () => void }) {
+export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripId: string; onBack: () => void; initialPrompt?: string }) {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   const routeRefreshSequence = useRef(0)
   const routeRefreshInFlight = useRef<Promise<void> | null>(null)
@@ -82,6 +86,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   const { open: toolsOpen, toggle: toggleTools, close: closeTools } = useToolsPanel(tripId)
   const [actionError, setActionError] = useState('')
   const [pendingDelete, setPendingDelete] = useState<WorkbenchDay | null>(null)
+  const [stayEditorOpen, setStayEditorOpen] = useState(false)
   // Ticket 07: POI focus target raised by the chat panel's inline POI links.
   // The map panel receives it as a prop and centers/opens the POI detail;
   // the placeholder logs it until ticket 05's real panel lands.
@@ -96,6 +101,8 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   const [mobilePane, setMobilePane] = useState<MobilePane>('canvas')
   const [canvasSyncing, setCanvasSyncing] = useState(false)
   const [pendingMutationCount, setPendingMutationCount] = useState(0)
+  const print = usePrint()
+  const printSheetRef = useRef<WorkbenchPrintSheetHandle>(null)
   const isBusy = canvasSyncing || pendingMutationCount > 0
   // Ignore a canvas response that started before a newer read or local write.
   // SSE invalidation is asynchronous, so an older response could otherwise
@@ -483,13 +490,33 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     )
   })
 
+  const handleStaySave = (itemId: string, patch: WorkbenchItemPatch): Promise<boolean> =>
+    withPendingMutation(async () => {
+      const result = await runItemMutation(
+        dataRef.current,
+        () => patchDays((days) => applyItemPatch(days, itemId, patch)),
+        () => updateWorkbenchItem(tripId, itemId, patch),
+        (data) => {
+          patchDays((days) => applyItemPatch(days, itemId, data))
+          requestRouteRefresh()
+        },
+      )
+      return result !== null
+    })
+
   const aiVisible = compactViewport ? mobilePane === 'chat' : !layout.aiCollapsed
   const canvasVisible = compactViewport ? mobilePane === 'canvas' : !layout.canvasCollapsed
   const mapVisible = compactViewport ? mobilePane === 'map' : !layout.mapCollapsed
+  const printCurrentTrip = () => {
+    const refresh = printSheetRef.current?.refresh()
+    if (refresh) void refresh.then(() => print())
+    else print()
+  }
 
   return (
-    <div
-      className={`flex h-screen min-h-0 flex-col bg-paper text-ink ${compactViewport ? 'workbench-compact' : ''}`}
+    <>
+      <div
+      className={`workbench-shell flex h-screen min-h-0 flex-col bg-paper text-ink ${compactViewport ? 'workbench-compact' : ''}`}
       data-workbench-mode={compactViewport ? 'tabs' : 'columns'}
       aria-busy={state.status === 'loading' || isBusy}
     >
@@ -499,6 +526,8 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
           onBack={onBack}
           onOptimize={() => void handleProposalRequest({ kind: 'optimize' })}
           optimizing={proposalState.status === 'loading' && proposalState.request.kind === 'optimize'}
+          onPrint={printCurrentTrip}
+          onOpenStays={() => setStayEditorOpen(true)}
         />
       )}
       {state.status !== 'ready' && (
@@ -535,6 +564,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
             >
               <ChatPanel
                 tripId={tripId}
+                initialPrompt={initialPrompt}
                 onCollapse={() => toggle('ai')}
                 onFocusPoi={setMapFocus}
                 onTripPatched={handleTripPatched}
@@ -687,7 +717,16 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
         onConfirm={confirmDeleteDay}
         onCancel={() => setPendingDelete(null)}
       />
-    </div>
+      </div>
+      {state.status === 'ready' && <WorkbenchPrintSheet ref={printSheetRef} trip={state.data.trip} days={state.data.days} legs={state.data.legs} />}
+      {state.status === 'ready' && stayEditorOpen && (
+        <StayEditor
+          days={state.data.days}
+          onSave={handleStaySave}
+          onClose={() => setStayEditorOpen(false)}
+        />
+      )}
+    </>
   )
 }
 

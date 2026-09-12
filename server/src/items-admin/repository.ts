@@ -37,6 +37,7 @@ const ITEM_TYPES: ItemType[] = ['traffic', 'stay', 'attraction', 'food', 'other'
 const MAX_TITLE_LENGTH = 200
 const MAX_NOTE_LENGTH = 2000
 const MAX_IMAGES = 20
+const MAX_ADDRESS_LENGTH = 500
 
 /** Raw create payload (values unvalidated); the repository coerces/rejects. */
 export interface ItemCreateInput {
@@ -54,6 +55,7 @@ export interface ItemPatchInput {
   title?: unknown
   note?: unknown
   images?: unknown
+  poi?: unknown
 }
 
 export class ItemsAdminRepository {
@@ -194,8 +196,15 @@ export class ItemsAdminRepository {
       if (next === null) return { ok: false, error: '图片数据无效', code: 'invalid' }
       images = next
     }
+    let poi = current.poi
+    if (patch.poi !== undefined) {
+      if (current.type !== 'stay') return { ok: false, error: '只有住宿卡片可以编辑住宿位置', code: 'invalid' }
+      const next = readPoiInput(patch.poi)
+      if (next === false) return { ok: false, error: '住宿位置数据无效', code: 'invalid' }
+      poi = next
+    }
 
-    const updated: CanvasItem = { ...current, title, note, images }
+    const updated: CanvasItem = { ...current, title, note, images, poi }
     try {
       await this.driver.withTransaction(async (transactionDriver) => {
         await transactionDriver.upsertItemFull(tripId, itemToUpsert(updated))
@@ -391,11 +400,14 @@ function readPoiInput(value: unknown): PoiRef | null | false {
   const record = value as Record<string, unknown>
   const name = typeof record.name === 'string' ? record.name.trim() : ''
   if (!name || name.length > MAX_TITLE_LENGTH) return false
+  const address = asText(record.address)
+  if (address.length > MAX_ADDRESS_LENGTH) return false
   return {
     amapId: asText(record.amapId),
     name,
     lat: asFiniteNumber(record.lat),
     lng: asFiniteNumber(record.lng),
+    ...(address ? { address } : {}),
     category: asText(record.category),
     rating: asFiniteNumber(record.rating),
     introSummary: asText(record.introSummary),

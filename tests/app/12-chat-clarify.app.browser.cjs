@@ -38,6 +38,14 @@ const CLARIFY_META = {
   sources: [{ title: '呼伦贝尔自驾攻略', url: 'https://example.com/guide' }],
 }
 
+const QA_META = {
+  round: 'qa',
+  chips: [
+    { label: '继续完善行程', value: '继续完善行程' },
+    { label: '查看路线', value: '查看路线' },
+  ],
+}
+
 // A persisted clarify round: framework prose (with a POI name to be linked),
 // one key-variable question, chips, think + sources.
 const clarifyContent =
@@ -67,7 +75,7 @@ const historyPayload = {
       createdAt: '2026-09-12T02:00:01.000Z',
       think: null,
       sources: null,
-      meta: null,
+      meta: QA_META,
     },
   ],
 }
@@ -161,10 +169,10 @@ test('a persisted clarify round renders framework text, chips and the collapsibl
     assert.ok((await clarifyBubble.locator('[data-chat-sources]').textContent()).includes('呼伦贝尔自驾攻略'))
     // Copy button exists on AI messages.
     assert.ok(await clarifyBubble.locator('[data-action="chat-copy"]').isVisible())
-    // A qa-round message has neither chips nor collapsibles (hidden when absent).
+    // A successful QA round exposes next-step choices.
     const qaBubble = page.locator('[data-chat-message]').filter({ hasText: '自驾最灵活' })
     assert.ok((await qaBubble.textContent()).includes('自驾最灵活'))
-    assert.equal(await qaBubble.locator('[data-chat-chip]').count(), 0)
+    assert.ok(await qaBubble.locator('[data-chat-chip]').count() >= 1)
     assert.equal(await qaBubble.locator('[data-chat-think]').count(), 0)
     assert.equal(await qaBubble.locator('[data-chat-sources]').count(), 0)
   } finally {

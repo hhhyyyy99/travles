@@ -27,6 +27,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     visibility TEXT NOT NULL DEFAULT 'private',
     owner TEXT,
     share_token TEXT,
+    planning_context TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
@@ -172,6 +173,11 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
     } catch {
       // The column already exists on fresh databases or after a prior boot.
     }
+  }
+  try {
+    await db.run('ALTER TABLE trips ADD COLUMN planning_context TEXT')
+  } catch {
+    // The column already exists on fresh databases or after a prior run.
   }
   try {
     await db.run('ALTER TABLE legs ADD COLUMN quality TEXT')

@@ -31,6 +31,7 @@ export type PoiRef = {
   name: string
   lat: number
   lng: number
+  address?: string
   category: string
   rating: number
   introSummary: string

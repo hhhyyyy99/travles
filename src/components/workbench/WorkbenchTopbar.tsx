@@ -2,23 +2,25 @@
  * 工作台顶栏 (ticket 04) — back entry, trip title and the same date-range
  * badge the trip list uses ("10.02至10.08 7天6晚", reused formatters).
  */
-import { ArrowLeft, CalendarDays, WandSparkles } from 'lucide-react'
-import { formatDateBadge, formatDuration, type TripSummary } from '../../domain/tripList'
+import { ArrowLeft, BedDouble, CalendarDays, Printer, WandSparkles } from 'lucide-react'
+import { formatTripSchedule, type TripSummary } from '../../domain/tripList'
 
 export default function WorkbenchTopbar({
   trip,
   onBack,
   onOptimize,
   optimizing = false,
+  onPrint,
+  onOpenStays,
 }: {
   trip: TripSummary
   onBack: () => void
   onOptimize?: () => void
   optimizing?: boolean
+  onPrint?: () => void
+  onOpenStays?: () => void
 }) {
-  const badge = [formatDateBadge(trip.startDate, trip.endDate), formatDuration(trip.days, trip.nights)]
-    .filter(Boolean)
-    .join(' ')
+  const badge = formatTripSchedule(trip)
   return (
     <header
       id="workbench-topbar"
@@ -58,6 +60,30 @@ export default function WorkbenchTopbar({
         >
           <WandSparkles aria-hidden="true" className="w-[13px]" />
           {optimizing ? '生成中…' : '路线优化'}
+        </button>
+      )}
+      {onPrint && (
+        <button
+          type="button"
+          data-action="print-workbench"
+          title="打印当前行程"
+          aria-label="打印当前行程"
+          onClick={onPrint}
+          className="grid h-[30px] w-[30px] place-items-center rounded-[5px] border border-line text-muted transition-colors hover:border-green hover:text-green"
+        >
+          <Printer aria-hidden="true" className="w-[14px]" />
+        </button>
+      )}
+      {onOpenStays && (
+        <button
+          type="button"
+          data-action="edit-workbench-stays"
+          title="编辑当前行程住宿"
+          aria-label="编辑当前行程住宿"
+          onClick={onOpenStays}
+          className="grid h-[30px] w-[30px] place-items-center rounded-[5px] border border-line text-muted transition-colors hover:border-green hover:text-green"
+        >
+          <BedDouble aria-hidden="true" className="w-[14px]" />
         </button>
       )}
     </header>

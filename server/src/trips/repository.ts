@@ -12,13 +12,16 @@
 import { randomUUID } from 'node:crypto'
 import { asText, asTimestamp, computeDaysNights, isValidDateString } from './dates.js'
 import type {
+  TripInsertRow,
   TripRow,
   TripStoreDriver,
   TripSummary,
   TripUpdate,
   TripMutationResult,
   TripWriteResult,
+  TripPlanningContext,
 } from './types.js'
+import { parseTripIntake } from './intake.js'
 
 export class TripRepository {
   constructor(private readonly driver: TripStoreDriver) {}
@@ -56,11 +59,34 @@ export class TripRepository {
     if (dateError) return { ok: false, error: dateError, code: 'invalid' }
 
     const now = new Date().toISOString()
-    const row: Required<TripRow> = {
+    const row: TripInsertRow = {
       id: randomUUID(),
       title: (input.title as string).trim(),
       start_date: input.startDate as string,
       end_date: input.endDate as string,
+      created_at: now,
+      updated_at: now,
+      planning_context: null,
+    }
+    try {
+      await this.driver.insertTripRow(row)
+    } catch {
+      return { ok: false, error: '保存失败', code: 'storage' }
+    }
+    return { ok: true, trip: mapRowToSummary(row) as TripSummary }
+  }
+
+  /** Create a private date-pending draft from one destination/duration sentence. */
+  async createFromIntake(input: { sentence?: unknown }): Promise<TripWriteResult> {
+    const parsed = parseTripIntake(input.sentence)
+    if (!parsed.ok) return { ok: false, error: parsed.error, code: 'invalid' }
+    const now = new Date().toISOString()
+    const row: TripInsertRow = {
+      id: randomUUID(),
+      title: parsed.value.title,
+      start_date: parsed.value.startDate,
+      end_date: parsed.value.endDate,
+      planning_context: JSON.stringify(parsed.value.context),
       created_at: now,
       updated_at: now,
     }
@@ -95,16 +121,29 @@ export class TripRepository {
 
     const nextStart = patch.startDate === undefined ? existing.startDate : patch.startDate
     const nextEnd = patch.endDate === undefined ? existing.endDate : patch.endDate
-    const dateError = validateDateRange(nextStart, nextEnd)
+    const keepDatePending = Boolean(
+      existing.planningContext &&
+        patch.startDate === undefined &&
+        patch.endDate === undefined &&
+        existing.startDate === '' &&
+        existing.endDate === '',
+    )
+    const dateError = keepDatePending ? null : validateDateRange(nextStart, nextEnd)
     if (dateError) return { ok: false, error: dateError, code: 'invalid' }
 
     const updatedAt = new Date().toISOString()
+    const nextPlanningContext = existing.planningContext
+      ? isValidDateString(nextStart) && isValidDateString(nextEnd)
+        ? { ...existing.planningContext, dateStatus: 'confirmed' as const, datePhrase: `${nextStart} 至 ${nextEnd}` }
+        : existing.planningContext
+      : undefined
     try {
       const updated = await this.driver.updateTripRow(id, {
         title: (nextTitle as string).trim(),
         startDate: nextStart as string,
         endDate: nextEnd as string,
         updatedAt,
+        planningContext: nextPlanningContext ? JSON.stringify(nextPlanningContext) : null,
       })
       if (!updated) return { ok: false, error: '行程不存在', code: 'not_found' }
     } catch {
@@ -120,6 +159,9 @@ export class TripRepository {
         endDate: nextEnd as string,
         ...computeDaysNights(nextStart as string, nextEnd as string),
         updatedAt,
+        ...(nextPlanningContext
+          ? { durationDays: nextPlanningContext.durationDays, dateStatus: nextPlanningContext.dateStatus, planningContext: nextPlanningContext }
+          : {}),
       },
     }
   }
@@ -142,6 +184,7 @@ export function mapRowToSummary(row: TripRow): TripSummary | null {
   if (!id) return null
   const startDate = asText(row?.start_date)
   const endDate = asText(row?.end_date)
+  const context = mapPlanningContext(row?.planning_context)
   return {
     id,
     title: asText(row?.title),
@@ -150,6 +193,25 @@ export function mapRowToSummary(row: TripRow): TripSummary | null {
     ...computeDaysNights(startDate, endDate),
     createdAt: asTimestamp(row?.created_at),
     updatedAt: asTimestamp(row?.updated_at),
+    ...(context ? { durationDays: context.durationDays, dateStatus: context.dateStatus, planningContext: context } : {}),
+  }
+}
+
+function mapPlanningContext(value: unknown): TripPlanningContext | null {
+  if (typeof value !== 'string' || value.trim() === '') return null
+  try {
+    const record = JSON.parse(value) as Record<string, unknown>
+    const destination = typeof record.destination === 'string' ? record.destination.trim() : ''
+    const originalSentence = typeof record.originalSentence === 'string' ? record.originalSentence.trim() : ''
+    const preferences = typeof record.preferences === 'string' ? record.preferences.trim() : ''
+    const durationDays = Number(record.durationDays)
+    const dateStatus = record.dateStatus
+    if (!destination || !originalSentence || !preferences || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 60) return null
+    if (dateStatus !== 'confirmed' && dateStatus !== 'unspecified' && dateStatus !== 'tentative') return null
+    const datePhrase = typeof record.datePhrase === 'string' && record.datePhrase.trim() ? record.datePhrase.trim() : undefined
+    return { destination, durationDays, preferences, originalSentence, dateStatus, ...(datePhrase ? { datePhrase } : {}) }
+  } catch {
+    return null
   }
 }
 

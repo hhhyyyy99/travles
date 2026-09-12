@@ -234,7 +234,7 @@ test('plan round end-to-end: apply_trip_patch writes days/items/legs, SSE carrie
   const stay = items.find((row) => row.id === 'i-stay-1')
   assert.equal(stay?.pending, 1, 'unconfirmed slot persists as pending')
   const legs = await patchStore.listLegRows(trip.id)
-  assert.equal(legs.length, 2, 'legs implied by adjacency (1 per day with 2+ cards)')
+  assert.equal(legs.length, 3, 'two intra-day legs plus the exact day-1 to day-2 bridge')
 
   // Reload path: history returns the applied patch record too.
   const history = await app.request(`/api/trips/${trip.id}/messages`)
@@ -245,6 +245,24 @@ test('plan round end-to-end: apply_trip_patch writes days/items/legs, SSE carrie
   assert.ok(assistantRow?.appliedPatch)
   assert.equal(assistantRow.appliedPatch.summary, applied.data.summary)
   assert.equal(messageStore.messageRows.length, 2)
+})
+
+test('intake context reaches the first planner turn and successful QA gets next-step chips', async () => {
+  const model = fakeScriptedModel([
+    { toolCalls: [{ toolName: 'emit_round_meta', input: { round: 'qa' } }] },
+    { text: '我记住了你的目的地与节奏偏好。' },
+  ])
+  const { app } = await makeInjectedApp(model as unknown as MastraLanguageModel)
+  const intake = await app.request('/api/trips/intake', jsonRequest('POST', {
+    sentence: '我想去呼伦贝尔 7 天，慢节奏，自驾',
+  }))
+  assert.equal(intake.status, 201)
+  const trip = ((await intake.json()) as { trip: TripSummary }).trip
+  const events = await sendAndParse(app, trip.id, '先聊聊这趟行程')
+  const meta = events.find((event) => event.event === 'meta')?.data as { round: string; chips?: { value: string }[] }
+  assert.equal(meta.round, 'qa')
+  assert.ok((meta.chips?.length ?? 0) >= 1)
+  assert.ok(model.prompts.some((prompt) => prompt.includes('创建意图上下文') && prompt.includes('呼伦贝尔') && prompt.includes('7 天') && prompt.includes('慢节奏，自驾')))
 })
 
 test('AI patch preserves explicit day dates through the HTTP/SSE callback', async () => {
@@ -278,6 +296,18 @@ test('AI removal deliberately compacts the remaining day dates', async () => {
   const model = fakeScriptedModel([
     {
       toolCalls: [
+        {
+          toolName: 'emit_round_meta',
+          input: {
+            round: 'patch-explain',
+            chips: [{ label: '确认删除并压缩', value: '确认方案：删除第一天并压缩日期' }],
+          },
+        },
+      ],
+    },
+    { text: '删除第一天会影响后续日期，我先等你确认。' },
+    {
+      toolCalls: [
         { toolName: 'emit_round_meta', input: PLAN_META },
         { toolName: 'apply_trip_patch', input: { ops: [{ op: 'remove_day', dayId: 'remove-day-1' }] } },
       ],
@@ -288,6 +318,8 @@ test('AI removal deliberately compacts the remaining day dates', async () => {
   await patchStore.upsertDayRow(trip.id, { id: 'remove-day-1', idx: 0, date: '2026-10-02', theme: '第一天' })
   await patchStore.upsertDayRow(trip.id, { id: 'remove-day-2', idx: 1, date: '2026-10-03', theme: '第二天' })
 
+  const explanation = await sendAndParse(app, trip.id, '请删除第一天并压缩日期')
+  assert.equal(explanation.find((event) => event.event === 'meta')?.data && (explanation.find((event) => event.event === 'meta')?.data as { round?: string }).round, 'patch-explain')
   const events = await sendAndParse(app, trip.id, '确认方案：删除第一天并压缩日期')
   assert.ok(events.some((event) => event.event === 'applied_patch'))
   const remaining = (await patchStore.listDayRows(trip.id)).find((row) => row.id === 'remove-day-2')

@@ -32,7 +32,7 @@ function viewFromUrl(): { view: AppView; tripId: string | null } | null {
 }
 
 export default function AppShell() {
-  const [state, setState] = useState<{ view: AppView; tripId: string | null }>(() => viewFromUrl() ?? {
+  const [state, setState] = useState<{ view: AppView; tripId: string | null; initialPrompt?: string }>(() => viewFromUrl() ?? {
     view: 'loading',
     tripId: null,
   })
@@ -50,9 +50,9 @@ export default function AppShell() {
     }
   }, [view])
 
-  const openTrip = (tripId: string) => {
+  const openTrip = (tripId: string, initialPrompt?: string) => {
     setActiveTripId(tripId)
-    setState({ view: 'workbench', tripId })
+    setState({ view: 'workbench', tripId, initialPrompt })
   }
   const backToTrips = () => {
     setActiveTripId(null)
@@ -68,7 +68,7 @@ export default function AppShell() {
   if (view === 'workbench') {
     const tripId = activeTripId ?? state.tripId
     if (tripId) {
-      return <WorkbenchPage tripId={tripId} onBack={backToTrips} />
+      return <WorkbenchPage tripId={tripId} onBack={backToTrips} initialPrompt={state.initialPrompt} />
     }
     // ?view=workbench without a trip id falls back to the list.
     return <TripListPage onOpenGuide={() => setState({ view: 'guide', tripId: null })} onOpenSettings={() => setState({ view: 'settings', tripId: null })} onOpenTrip={openTrip} />

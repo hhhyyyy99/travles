@@ -166,6 +166,7 @@ export function mapPoiRef(value: unknown): PoiRef | null {
     // readable after a recommendation is scheduled.
     lat: asFiniteNumber(location.lat ?? record.lat),
     lng: asFiniteNumber(location.lng ?? record.lng),
+    ...(asText(record.address) ? { address: asText(record.address) } : {}),
     category: asText(record.category),
     rating: asFiniteNumber(record.rating),
     introSummary: asText(record.introSummary),

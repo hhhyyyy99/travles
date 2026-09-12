@@ -48,6 +48,7 @@ type SendState =
 
 export default function ChatPanel({
   tripId,
+  initialPrompt,
   onCollapse,
   onFocusPoi,
   onTripPatched,
@@ -58,6 +59,8 @@ export default function ChatPanel({
   onRetryProposal,
 }: {
   tripId: string
+  /** One-shot sentence supplied by quick intake; sent after empty history loads. */
+  initialPrompt?: string
   onCollapse: () => void
   /** Clicking an inline POI link in an AI message (ticket 07, map linkage). */
   onFocusPoi?: (poi: ChatPoiLink) => void
@@ -90,6 +93,7 @@ export default function ChatPanel({
   const onTripPatchedRef = useRef(onTripPatched)
   onTripPatchedRef.current = onTripPatched
   const listRef = useRef<HTMLDivElement>(null)
+  const initialPromptSentRef = useRef<string | null>(null)
   const scrollToEnd = () => {
     const list = listRef.current
     if (list) list.scrollTop = list.scrollHeight
@@ -114,6 +118,15 @@ export default function ChatPanel({
       cancelled = true
     }
   }, [tripId])
+
+  useEffect(() => {
+    const prompt = initialPrompt?.trim()
+    if (!prompt || historyLoading || history.length > 0) return
+    const key = `${tripId}:${prompt}`
+    if (initialPromptSentRef.current === key) return
+    initialPromptSentRef.current = key
+    void handleSend(prompt)
+  }, [history.length, historyLoading, initialPrompt, tripId])
 
   // System notes and AI turns created in another tab arrive through the same
   // trip stream. Refresh only the persisted chat projection; the active local
