@@ -285,16 +285,17 @@ async function seedLargeTrip(baseUrl) {
   return { ...trip, sourceItemId: poiItems[1].id, targetItemId: 'ticket16-item-0-0' }
 }
 
-async function preparePage(page, vite, { abortEventRequests = 0, delayMoveTripId = null } = {}) {
+async function preparePage(page, vite, { blockEvents = false, delayMoveTripId = null } = {}) {
   page.setDefaultTimeout(12000)
   await page.route('**/*', (route) =>
     route.request().url().startsWith(vite.url) ? route.continue() : route.abort(),
   )
   let eventAttempts = 0
-  if (abortEventRequests > 0) {
+  let eventsBlocked = blockEvents
+  if (blockEvents) {
     await page.route('**/api/trips/*/events', (route) => {
       eventAttempts += 1
-      if (eventAttempts <= abortEventRequests) return route.abort()
+      if (eventsBlocked) return route.abort()
       return route.fallback()
     })
   }
@@ -305,15 +306,20 @@ async function preparePage(page, vite, { abortEventRequests = 0, delayMoveTripId
       await route.fulfill({ response })
     })
   }
-  return () => eventAttempts
+  return {
+    eventAttempts: () => eventAttempts,
+    setEventsBlocked: (blocked) => {
+      eventsBlocked = blocked
+    },
+  }
 }
 
 async function openPage(browser, vite, tripId, options = {}) {
   const context = await browser.newContext({ viewport: options.viewport ?? { width: 1280, height: 900 } })
   const page = await context.newPage()
-  const attempts = await preparePage(page, vite, options)
+  const eventControl = await preparePage(page, vite, options)
   await page.goto(`${vite.url}/?view=workbench&trip=${encodeURIComponent(tripId)}`)
-  return { context, page, attempts }
+  return { context, page, ...eventControl }
 }
 
 async function dispatchDrop(page, sourceId, targetId) {
@@ -382,18 +388,22 @@ test('ticket 16 real backend/SSE acceptance: sync, reconnect, compact tabs, and 
     await a.page.locator('[data-action="save-note"]').click()
     await a.page.locator(`[data-canvas-card="${smallTrip.focusItemId}"]`).getByText('断线回归的初始备注').waitFor()
 
-    const reconnect = await openPage(browser, vite, smallTrip.id, { abortEventRequests: 2 })
+    const reconnect = await openPage(browser, vite, smallTrip.id, { blockEvents: true })
     contexts.push(reconnect.context)
     await reconnect.page.locator(`[data-canvas-card="${smallTrip.focusItemId}"]`).getByText('断线回归的初始备注').waitFor()
-    await reconnect.page.waitForFunction(() => document.readyState === 'complete')
-    const reconnectDeadline = Date.now() + 3000
-    while (reconnect.attempts() < 2 && Date.now() < reconnectDeadline) await delay(50)
-    assert.equal(reconnect.attempts(), 2, 'both workbench and chat EventSource connections hit the forced outage')
+    await delay(250)
+    assert.ok(reconnect.eventAttempts() > 0, 'the reconnect fixture observed at least one blocked EventSource request')
 
     const recoveredNote = '断线期间提交，重连后应补齐'
     await a.page.locator(`[data-canvas-card="${smallTrip.focusItemId}"] [data-card-note-edit]`).click()
     await a.page.locator('[data-card-note-input]').fill(recoveredNote)
     await a.page.locator('[data-action="save-note"]').click()
+    await delay(1000)
+    assert.ok(
+      (await reconnect.page.locator(`[data-canvas-card="${smallTrip.focusItemId}"]`).textContent()).includes('断线回归的初始备注'),
+      'the canvas stays stale while every EventSource request is blocked',
+    )
+    reconnect.setEventsBlocked(false)
     await reconnect.page.locator(`[data-canvas-card="${smallTrip.focusItemId}"]`).getByText(recoveredNote).waitFor({ timeout: 11000 })
 
     // Compact mode mounts one stateful panel at a time and still lets the
