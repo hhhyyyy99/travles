@@ -229,6 +229,28 @@ test('analysis emits a split suggestion for a drive longer than six hours', () =
   assert.match(warnings[0]?.suggestion ?? '', /拆成两段/)
 })
 
+test('cross-day POI transfer gets an estimated warning when no cross-day leg row exists', () => {
+  const warnings = longDriveWarnings(
+    [],
+    [
+      { id: 'd1-last', trip_id: 'trip', day_id: 'day-1', item_order: 0, type: 'attraction', title: '第一天末站', note: '', poi: JSON.stringify({ name: '第一天末站', location: { lat: 49, lng: 119 } }), images: null, pending: 0 },
+      { id: 'd1-text', trip_id: 'trip', day_id: 'day-1', item_order: 1, type: 'other', title: '无坐标备注', note: '', poi: null, images: null, pending: 0 },
+      { id: 'd2-text', trip_id: 'trip', day_id: 'day-2', item_order: 0, type: 'traffic', title: '次日出发', note: '', poi: null, images: null, pending: 0 },
+      { id: 'd2-first', trip_id: 'trip', day_id: 'day-2', item_order: 1, type: 'attraction', title: '第二天首站', note: '', poi: JSON.stringify({ name: '第二天首站', location: { lat: 53, lng: 119 } }), images: null, pending: 0 },
+    ],
+    [
+      { id: 'day-1', trip_id: 'trip', idx: 0, date: '2026-10-02', theme: '', color: '' },
+      { id: 'day-2', trip_id: 'trip', idx: 1, date: '2026-10-03', theme: '', color: '' },
+    ],
+  )
+  assert.equal(warnings.length, 1)
+  assert.equal(warnings[0]?.estimated, true)
+  assert.equal(warnings[0]?.from, '第一天末站')
+  assert.equal(warnings[0]?.to, '第二天首站')
+  assert.match(warnings[0]?.message ?? '', /跨天.*坐标估算/)
+  assert.match(warnings[0]?.suggestion ?? '', /未核实.*拆成两段/)
+})
+
 test('ordinary questions on an existing plan keep the qa round and do not require confirmation', async () => {
   const model = scriptedModel([
     {
@@ -274,6 +296,37 @@ test('a long existing drive is shown in metadata and assistant text with a split
   assert.match(meta.warnings?.[0]?.suggestion ?? '', /拆成两段/)
   const done = events.find((entry) => entry.event === 'done')?.data as { assistantMessage: { content: string } }
   assert.match(done.assistantMessage.content, /建议拆成两段/)
+})
+
+test('a cross-day coordinate estimate reaches the chat SSE metadata and prose', async () => {
+  const model = scriptedModel([
+    { toolCalls: [{ toolName: 'emit_round_meta', input: { round: 'qa' } }] },
+    { text: '我会先检查跨天衔接。' },
+  ])
+  const { app, trip, patchStore } = await makeApp(model)
+  await patchStore.upsertDayRow(trip.id, { id: 'day-1', idx: 0, date: '2026-10-02', theme: '第一天' })
+  await patchStore.upsertDayRow(trip.id, { id: 'day-2', idx: 1, date: '2026-10-03', theme: '第二天' })
+  await patchStore.upsertItemRow(trip.id, {
+    id: 'cross-day-from', dayId: 'day-1', itemOrder: 0, type: 'attraction', title: '第一天末站', note: '',
+    poi: JSON.stringify({ name: '第一天末站', location: { lat: 49, lng: 119 } }), pending: false,
+  })
+  await patchStore.upsertItemRow(trip.id, {
+    id: 'cross-day-to', dayId: 'day-2', itemOrder: 0, type: 'attraction', title: '第二天首站', note: '',
+    poi: JSON.stringify({ name: '第二天首站', location: { lat: 53, lng: 119 } }), pending: false,
+  })
+
+  const response = await app.request('/api/trips/' + trip.id + '/messages', jsonRequest('POST', { content: '这两天路线有什么需要注意？' }))
+  assert.equal(response.status, 200)
+  const events = parseSse(await response.text())
+  const meta = events.find((entry) => entry.event === 'meta')?.data as {
+    warnings?: { kind: string; estimated?: boolean; message?: string; suggestion?: string }[]
+  }
+  assert.equal(meta.warnings?.[0]?.kind, 'long-drive')
+  assert.equal(meta.warnings?.[0]?.estimated, true)
+  assert.match(meta.warnings?.[0]?.message ?? '', /跨天.*坐标估算/)
+  assert.match(meta.warnings?.[0]?.suggestion ?? '', /未核实.*拆成两段/)
+  const done = events.find((entry) => entry.event === 'done')?.data as { assistantMessage: { content: string } }
+  assert.match(done.assistantMessage.content, /未核实.*建议拆成两段/)
 })
 
 test('time-order and reversed-date contradictions are surfaced before planning', () => {

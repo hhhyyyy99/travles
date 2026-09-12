@@ -472,7 +472,7 @@ async function analyzeTripTurn(
       hasExistingPlan,
       isModification,
       storeReadFailed: false,
-      warnings: [...longDriveWarnings(legRows, itemRows), ...conflicts.map(conflictToWarning)],
+      warnings: [...longDriveWarnings(legRows, itemRows, dayRows), ...conflicts.map(conflictToWarning)],
       conflicts,
     }
   } catch {
@@ -493,8 +493,12 @@ async function readLongDriveWarnings(
   if (!resolveStore) return []
   try {
     const store = await resolveStore()
-    const [items, legs] = await Promise.all([store.listItemRows(tripId), store.listLegRows(tripId)])
-    return longDriveWarnings(legs, items)
+    const [days, items, legs] = await Promise.all([
+      store.listDayRows(tripId),
+      store.listItemRows(tripId),
+      store.listLegRows(tripId),
+    ])
+    return longDriveWarnings(legs, items, days)
   } catch {
     return []
   }

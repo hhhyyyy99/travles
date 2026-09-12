@@ -48,6 +48,8 @@ export type RoundWarning = {
   from?: string
   to?: string
   durationMin?: number
+  /** True when the warning uses coordinates rather than a verified road route. */
+  estimated?: boolean
 }
 
 /**
@@ -142,6 +144,7 @@ export const roundMetaInputSchema = z.object({
         from: z.string().max(120).optional(),
         to: z.string().max(120).optional(),
         durationMin: z.number().finite().min(0).optional(),
+        estimated: z.boolean().optional(),
       }),
     )
     .max(20)

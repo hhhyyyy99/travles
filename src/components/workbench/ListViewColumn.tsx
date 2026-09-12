@@ -11,6 +11,7 @@ import { BedDouble, Car, Trash2, WandSparkles } from 'lucide-react'
 import {
   dayAccentColor,
   dayDateLabel,
+  crossDayDriveWarnings,
   formatLegLabel,
   isLongDriveLeg,
   legsByPair,
@@ -21,6 +22,7 @@ import {
   type WorkbenchLeg,
 } from '../../domain/workbench'
 import { CanvasCard } from './CanvasColumn'
+import CrossDayDriveWarning from './CrossDayDriveWarning'
 import EditableTheme from './EditableTheme'
 
 export type ListViewColumnProps = {
@@ -65,6 +67,9 @@ export default function ListViewColumn({
   }, [days, highlightItemId])
 
   const selected = days.find((day) => day.id === selectedId) ?? days[0] ?? null
+  const crossDayWarning = selected
+    ? crossDayDriveWarnings(days).find((warning) => warning.fromDayId === selected.id)
+    : undefined
 
   return (
     <div id="workbench-list" className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-paper" aria-busy={syncing}>
@@ -138,6 +143,7 @@ export default function ListViewColumn({
           onOptimizeDay={onOptimizeDay}
           onCardClick={onCardClick}
           highlightItemId={highlightItemId}
+          crossDayWarning={crossDayWarning}
         />
       )}
     </div>
@@ -152,6 +158,7 @@ function DayTimeline({
   onOptimizeDay,
   onCardClick,
   highlightItemId,
+  crossDayWarning,
 }: {
   day: WorkbenchDay
   legLookup: Map<string, WorkbenchLeg>
@@ -160,6 +167,7 @@ function DayTimeline({
   onOptimizeDay?: (day: WorkbenchDay) => void
   onCardClick?: (itemId: string) => void
   highlightItemId?: string | null
+  crossDayWarning?: ReturnType<typeof crossDayDriveWarnings>[number]
 }) {
   const accent = dayAccentColor(day.color, day.index)
   const dateLabel = dayDateLabel(day.date) || `D${day.index + 1}`
@@ -210,6 +218,11 @@ function DayTimeline({
         </div>
         {onThemeSave && <EditableTheme dayId={day.id} theme={day.theme} onSave={onThemeSave} />}
       </header>
+      {crossDayWarning && (
+        <div className="px-[14px] pt-[12px]">
+          <CrossDayDriveWarning warning={crossDayWarning} />
+        </div>
+      )}
       <div className="flex flex-col gap-[12px] p-[14px]">
         {day.items.length === 0 && (
           <p className="py-[12px] text-center text-[12px] text-muted">这一天还没有安排。</p>

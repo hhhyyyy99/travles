@@ -276,6 +276,90 @@ export function longDriveWarningText(leg: WorkbenchLeg | null): string {
   return `驾驶超过 6 小时，建议拆分行程并增加中途休息或过夜点`
 }
 
+export type CrossDayDriveWarning = {
+  id: string
+  fromDayId: string
+  toDayId: string
+  fromItemId: string
+  toItemId: string
+  fromTitle: string
+  toTitle: string
+  distanceKm: number
+  durationMin: number
+  estimated: true
+}
+
+/**
+ * Find long transfers hidden between day columns. The server intentionally
+ * stores legs only within a day, so this projection uses the last POI of one
+ * day and the first POI of the next day and labels the result as an estimate.
+ */
+export function crossDayDriveWarnings(days: WorkbenchDay[]): CrossDayDriveWarning[] {
+  const orderedDays = (Array.isArray(days) ? days : [])
+    .filter((day) => day && typeof day.id === 'string' && day.id !== '' && Number.isInteger(day.index) && day.index >= 0)
+    .slice()
+    .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id))
+  const warnings: CrossDayDriveWarning[] = []
+  for (let index = 0; index + 1 < orderedDays.length; index += 1) {
+    const currentDay = orderedDays[index]
+    const nextDay = orderedDays[index + 1]
+    if (!currentDay || !nextDay || nextDay.index !== currentDay.index + 1) continue
+    const from = lastPoiItem(currentDay)
+    const to = firstPoiItem(nextDay)
+    if (!from || !to) continue
+    const distanceKm = Math.round(haversineKm([from.poi.lng, from.poi.lat], [to.poi.lng, to.poi.lat]) * 1.2 * 10) / 10
+    if (distanceKm <= 0) continue
+    const durationMin = Math.max(1, Math.round(distanceKm))
+    if (durationMin <= LONG_DRIVE_LIMIT_MINUTES) continue
+    warnings.push({
+      id: `cross-day-${from.id}-${to.id}`,
+      fromDayId: currentDay.id,
+      toDayId: nextDay.id,
+      fromItemId: from.id,
+      toItemId: to.id,
+      fromTitle: from.title,
+      toTitle: to.title,
+      distanceKm,
+      durationMin,
+      estimated: true,
+    })
+  }
+  return warnings
+}
+
+type UsablePoiItem = WorkbenchItem & { poi: NonNullable<WorkbenchItem['poi']> }
+
+function firstPoiItem(day: WorkbenchDay): UsablePoiItem | null {
+  return orderedPoiItems(day)[0] ?? null
+}
+
+function lastPoiItem(day: WorkbenchDay): UsablePoiItem | null {
+  const items = orderedPoiItems(day)
+  return items[items.length - 1] ?? null
+}
+
+function orderedPoiItems(day: WorkbenchDay): UsablePoiItem[] {
+  return day.items
+    .filter(hasUsablePoi)
+    .slice()
+    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+}
+
+function hasUsablePoi(item: WorkbenchItem): item is UsablePoiItem {
+  const poi = item.poi
+  return poi !== null && Number.isFinite(poi.lat) && Number.isFinite(poi.lng) && !(poi.lat === 0 && poi.lng === 0)
+}
+
+function haversineKm(a: [number, number], b: [number, number]): number {
+  const toRad = (degrees: number) => (degrees * Math.PI) / 180
+  const dLat = toRad(b[1] - a[1])
+  const dLng = toRad(b[0] - a[0])
+  const lat1 = toRad(a[1])
+  const lat2 = toRad(b[1])
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2
+  return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)))
+}
+
 /** Per-day accent color with a stable fallback palette (PRD: 多日分色). */
 const DAY_COLORS = ['#c26d4f', '#3f7d5c', '#4f6dc2', '#8a5fbf', '#b75342', '#2f7d8a', '#a8791f']
 
