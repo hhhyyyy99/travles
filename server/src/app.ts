@@ -672,9 +672,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     memoryConfigured,
     resolveTripPatchStore,
     events: tripEvents,
-    onTripPatched: async (tripId) => {
+    onTripPatched: async (tripId, appliedPatch) => {
       const store = await resolveTripPatchStore()
-      await synchronizeSchedule(tripId, store, true)
+      await synchronizeSchedule(tripId, store, appliedPatch.stats.daysRemoved > 0)
       notifyTrip(tripId, 'canvas', 'ai_patch')
     },
   })
@@ -689,6 +689,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     memoryConfigured,
     resolveTripPatchStore,
     proposalStore: new MemoryAiProposalStore(),
+    onApplied: async (tripId, appliedPatch) => {
+      const store = await resolveTripPatchStore()
+      await synchronizeSchedule(tripId, store, appliedPatch.stats.daysRemoved > 0)
+      notifyTrip(tripId, 'canvas', 'ai_proposal')
+    },
   })
 
   return app

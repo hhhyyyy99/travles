@@ -128,6 +128,33 @@ test('smart parse returns structured items and does not write until confirm', as
   assert.equal((await patchStore.listItemRows(trip.id)).length, 1)
 })
 
+test('standalone proposal apply preserves explicit day dates and refreshes the trip summary', async () => {
+  const input = {
+    ...PARSE_PROPOSAL,
+    patch: {
+      ops: PARSE_PROPOSAL.patch.ops.map((op) =>
+        op.op === 'add_day' ? { ...op, date: '2026-10-07' } : op,
+      ),
+    },
+  }
+  const store = new MemoryTripPatchStore()
+  const { app, trip } = await makeApp(input, store)
+  const preview = await app.request(`/api/trips/${trip.id}/ai/proposals`, request('POST', { kind: 'parse', text: '10 月 7 日去莫尔格勒河' }))
+  assert.equal(preview.status, 201)
+  const proposal = ((await preview.json()) as { proposal: { id: string } }).proposal
+
+  const applied = await app.request(`/api/trips/${trip.id}/ai/proposals/${proposal.id}/apply`, request('POST'))
+  assert.equal(applied.status, 200)
+  assert.equal((await store.listDayRows(trip.id))[0]?.date, '2026-10-07')
+  const tripResponse = await app.request(`/api/trips/${trip.id}`)
+  assert.equal(tripResponse.status, 200)
+  const updatedTrip = ((await tripResponse.json()) as { trip: TripSummary }).trip
+  assert.deepEqual(
+    { startDate: updatedTrip.startDate, endDate: updatedTrip.endDate, days: updatedTrip.days },
+    { startDate: '2026-10-07', endDate: '2026-10-07', days: 1 },
+  )
+})
+
 test('canceling a route optimization proposal leaves the existing itinerary unchanged', async () => {
   const store = new MemoryTripPatchStore()
   await store.upsertDayRow('trip-seeded', { id: 'day-1', idx: 0, date: '2026-10-02', theme: '原计划' })

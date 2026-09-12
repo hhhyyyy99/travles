@@ -155,6 +155,13 @@ const VALID_PATCH = {
   ],
 }
 
+const EXPLICIT_DATE_PATCH = {
+  ops: [
+    { op: 'add_day', dayId: 'explicit-day-1', date: '2026-10-07', theme: '模型指定日期一' },
+    { op: 'add_day', dayId: 'explicit-day-2', date: '2026-10-08', theme: '模型指定日期二' },
+  ],
+}
+
 async function makeInjectedApp(model: MastraLanguageModel): Promise<{
   app: Awaited<ReturnType<typeof createApp>>
   trip: TripSummary
@@ -238,6 +245,54 @@ test('plan round end-to-end: apply_trip_patch writes days/items/legs, SSE carrie
   assert.ok(assistantRow?.appliedPatch)
   assert.equal(assistantRow.appliedPatch.summary, applied.data.summary)
   assert.equal(messageStore.messageRows.length, 2)
+})
+
+test('AI patch preserves explicit day dates through the HTTP/SSE callback', async () => {
+  const model = fakeScriptedModel([
+    {
+      toolCalls: [
+        { toolName: 'emit_round_meta', input: PLAN_META },
+        { toolName: 'apply_trip_patch', input: EXPLICIT_DATE_PATCH },
+      ],
+    },
+    { text: '已按指定日期生成计划。' },
+  ])
+  const { app, trip, patchStore } = await makeInjectedApp(model as unknown as MastraLanguageModel)
+
+  const events = await sendAndParse(app, trip.id, '请按 2026-10-07 到 2026-10-08 生成计划')
+  assert.ok(events.some((event) => event.event === 'applied_patch'))
+  assert.deepEqual(
+    (await patchStore.listDayRows(trip.id)).sort((a, b) => Number(a.idx) - Number(b.idx)).map((row) => row.date),
+    ['2026-10-07', '2026-10-08'],
+  )
+  const tripResponse = await app.request(`/api/trips/${trip.id}`)
+  assert.equal(tripResponse.status, 200)
+  const updatedTrip = ((await tripResponse.json()) as { trip: TripSummary }).trip
+  assert.deepEqual(
+    { startDate: updatedTrip.startDate, endDate: updatedTrip.endDate, days: updatedTrip.days },
+    { startDate: '2026-10-07', endDate: '2026-10-08', days: 2 },
+  )
+})
+
+test('AI removal deliberately compacts the remaining day dates', async () => {
+  const model = fakeScriptedModel([
+    {
+      toolCalls: [
+        { toolName: 'emit_round_meta', input: PLAN_META },
+        { toolName: 'apply_trip_patch', input: { ops: [{ op: 'remove_day', dayId: 'remove-day-1' }] } },
+      ],
+    },
+    { text: '已删除第一天并重新压缩日期。' },
+  ])
+  const { app, trip, patchStore } = await makeInjectedApp(model as unknown as MastraLanguageModel)
+  await patchStore.upsertDayRow(trip.id, { id: 'remove-day-1', idx: 0, date: '2026-10-02', theme: '第一天' })
+  await patchStore.upsertDayRow(trip.id, { id: 'remove-day-2', idx: 1, date: '2026-10-03', theme: '第二天' })
+
+  const events = await sendAndParse(app, trip.id, '确认方案：删除第一天并压缩日期')
+  assert.ok(events.some((event) => event.event === 'applied_patch'))
+  const remaining = (await patchStore.listDayRows(trip.id)).find((row) => row.id === 'remove-day-2')
+  assert.equal(remaining?.idx, 0)
+  assert.equal(remaining?.date, '2026-10-02')
 })
 
 test('invalid patch is fed back to the model; the retry lands and the stream completes normally', async () => {
