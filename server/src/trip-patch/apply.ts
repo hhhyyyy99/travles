@@ -132,6 +132,17 @@ function sortedItems(day: ProjectedDay): ProjectedItem[] {
   return [...day.items].sort((a, b) => a.order - b.order || a.seq - b.seq)
 }
 
+/** Keep projected positions deterministic after an insertion, move, or remove. */
+function reindexItems(day: ProjectedDay): ProjectedItem[] {
+  const items = sortedItems(day)
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]
+    if (item) item.order = index
+  }
+  day.items = items
+  return items
+}
+
 // ---------------------------------------------------------------------------
 // Validation: apply ops to the projection, checking integrity as we go
 // ---------------------------------------------------------------------------
@@ -184,10 +195,10 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
         const day = projection.days.get(op.dayId as string)
         if (!day) return fail(i, `天「${op.dayId}」不存在`)
         if (day.items.some((item) => item.id === op.itemId)) return fail(i, `卡片「${op.itemId}」已存在`)
-        day.items.push({
+        const item: ProjectedItem = {
           id: op.itemId as string,
           dayId: day.id,
-          order: (op.order as number | undefined) ?? day.items.length,
+          order: 0,
           seq: projection.seqCounter++,
           type: op.type as ItemType,
           title: op.title as string,
@@ -196,7 +207,16 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
           pending: (op.pending as boolean | undefined) ?? false,
           legPending: (op.legPending as boolean | undefined) ?? false,
           fromPatch: true,
-        })
+        }
+        const items = reindexItems(day)
+        const requested = (op.order as number | undefined) ?? items.length
+        const index = Math.max(0, Math.min(items.length, requested))
+        items.splice(index, 0, item)
+        for (let position = 0; position < items.length; position += 1) {
+          const current = items[position]
+          if (current) current.order = position
+        }
+        day.items = items
         projection.touchedDays.add(day.id)
         break
       }
@@ -218,12 +238,25 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
         const target = projection.days.get(op.dayId as string)
         if (!target) return fail(i, `天「${op.dayId}」不存在`)
         const item = found.item
-        found.day.items = found.day.items.filter((entry) => entry.id !== item.id)
+        const sourceItems = reindexItems(found.day).filter((entry) => entry.id !== item.id)
+        for (let position = 0; position < sourceItems.length; position += 1) {
+          const current = sourceItems[position]
+          if (current) current.order = position
+        }
+        found.day.items = sourceItems
         item.dayId = target.id
-        item.order = (op.order as number | undefined) ?? target.items.length
+        const targetItems = found.day === target ? sourceItems : reindexItems(target)
+        const requested = (op.order as number | undefined) ?? targetItems.length
+        const index = Math.max(0, Math.min(targetItems.length, requested))
+        item.order = index
         item.seq = projection.seqCounter++
         item.fromPatch = true
-        target.items.push(item)
+        targetItems.splice(index, 0, item)
+        for (let position = 0; position < targetItems.length; position += 1) {
+          const current = targetItems[position]
+          if (current) current.order = position
+        }
+        target.items = targetItems
         projection.touchedDays.add(target.id)
         projection.touchedDays.add(found.day.id)
         break
@@ -231,7 +264,8 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
       case 'remove_item': {
         const found = findItem(projection, op.itemId as string)
         if (!found) return fail(i, `卡片「${op.itemId}」不存在`)
-        found.day.items = found.day.items.filter((entry) => entry.id !== op.itemId)
+        found.day.items = reindexItems(found.day).filter((entry) => entry.id !== op.itemId)
+        reindexItems(found.day)
         projection.touchedDays.add(found.day.id)
         break
       }
@@ -542,6 +576,17 @@ export async function applyTripPatch(
             stats.itemsRemoved += 1
             break
           }
+        }
+      }
+      // Positional operations shift neighboring cards as well as the card in
+      // the op. Persist the complete final order for each touched day so the
+      // database order matches the validated projection (upsert preserves
+      // existing images in both store implementations).
+      for (const dayId of reference.touchedDays) {
+        const day = reference.days.get(dayId)
+        if (!day) continue
+        for (const item of sortedItems(day)) {
+          await store.upsertItemRow(tripId, itemUpsert(item))
         }
       }
       // Rebuild adjacency legs for every day whose card list changed.

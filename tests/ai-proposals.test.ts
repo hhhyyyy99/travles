@@ -62,3 +62,28 @@ test('proposal network failures never throw', async () => {
   })
   assert.deepEqual(result, { ok: false, error: PROPOSAL_NETWORK_ERROR })
 })
+
+test('proposal responses are scoped to the requested trip and carry a usable patch', async () => {
+  const wrongTrip = await createAiProposal(
+    'trip-1',
+    { kind: 'parse', text: '攻略文本' },
+    jsonFetch({ proposal: { ...proposal, tripId: 'trip-2' } }),
+  )
+  assert.deepEqual(wrongTrip, { ok: false, error: '服务器返回的建议无法解析。' })
+
+  const missingPatch = await createAiProposal(
+    'trip-1',
+    { kind: 'parse', text: '攻略文本' },
+    jsonFetch({ proposal: { ...proposal, patch: undefined } }),
+  )
+  assert.deepEqual(missingPatch, { ok: false, error: '服务器返回的建议无法解析。' })
+})
+
+test('apply rejects a response for a different proposal id', async () => {
+  const result = await applyAiProposal(
+    'trip-1',
+    'proposal-1',
+    jsonFetch({ proposalId: 'proposal-other', appliedPatch: { summary: '已应用', patch: proposal.patch } }),
+  )
+  assert.deepEqual(result, { ok: false, error: '服务器返回的应用结果无法解析。' })
+})

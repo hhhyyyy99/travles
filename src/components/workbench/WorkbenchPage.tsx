@@ -94,6 +94,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     setState({ status: 'loading' })
     setActionError('')
     setSelectedItemId(null)
+    setProposalState({ status: 'idle' })
     void fetchTripCanvas(tripId).then((result) => {
       if (cancelled) return
       if (result.ok) setState({ status: 'ready', data: result.data })
@@ -127,7 +128,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     setActionError('')
     setProposalState({ status: 'loading', request })
     const result = await createAiProposal(tripId, request)
-    if (result.ok) setProposalState({ status: 'ready', proposal: result.data })
+    if (result.ok) setProposalState({ status: 'ready', request, proposal: result.data })
     else setProposalState({ status: 'error', request, error: result.error })
   }
 
@@ -147,13 +148,13 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   const handleProposalApply = async () => {
     if (proposalState.status !== 'ready') return
     const proposal = proposalState.proposal
-    setProposalState({ status: 'applying', proposal })
+    setProposalState({ status: 'applying', request: proposalState.request, proposal })
     const result = await applyAiProposal(tripId, proposal.id)
     if (result.ok) {
       setProposalState({ status: 'applied', record: result.data.appliedPatch })
       handleTripPatched()
     } else {
-      setProposalState({ status: 'error', request: { kind: proposal.kind, ...(proposal.targetDayId ? { dayId: proposal.targetDayId } : {}) }, error: result.error, proposal })
+      setProposalState({ status: 'error', request: proposalState.request, error: result.error, proposal })
     }
   }
 

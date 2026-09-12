@@ -338,7 +338,18 @@ function ProposalSummary({ proposal }: { proposal: AiProposal }) {
         ))}
       </ul>
       {proposal.items && proposal.items.length > 0 && (
-        <p data-ai-proposal-items className="mt-[5px] text-[11px] text-muted">解析出 {proposal.items.length} 个行程项，确认后写入画布。</p>
+        <div data-ai-proposal-items className="mt-[6px]">
+          <p className="text-[11px] text-muted">解析出 {proposal.items.length} 个行程项，确认后写入画布：</p>
+          <ul className="mt-[3px] space-y-[2px] text-[11px] text-muted">
+            {proposal.items.slice(0, 8).map((item) => (
+              <li key={item.itemId} data-ai-proposal-item={item.itemId} className="flex items-center gap-[5px]">
+                <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                {item.pending && <span className="shrink-0 text-[#b75342]">待定</span>}
+              </li>
+            ))}
+          </ul>
+          {proposal.items.length > 8 && <p className="mt-[2px] text-[10px] text-muted">另有 {proposal.items.length - 8} 项</p>}
+        </div>
       )}
     </div>
   )

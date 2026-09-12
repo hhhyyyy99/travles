@@ -20,6 +20,7 @@ import {
   PROPOSAL_KIND_KEY,
   PROPOSAL_TRIP_ID_KEY,
   PROPOSAL_TARGET_DAY_KEY,
+  READ_TRIP_SNAPSHOT_TOOL_NAME,
 } from './tool.js'
 import type { AiProposal, AiProposalStore, ProposalKind, ProposalToolResult } from './types.js'
 
@@ -80,15 +81,25 @@ export function registerAiProposalRoutes(app: Hono<AppEnv>, options: AiProposalR
     }
 
     let proposalInput: ProposalPayload | null = null
+    let snapshotRead = input.kind === 'parse'
+    let proposalBeforeSnapshot = false
     let streamError: unknown = null
     try {
       for await (const chunk of output.fullStream) {
         const type = (chunk as { type?: unknown }).type
         if (type === 'tool-result') {
           const payload = (chunk as { payload?: { toolName?: unknown; result?: unknown } }).payload
+          if (payload?.toolName === READ_TRIP_SNAPSHOT_TOOL_NAME) {
+            const result = payload.result as { ok?: unknown } | null | undefined
+            if (result?.ok === true) snapshotRead = true
+            continue
+          }
           if (payload?.toolName !== CREATE_TRIP_PROPOSAL_TOOL_NAME) continue
           const result = payload.result as ProposalToolResult | null | undefined
-          if (result?.ok === true) proposalInput = result.proposal
+          if (result?.ok === true) {
+            if (!snapshotRead) proposalBeforeSnapshot = true
+            proposalInput = result.proposal
+          }
           else if (result?.ok === false) streamError = result.error
           continue
         }
@@ -106,6 +117,16 @@ export function registerAiProposalRoutes(app: Hono<AppEnv>, options: AiProposalR
         {
           error: typeof streamError === 'string' && streamError ? streamError : '模型没有返回可确认的结构化建议。',
           guidance: '请重试；如果仍失败，请换一种更具体的说法描述攻略或优化目标。',
+          code: 'proposal_invalid',
+        },
+        422,
+      )
+    }
+    if (proposalBeforeSnapshot || !snapshotRead) {
+      return c.json(
+        {
+          error: '路线优化建议未读取当前行程，无法确认建议范围。',
+          guidance: '请重试；优化建议需要先读取当前行程后再生成。',
           code: 'proposal_invalid',
         },
         422,
@@ -220,8 +241,8 @@ async function validateProposalScope(
     return { ok: true }
   }
   if (kind === 'optimize') {
-    if (ops.some((op) => op.op === 'add_day' || op.op === 'remove_day')) {
-      return { ok: false, error: '路线优化不能直接增删日期。' }
+    if (ops.some((op) => op.op !== 'move_item' && op.op !== 'update_item')) {
+      return { ok: false, error: '路线优化只能调整卡片顺序或内容，不能增删日期和卡片。' }
     }
     return { ok: true }
   }

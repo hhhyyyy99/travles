@@ -21,6 +21,7 @@ function freshHarness() {
     calls: { proposal: [], apply: [], cancel: [] },
     state: {
       nextProposal: 0,
+      failApplyOnce: false,
       days: [
         {
           id: 'day-1', index: 0, date: '2026-10-02', theme: '抵达海拉尔', color: '#c26d4f',
@@ -75,6 +76,10 @@ async function mockApi(harness, { page }) {
     const proposal = state.proposals.get(id)
     if (!proposal) return json(route, 404, { error: '建议不存在' })
     calls.apply.push(id)
+    if (state.failApplyOnce) {
+      state.failApplyOnce = false
+      return json(route, 422, { error: 'TripPatch 校验失败', guidance: '请重试' })
+    }
     const op = proposal.patch.ops[0]
     if (op.op === 'add_item') {
       const day = state.days.find((entry) => entry.id === op.dayId)
@@ -142,6 +147,25 @@ test('route optimize and the day wand both target their requested scope', async 
     assert.equal(harness.calls.apply.length, 1)
     assert.equal(harness.state.days[0].items[0].id, 'item-b')
     assert.equal(harness.state.days[1].items.length, 0, 'day wand did not touch another day')
+  } finally {
+    await close()
+  }
+})
+
+test('an apply failure keeps the original parse request available for retry', async () => {
+  const harness = freshHarness()
+  harness.state.failApplyOnce = true
+  const { page, close } = await openApp({ entry: `/?view=workbench&trip=${TRIP_ID}`, amapConfig404: true, setup: (ctx) => mockApi(harness, ctx) })
+  try {
+    const text = 'D1 下午去莫尔格勒河，晚上住宿待定'
+    await page.locator('#chat-list').waitFor()
+    await page.locator('#chat-input').fill(text)
+    await page.locator('[data-action="ai-parse"]').click()
+    await page.locator('[data-ai-proposal-confirm]').click()
+    await page.locator('[data-ai-proposal-status="error"]').waitFor()
+    await page.locator('[data-ai-proposal-retry]').click()
+    await page.locator('[data-ai-proposal-status="ready"]').waitFor()
+    assert.equal(harness.calls.proposal[1].input.text, text)
   } finally {
     await close()
   }

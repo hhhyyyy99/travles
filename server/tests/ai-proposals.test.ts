@@ -17,8 +17,9 @@ type Part =
   | { type: 'text-end'; id: string }
   | { type: 'finish'; finishReason: 'stop' | 'tool-calls'; usage: { inputTokens: number; outputTokens: number; totalTokens: number } }
 
-function fakeProposalModel(input: unknown): MastraLanguageModel {
+function fakeProposalModel(input: unknown, options: { skipSnapshot?: boolean } = {}): MastraLanguageModel {
   let calls = 0
+  const needsSnapshot = !options.skipSnapshot && input !== null && typeof input === 'object' && (input as { kind?: unknown }).kind !== 'parse'
   return {
     specificationVersion: 'v2',
     provider: 'test.proposals',
@@ -29,17 +30,23 @@ function fakeProposalModel(input: unknown): MastraLanguageModel {
     },
     doStream: async () => {
       calls += 1
-      const parts: Part[] = calls === 1
+      const proposalCall = needsSnapshot ? 2 : 1
+      const parts: Part[] = calls === 1 && needsSnapshot
         ? [
-            { type: 'tool-call', toolCallId: 'proposal-1', toolName: 'create_trip_proposal', input: JSON.stringify(input) },
+            { type: 'tool-call', toolCallId: 'snapshot-1', toolName: 'read_trip_snapshot', input: '{}' },
             { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
           ]
-        : [
-            { type: 'text-start', id: 't1' },
-            { type: 'text-delta', id: 't1', delta: '建议已生成。' },
-            { type: 'text-end', id: 't1' },
-            { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
-          ]
+        : calls === proposalCall
+          ? [
+              { type: 'tool-call', toolCallId: 'proposal-1', toolName: 'create_trip_proposal', input: JSON.stringify(input) },
+              { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+            ]
+          : [
+              { type: 'text-start', id: 't1' },
+              { type: 'text-delta', id: 't1', delta: '建议已生成。' },
+              { type: 'text-end', id: 't1' },
+              { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+            ]
       return {
         stream: new ReadableStream({
           start(controller) {
@@ -59,10 +66,14 @@ function request(method: string, body?: unknown): RequestInit {
   }
 }
 
-async function makeApp(modelInput: unknown, patchStore = new MemoryTripPatchStore()) {
+async function makeApp(
+  modelInput: unknown,
+  patchStore = new MemoryTripPatchStore(),
+  plannerModel = fakeProposalModel(modelInput),
+) {
   const app = await createApp({
     tripRepository: new TripRepository(new MemoryTripStoreDriver()),
-    plannerModel: fakeProposalModel(modelInput),
+    plannerModel,
     plannerMemory: new MockMemory({ storage: new InMemoryStore(), enableMessageHistory: true }),
     tripPatchStore: patchStore,
   })
@@ -161,6 +172,98 @@ test('day optimization rejects a patch that targets another day', async () => {
   assert.equal(preview.status, 422)
   assert.deepEqual(await preview.json(), {
     error: '天级魔法棒只能重排目标天的已有卡片。',
+    guidance: '建议未写入行程，请重新生成或换一个目标。',
+    code: 'proposal_invalid',
+  })
+})
+
+test('a day proposal is rejected if its card leaves the target day before confirmation', async () => {
+  const store = new MemoryTripPatchStore()
+  const input = {
+    kind: 'day-optimize',
+    targetDayId: 'day-1',
+    title: '当天优化',
+    summary: '调整当天顺序。',
+    diff: [{ action: 'move', label: '调整当天顺序' }],
+    patch: { ops: [{ op: 'move_item', itemId: 'item-a', dayId: 'day-1', order: 1 }] },
+  }
+  const { app, trip } = await makeApp(input, store)
+  await store.upsertDayRow(trip.id, { id: 'day-1', idx: 0, date: '2026-10-02', theme: '第一天' })
+  await store.upsertDayRow(trip.id, { id: 'day-2', idx: 1, date: '2026-10-03', theme: '第二天' })
+  await store.upsertItemRow(trip.id, { id: 'item-a', dayId: 'day-1', itemOrder: 0, type: 'attraction', title: 'A', note: '', poi: JSON.stringify({ name: 'A', location: { lat: 49, lng: 119 } }), pending: false })
+  await store.upsertItemRow(trip.id, { id: 'item-b', dayId: 'day-1', itemOrder: 1, type: 'attraction', title: 'B', note: '', poi: JSON.stringify({ name: 'B', location: { lat: 49.1, lng: 119.1 } }), pending: false })
+
+  const preview = await app.request(`/api/trips/${trip.id}/ai/proposals`, request('POST', { kind: 'day-optimize', dayId: 'day-1' }))
+  assert.equal(preview.status, 201)
+  const proposal = ((await preview.json()) as { proposal: { id: string } }).proposal
+  const moved = store.itemRows.find((row) => row.id === 'item-a' && row.trip_id === trip.id)
+  assert.ok(moved)
+  moved.day_id = 'day-2'
+  const before = (await store.listItemRows(trip.id)).map((row) => [row.id, row.day_id, row.item_order])
+
+  const applied = await app.request(`/api/trips/${trip.id}/ai/proposals/${proposal.id}/apply`, request('POST'))
+  assert.equal(applied.status, 422)
+  assert.deepEqual(await applied.json(), {
+    error: '天级建议引用了目标天之外的卡片。',
+    guidance: '建议未写入行程，请重新生成。',
+    code: 'proposal_invalid',
+  })
+  assert.deepEqual((await store.listItemRows(trip.id)).map((row) => [row.id, row.day_id, row.item_order]), before)
+})
+
+test('global optimization applies its confirmed move through TripPatch', async () => {
+  const store = new MemoryTripPatchStore()
+  const input = {
+    kind: 'optimize',
+    title: '路线优化建议',
+    summary: '先去 B 再去 A，减少折返。',
+    diff: [{ action: 'move', label: '调整 A/B 顺序' }],
+    patch: { ops: [{ op: 'move_item', itemId: 'item-b', dayId: 'day-1', order: 0 }] },
+  }
+  const { app, trip } = await makeApp(input, store)
+  await store.upsertDayRow(trip.id, { id: 'day-1', idx: 0, date: '2026-10-02', theme: '原计划' })
+  await store.upsertItemRow(trip.id, { id: 'item-a', dayId: 'day-1', itemOrder: 0, type: 'attraction', title: 'A', note: '', poi: JSON.stringify({ name: 'A', location: { lat: 49, lng: 119 } }), pending: false })
+  await store.upsertItemRow(trip.id, { id: 'item-b', dayId: 'day-1', itemOrder: 1, type: 'attraction', title: 'B', note: '', poi: JSON.stringify({ name: 'B', location: { lat: 49.1, lng: 119.1 } }), pending: false })
+
+  const preview = await app.request(`/api/trips/${trip.id}/ai/proposals`, request('POST', { kind: 'optimize' }))
+  assert.equal(preview.status, 201)
+  const proposal = ((await preview.json()) as { proposal: { id: string } }).proposal
+  const applied = await app.request(`/api/trips/${trip.id}/ai/proposals/${proposal.id}/apply`, request('POST'))
+  assert.equal(applied.status, 200)
+  assert.deepEqual((await store.listItemRows(trip.id)).sort((a, b) => Number(a.item_order) - Number(b.item_order)).map((row) => row.id), ['item-b', 'item-a'])
+})
+
+test('optimization rejects a model turn that skips the read-only snapshot', async () => {
+  const input = {
+    kind: 'optimize',
+    title: '路线优化建议',
+    summary: '减少折返。',
+    diff: [{ action: 'move', label: '调整顺序' }],
+    patch: { ops: [{ op: 'move_item', itemId: 'item-b', dayId: 'day-1', order: 0 }] },
+  }
+  const { app, trip } = await makeApp(input, new MemoryTripPatchStore(), fakeProposalModel(input, { skipSnapshot: true }))
+  const preview = await app.request(`/api/trips/${trip.id}/ai/proposals`, request('POST', { kind: 'optimize' }))
+  assert.equal(preview.status, 422)
+  assert.deepEqual(await preview.json(), {
+    error: '路线优化建议未读取当前行程，无法确认建议范围。',
+    guidance: '请重试；优化建议需要先读取当前行程后再生成。',
+    code: 'proposal_invalid',
+  })
+})
+
+test('global optimization cannot delete cards or days', async () => {
+  const input = {
+    kind: 'optimize',
+    title: '路线优化建议',
+    summary: '删除重复景点。',
+    diff: [{ action: 'remove', label: '删除重复景点' }],
+    patch: { ops: [{ op: 'remove_item', itemId: 'item-b' }] },
+  }
+  const { app, trip } = await makeApp(input)
+  const preview = await app.request(`/api/trips/${trip.id}/ai/proposals`, request('POST', { kind: 'optimize' }))
+  assert.equal(preview.status, 422)
+  assert.deepEqual(await preview.json(), {
+    error: '路线优化只能调整卡片顺序或内容，不能增删日期和卡片。',
     guidance: '建议未写入行程，请重新生成或换一个目标。',
     code: 'proposal_invalid',
   })

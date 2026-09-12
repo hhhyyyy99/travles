@@ -258,6 +258,36 @@ test('remove_item / remove_day cascade legs, move_item re-parents, and orders re
   assert.ok(!(await store.listItemRows(TRIP)).some((row) => row.id === 'i1'))
 })
 
+test('positional TripPatch operations persist the final order of neighboring cards', async () => {
+  const store = new MemoryTripPatchStore()
+  const initial = await applyTripPatch(store, TRIP, {
+    ops: [
+      { op: 'add_day', dayId: 'ordered-day', date: '2026-10-02' },
+      { op: 'add_item', itemId: 'first', dayId: 'ordered-day', type: 'attraction', title: 'First', poi: poi('First', 1, 1) },
+      { op: 'add_item', itemId: 'second', dayId: 'ordered-day', type: 'attraction', title: 'Second', poi: poi('Second', 2, 2) },
+    ],
+  })
+  assert.equal(initial.ok, true)
+
+  const moved = await applyTripPatch(store, TRIP, {
+    ops: [{ op: 'move_item', itemId: 'second', dayId: 'ordered-day', order: 0 }],
+  })
+  assert.equal(moved.ok, true)
+  assert.deepEqual(
+    (await store.listItemRows(TRIP)).sort((a, b) => Number(a.item_order) - Number(b.item_order)).map((row) => [row.id, row.item_order]),
+    [['second', 0], ['first', 1]],
+  )
+
+  const inserted = await applyTripPatch(store, TRIP, {
+    ops: [{ op: 'add_item', itemId: 'middle', dayId: 'ordered-day', type: 'food', title: 'Middle', poi: poi('Middle', 3, 3), order: 1 }],
+  })
+  assert.equal(inserted.ok, true)
+  assert.deepEqual(
+    (await store.listItemRows(TRIP)).sort((a, b) => Number(a.item_order) - Number(b.item_order)).map((row) => [row.id, row.item_order]),
+    [['second', 0], ['middle', 1], ['first', 2]],
+  )
+})
+
 test('a malformed patch (bad op / empty ops) is rejected with a schema error', async () => {
   const store = new MemoryTripPatchStore()
   assert.equal((await applyTripPatch(store, TRIP, { ops: [] })).ok, false)
