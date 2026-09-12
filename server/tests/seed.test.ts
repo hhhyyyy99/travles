@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createSqliteTripRepository } from '../src/trips/factory.js'
+import { createApp } from '../src/app.js'
+import { createSqliteWorkbenchStore } from '../src/days/driver-sqlite.js'
 import { seedBuiltinTrip } from '../src/seed/seed.js'
 import {
   BUILTIN_TRIP_DAYS,
@@ -27,10 +29,10 @@ const EXPECTED_ITEMS =
   BUILTIN_TRIP_DAYS.reduce((sum, day) => sum + day.schedule.length, 0) +
   BUILTIN_TRIP_DAYS.filter((day) => day.stay !== null).length
 
-async function setup(): Promise<{ db: SqlDatabase; dir: string; close(): Promise<void> }> {
+async function setup(): Promise<{ db: SqlDatabase; dir: string; close(): Promise<void>; repository: Awaited<ReturnType<typeof createSqliteTripRepository>>['repository'] }> {
   const dir = await mkdtemp(join(tmpdir(), 'seed-builtin-'))
-  const { db, close } = await createSqliteTripRepository(`file:${join(dir, 'trips.db')}`)
-  return { db, dir, close }
+  const sqlite = await createSqliteTripRepository(`file:${join(dir, 'trips.db')}`)
+  return { db: sqlite.db, dir, close: sqlite.close, repository: sqlite.repository }
 }
 
 test('seeds the built-in trip once; repeated startups are no-ops', async () => {
@@ -83,9 +85,9 @@ test('seeded content matches the guide data (days, items, stay, leg)', async () 
     // Schedule rows keep time + detail and get a deterministic type.
     const scheduleItem = await db.run("SELECT title, note, type FROM items WHERE id = 'builtin-item-0-2'")
     assert.equal(scheduleItem.rows[0]?.title, '21:00 取车后去市区')
-    assert.equal(scheduleItem.rows[0]?.type, 'transport')
+    assert.equal(scheduleItem.rows[0]?.type, 'traffic')
     const mealItem = await db.run("SELECT type FROM items WHERE id = 'builtin-item-4-4'")
-    assert.equal(mealItem.rows[0]?.type, 'meal')
+    assert.equal(mealItem.rows[0]?.type, 'food')
 
     // Stay items exist per overnight day with the fixed migration-facing id.
     const stay = await db.run("SELECT title, note, item_order, type FROM items WHERE id = 'builtin-stay-day-0'")
@@ -101,6 +103,73 @@ test('seeded content matches the guide data (days, items, stay, leg)', async () 
     assert.equal(leg.rows[0]?.distance_km, 150)
     assert.equal(leg.rows[0]?.duration_min, 165)
     assert.deepEqual(JSON.parse(leg.rows[0]?.polyline as string), BUILTIN_TRIP_DAYS[1]!.leg.coordinates)
+  } finally {
+    await close()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('seeded canvas exposes guide POIs and one linked route per day', async () => {
+  const { db, dir, close, repository } = await setup()
+  try {
+    await seedBuiltinTrip(db)
+    const app = await createApp({
+      tripRepository: repository,
+      workbenchStore: createSqliteWorkbenchStore(db),
+    })
+    const response = await app.request(`/api/trips/${BUILTIN_TRIP_ID}/canvas`)
+    assert.equal(response.status, 200)
+    const body = (await response.json()) as {
+      days: Array<{ id: string; items: Array<{ id: string; poi: { lat: number; lng: number } | null }> }>
+      legs: Array<{ fromItemId: string; toItemId: string; polyline: Array<[number, number]> | null }>
+    }
+    assert.equal(body.days.length, EXPECTED_DAYS)
+    for (const day of body.days) {
+      const poiItems = day.items.filter((item) => item.poi !== null)
+      assert.ok(poiItems.length >= 2)
+      assert.ok(poiItems.every((item) => Number.isFinite(item.poi?.lat) && Number.isFinite(item.poi?.lng)))
+    }
+    assert.equal(body.legs.length, EXPECTED_DAYS)
+    for (const day of body.days) {
+      const dayItemIds = day.items.map((item) => item.id)
+      const dailyLegs = body.legs.filter((leg) => dayItemIds.includes(leg.fromItemId) && dayItemIds.includes(leg.toItemId))
+      assert.equal(dailyLegs.length, 1)
+      const dailyLeg = dailyLegs[0]
+      assert.ok(dailyLeg)
+      const pairIndex = dayItemIds.findIndex((id, index) => id === dailyLeg?.fromItemId && dayItemIds[index + 1] === dailyLeg?.toItemId)
+      assert.ok(pairIndex >= 0, `daily route for ${day.id} must connect adjacent cards`)
+    }
+    assert.ok(body.legs.every((leg) => (leg.polyline?.length ?? 0) >= 2))
+  } finally {
+    await close()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('seed metadata repair fills only missing canonical fields and preserves user edits', async () => {
+  const { db, dir, close } = await setup()
+  try {
+    await seedBuiltinTrip(db)
+    await db.run(
+      "UPDATE items SET title = ?, note = ?, type = ?, poi = NULL WHERE id = 'builtin-item-1-1'",
+      ['用户改过的出发卡片', '用户自己的备注', 'other'],
+    )
+    await db.run(
+      "UPDATE legs SET from_item_id = NULL, to_item_id = ? WHERE id = 'builtin-leg-day-1'",
+      ['用户自定义终点'],
+    )
+
+    assert.deepEqual(await seedBuiltinTrip(db), { seeded: false })
+    const item = await db.run("SELECT title, note, type, poi FROM items WHERE id = 'builtin-item-1-1'")
+    assert.equal(item.rows[0]?.title, '用户改过的出发卡片')
+    assert.equal(item.rows[0]?.note, '用户自己的备注')
+    assert.equal(item.rows[0]?.type, 'other')
+    assert.ok(typeof item.rows[0]?.poi === 'string' && item.rows[0]?.poi !== '')
+    const leg = await db.run("SELECT from_item_id, to_item_id FROM legs WHERE id = 'builtin-leg-day-1'")
+    assert.deepEqual(
+      { from: leg.rows[0]?.from_item_id, to: leg.rows[0]?.to_item_id },
+      { from: 'builtin-item-1-1', to: '用户自定义终点' },
+    )
   } finally {
     await close()
     await rm(dir, { recursive: true, force: true })
