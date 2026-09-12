@@ -114,8 +114,8 @@ export type ChatRouteOptions = {
   tripRepository: TripRepository
   messages: ChatMessageRepository
   planner: Agent
-  /** False when no model is configured (no injection and no AI_* env). */
-  modelConfigured: boolean
+  /** False when no model is configured; dynamic for ticket-12 provider changes. */
+  modelConfigured: boolean | (() => boolean | Promise<boolean>)
   /** False when the agent runs without memory (pure injected test setups). */
   memoryConfigured: boolean
   /**
@@ -144,7 +144,15 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
     const trip = await requireTrip(c.req.param('id'))
     if (trip === null) return c.json({ error: '行程不存在' }, 404)
 
-    if (!options.modelConfigured) {
+    let modelConfigured = false
+    try {
+      modelConfigured = typeof options.modelConfigured === 'function'
+        ? await options.modelConfigured()
+        : options.modelConfigured
+    } catch {
+      modelConfigured = false
+    }
+    if (!modelConfigured) {
       return c.json(
         {
           error: '模型服务未配置，无法开始对话。',

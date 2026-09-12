@@ -13,7 +13,7 @@ import { APPLY_TRIP_PATCH_TOOL_NAME, createApplyTripPatchTool } from './trip-pat
 import type { TripPatchStoreDriver } from './trip-patch/types.js'
 
 /**
- * The backend's Mastra wiring (tickets 06/07).
+ * The backend's Mastra wiring (tickets 06/07/12).
  *
  * `createMastra` builds a per-app instance carrying the single `planner`
  * agent ("圆周AI"). Tickets 01 kept a bare singleton; ticket 06 needs the
@@ -89,6 +89,8 @@ export type CreateMastraOptions = {
    * Defaults to the env-configured OpenAI-compatible endpoint.
    */
   model?: MastraModelConfig
+  /** Ticket 12: resolve the currently selected provider for every turn. */
+  resolveModel?: () => Promise<MastraModelConfig | null> | MastraModelConfig | null
   /**
    * Injected agent memory (tests pass a core-memory-backed MastraMemory).
    * Defaults to Mastra Memory over the same SQLite/libSQL database the app
@@ -107,15 +109,16 @@ export type CreateMastraOptions = {
 
 /**
  * Default model routing config: any OpenAI-compatible Chat Completions
- * endpoint, configured purely by environment variables (the settings UI is
- * ticket 12, the ai_providers table is reserved in the schema).
+ * endpoint, configured by environment variables. The application-level
+ * resolver in app.ts takes precedence when a ticket-12 provider is selected.
  *
  * Env vars (documented in server/README.md + ticket 06):
  * - AI_BASE_URL  e.g. https://api.example.com/v1 (Mastra appends /chat/completions)
  * - AI_API_KEY   bearer token for that endpoint
  * - AI_MODEL     model id, e.g. gpt-4o-mini (default)
- * - AI_PROTOCOL  'chat-completions' | 'responses' — only 'chat-completions'
- *                is wired in this ticket; 'responses' is reserved.
+ * - AI_PROTOCOL  'chat-completions' | 'responses' (handled by the app-level
+ *                provider adapter; this compatibility helper remains chat
+ *                completions shaped).
  */
 export function modelConfigFromEnv(env: NodeJS.ProcessEnv = process.env): MastraModelConfig | null {
   const baseUrl = env.AI_BASE_URL
@@ -126,7 +129,9 @@ export function modelConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Mastra
 }
 
 export function createMastra(options: CreateMastraOptions = {}): Mastra {
-  const model = options.model ?? modelConfigFromEnv() ?? unconfiguredModel()
+  const model = options.resolveModel
+    ? async () => (await options.resolveModel?.()) ?? unconfiguredModel()
+    : options.model ?? modelConfigFromEnv() ?? unconfiguredModel()
   const memory = options.memory ?? defaultMemory(options.databaseUrl)
 
   const planner = new Agent({

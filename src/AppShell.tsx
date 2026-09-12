@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react'
 import App from './App'
 import TripListPage from './components/TripListPage'
 import WorkbenchPage from './components/workbench/WorkbenchPage'
+import AiSettingsPage from './components/AiSettingsPage'
 import { probeTripsApi } from './domain/tripList'
 import { AccommodationProvider } from './hooks/useAccommodation'
 import { RouteStatesProvider } from './hooks/useRouteStates'
 import { AmapLiveProvider } from './hooks/useAmapLive'
 
-type AppView = 'loading' | 'trips' | 'workbench' | 'guide'
+type AppView = 'loading' | 'trips' | 'workbench' | 'settings' | 'guide'
 
 /**
  * Ticket 02 shell: the trip list is the default view; the existing Hailar
@@ -26,7 +27,7 @@ type AppView = 'loading' | 'trips' | 'workbench' | 'guide'
 function viewFromUrl(): { view: AppView; tripId: string | null } | null {
   const params = new URLSearchParams(window.location.search)
   const param = params.get('view')
-  if (param !== 'trips' && param !== 'guide' && param !== 'workbench') return null
+  if (param !== 'trips' && param !== 'guide' && param !== 'workbench' && param !== 'settings') return null
   return { view: param, tripId: params.get('trip') }
 }
 
@@ -70,13 +71,18 @@ export default function AppShell() {
       return <WorkbenchPage tripId={tripId} onBack={backToTrips} />
     }
     // ?view=workbench without a trip id falls back to the list.
-    return <TripListPage onOpenGuide={() => setState({ view: 'guide', tripId: null })} onOpenTrip={openTrip} />
+    return <TripListPage onOpenGuide={() => setState({ view: 'guide', tripId: null })} onOpenSettings={() => setState({ view: 'settings', tripId: null })} onOpenTrip={openTrip} />
+  }
+
+  if (view === 'settings') {
+    return <AiSettingsPage onBack={backToTrips} />
   }
 
   if (view === 'trips') {
     return (
       <TripListPage
         onOpenGuide={() => setState({ view: 'guide', tripId: null })}
+        onOpenSettings={() => setState({ view: 'settings', tripId: null })}
         onOpenTrip={openTrip}
       />
     )

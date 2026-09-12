@@ -4,10 +4,26 @@
 
 **Blocked by:** 06。
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 两种协议格式均可通过连通性测试并用于对话（各有集成测试：mock 双格式服务端）
-- [ ] 能力探测正确降级并在设置页明示降级状态
-- [ ] 多套配置保存/切换/设默认，刷新后保持
-- [ ] 切换配置后既有会话可继续（上下文不丢）
-- [ ] API Key 不出现在任何前端接口响应与日志中
+- [x] 两种协议格式均可通过连通性测试并用于对话（各有集成测试：mock 双格式服务端）
+- [x] 能力探测正确降级并在设置页明示降级状态
+- [x] 多套配置保存/切换/设默认，刷新后保持
+- [x] 切换配置后既有会话可继续（上下文不丢）
+- [x] API Key 不出现在任何前端接口响应与日志中
+
+## Answer
+
+Implemented the provider settings page and server boundary. Providers are
+stored in SQLite (or the injectable memory driver), support Chat Completions
+and Responses, and are probed for connectivity, streaming, and function
+calling before save. A provider without function calling uses server-side JSON
+tool-call parsing and exposes the explicit degraded state in the UI. The
+selected provider is resolved for each chat turn, while memory remains on the
+existing trip-scoped thread.
+
+Settings responses contain `hasApiKey` plus redacted custom-header values;
+mounted Mastra metadata routes and provider errors are covered by secret-leak
+regression tests. Verification: server typecheck, frontend typecheck, 110
+existing server tests plus 8 focused provider tests, production Vite build,
+and a Chromium settings-route smoke check.

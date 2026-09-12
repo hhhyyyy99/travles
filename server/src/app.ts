@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { MastraServer, type HonoBindings, type HonoVariables } from '@mastra/hono'
 import { fileURLToPath } from 'node:url'
-import { createMastra, modelConfigFromEnv } from './mastra.js'
+import { createMastra } from './mastra.js'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import type { MastraMemory } from '@mastra/core/memory'
 import { readServerVersion } from './version.js'
@@ -32,6 +32,13 @@ import { readJsonBody } from './http/body.js'
 // ---- TripPatch writes (ticket 08, additive) --------------------------------
 import { createSqliteTripPatchStore } from './trip-patch/store-sqlite.js'
 import type { TripPatchStoreDriver } from './trip-patch/types.js'
+// ---- AI provider settings (ticket 12, additive) ----------------------------
+import { AiProviderRepository } from './ai-providers/repository.js'
+import { MemoryAiProviderStoreDriver } from './ai-providers/driver-memory.js'
+import { SqliteAiProviderStoreDriver } from './ai-providers/driver-sqlite.js'
+import { createProviderModel, providerFromEnv } from './ai-providers/model.js'
+import { mountAiProviderRoutes, type AiProviderProbe } from './ai-providers/routes.js'
+import type { AiProviderStoreDriver } from './ai-providers/types.js'
 
 export type AppEnv = {
   Bindings: HonoBindings
@@ -105,6 +112,10 @@ export type CreateAppOptions = {
    * trip repository opens, resolved lazily like `workbenchStore`.
    */
   tripPatchStore?: TripPatchStoreDriver
+  /** Injected provider store (ticket 12; tests use the in-memory driver). */
+  aiProviderStore?: AiProviderStoreDriver
+  /** Injected provider probe (ticket 12; API tests avoid external services). */
+  aiProviderProbe?: AiProviderProbe
 }
 
 /** Default SQLite location: <server>/data/trips.db (gitignored). */
@@ -123,8 +134,41 @@ function defaultDatabaseUrl(): string {
 export async function createApp(options: CreateAppOptions = {}): Promise<Hono<AppEnv>> {
   const app = new Hono<AppEnv>()
 
+  // Provider settings and the planner model share the app database, but the
+  // resolver is intentionally lazy so injected in-memory test apps never open
+  // a second SQLite connection. A chat turn asks for the selected provider
+  // afresh, which makes a settings change effective on the next turn while
+  // leaving the trip-scoped memory thread untouched.
+  let sharedDb: SqlDatabase | null = null
+  let aiProviderRepository: AiProviderRepository | null = options.aiProviderStore
+    ? new AiProviderRepository(options.aiProviderStore)
+    : null
+  const resolveAiProviderRepository = async (): Promise<AiProviderRepository> => {
+    if (aiProviderRepository) return aiProviderRepository
+    if (options.tripRepository) {
+      aiProviderRepository = new AiProviderRepository(new MemoryAiProviderStoreDriver())
+      return aiProviderRepository
+    }
+    if (!sharedDb) {
+      const created = await createSqliteTripRepository(
+        options.databaseUrl ?? process.env.TRIPS_DB_PATH ?? defaultDatabaseUrl(),
+      )
+      sharedDb = created.db
+    }
+    aiProviderRepository = new AiProviderRepository(new SqliteAiProviderStoreDriver(sharedDb))
+    return aiProviderRepository
+  }
+  const resolveProviderModel = async (): Promise<MastraModelConfig | null> => {
+    if (options.plannerModel) return options.plannerModel
+    const provider = await (await resolveAiProviderRepository()).getDefault()
+    if (provider) return createProviderModel(provider, provider.capabilities)
+    const environmentProvider = providerFromEnv()
+    return environmentProvider ? createProviderModel(environmentProvider, environmentProvider.capabilities) : null
+  }
+
   const mastra = createMastra({
     model: options.plannerModel,
+    ...(options.plannerModel ? {} : { resolveModel: resolveProviderModel }),
     memory: options.plannerMemory,
     // The default memory store points at the app database — but only on the
     // default (SQLite) startup path; pure in-memory test apps without an
@@ -215,13 +259,22 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     )
     tripRepository = sqlite.repository
     contentRepository = sqlite.contentRepository
+    sharedDb = sqlite.db
     workbenchDb = sqlite.db
+    if (!options.aiProviderStore) {
+      aiProviderRepository = new AiProviderRepository(new SqliteAiProviderStoreDriver(sqlite.db))
+    }
     workbenchStore = createSqliteWorkbenchStore(sqlite.db)
     messageStore = new SqliteMessageStoreDriver(sqlite.db)
     if (options.seedBuiltinTrip ?? (options.databaseUrl === undefined)) {
       await seedBuiltinTrip(sqlite.db)
     }
   }
+
+  mountAiProviderRoutes(app, {
+    repository: await resolveAiProviderRepository(),
+    probe: options.aiProviderProbe,
+  })
 
 
   // ---- Trip CRUD (ticket 02) ------------------------------------------------
@@ -525,7 +578,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     tripRepository,
     messages: messageRepository,
     planner: mastra.getAgent('planner'),
-    modelConfigured: options.plannerModel !== undefined || modelConfigFromEnv() !== null,
+    modelConfigured: async () => (await resolveProviderModel()) !== null,
     memoryConfigured,
     resolveTripPatchStore,
   })
