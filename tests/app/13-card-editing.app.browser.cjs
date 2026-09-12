@@ -23,8 +23,9 @@ const tripPayload = {
 }
 
 // day-1: stay(POI A) → view(POI B); day-2: free(no POI) → pair(POI C).
-// The stored leg stay→view (30.3 km / 31 min) pins the reuse rules: a same-day
-// reorder must keep its numbers via the reversed-pair rule.
+// The stored leg stay→view (30.3 km / 31 min) pins the refresh flow: a same-day
+// reorder gets an ordered estimate immediately, then the route endpoint can
+// replace it with measured data.
 const canvasPayload = {
   trip: tripPayload,
   days: [
@@ -96,7 +97,7 @@ function buildMock({ failMoves = false } = {}) {
     const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2
     return Math.round(2 * 6371 * Math.asin(Math.sqrt(h)) * 1.2 * 10) / 10
   }
-  // Same convention as server/src/items-admin/legs.ts (reuse → reversed → estimate → 0/0).
+  // Same convention as server/src/items-admin/legs.ts (same pair → estimate → 0/0).
   const recomputeLegs = () => {
     const legs = []
     for (const day of db.days) {
@@ -108,11 +109,6 @@ function buildMock({ failMoves = false } = {}) {
         const same = legBook.get(`${from.id}|${to.id}`)
         if (same) {
           legs.push({ id, fromItemId: from.id, toItemId: to.id, mode: same.mode, distanceKm: same.distanceKm, durationMin: same.durationMin, polyline: same.polyline })
-          continue
-        }
-        const reversed = legBook.get(`${to.id}|${from.id}`)
-        if (reversed) {
-          legs.push({ id, fromItemId: from.id, toItemId: to.id, mode: reversed.mode, distanceKm: reversed.distanceKm, durationMin: reversed.durationMin, polyline: reversed.polyline ? [...reversed.polyline].reverse() : null })
           continue
         }
         const km = from.poi && to.poi ? distKm(from.poi, to.poi) : 0
@@ -247,7 +243,7 @@ const cardOrder = (page, dayId) =>
     .locator(`[data-canvas-day="${dayId}"] [data-canvas-card]`)
     .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-canvas-card')))
 
-test('drag reorders cards within a day and the reversed leg keeps its numbers', async () => {
+test('drag reorders cards within a day and marks the new direction as an estimate', async () => {
   const { page, close } = await openApp({ entry: `/?view=workbench&trip=${TRIP_ID}`, setup: ({ page }) => mockCardApi(page) })
   try {
     await page.locator('[data-canvas-card="item-stay"]').waitFor()
@@ -263,9 +259,11 @@ test('drag reorders cards within a day and the reversed leg keeps its numbers', 
         ).join(',') === 'item-view,item-stay',
     )
 
-    // The leg chip re-derives from the recomputed legs (reversed pair reuse).
+    // The leg chip re-derives from the ordered pair estimate; a real route
+    // refresh runs in the background after the item write.
     await page.locator('[data-leg-chip="leg-item-view-item-stay"]').waitFor()
-    assert.match(await page.locator('[data-leg-chip="leg-item-view-item-stay"]').textContent(), /30\.3 千米 · 31 分钟/)
+    assert.match(await page.locator('[data-leg-chip="leg-item-view-item-stay"]').textContent(), /32\.1 千米 · 32 分钟/)
+    assert.equal(await page.locator('[data-leg-chip="leg-item-view-item-stay"]').getAttribute('data-leg-quality'), 'estimate')
   } finally {
     await close()
   }

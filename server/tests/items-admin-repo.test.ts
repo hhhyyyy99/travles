@@ -1,7 +1,7 @@
 /**
  * Items-admin repository unit tests (ticket 09) — move/copy/create/update/
  * delete over the in-memory driver, plus the pure legs-recompute rules
- * (same-pair reuse, reversed-pair reuse with flipped polyline, haversine
+ * (same-pair reuse, direction-safe estimates for reordered pairs, haversine
  * × 1.2 estimates, empty 0/0 legs for unknown coordinates).
  */
 import { test } from 'node:test'
@@ -127,7 +127,7 @@ test('recomputeTripLegs reuses a stored same-direction pair verbatim', () => {
   ])
 })
 
-test('recomputeTripLegs reuses a reversed pair with the polyline flipped', () => {
+test('recomputeTripLegs estimates a reversed pair instead of replaying one-way geometry', () => {
   const stored: CanvasLeg[] = [
     {
       id: 'leg-old',
@@ -143,14 +143,14 @@ test('recomputeTripLegs reuses a reversed pair with the polyline flipped', () =>
       ],
     },
   ]
-  const legs = recomputeTripLegs([item('a', 'd', 0), item('b', 'd', 1)], stored)
+  const legs = recomputeTripLegs([
+    item('a', 'd', 0, { poi: poi(119.7, 49.2) }),
+    item('b', 'd', 1, { poi: poi(119.85, 49.42) }),
+  ], stored)
   assert.equal(legs.length, 1)
-  assert.equal(legs[0]!.distanceKm, 30.3, 'numbers survive the flip')
-  assert.deepEqual(legs[0]!.polyline, [
-    [119.85, 49.42],
-    [120, 49.3],
-    [119.7, 49.2],
-  ])
+  assert.equal(legs[0]!.distanceKm, 32.1, 'the ordered pair gets a straight-line estimate')
+  assert.equal(legs[0]!.durationMin, 32)
+  assert.equal(legs[0]!.polyline, null, 'one-way geometry is never reversed into the new direction')
 })
 
 test('recomputeTripLegs estimates unknown pairs (haversine × 1.2, ~60 km/h) and empties impossible ones', () => {
@@ -212,13 +212,14 @@ test('moveItem reorders within a day: renumbers orders and recomputes legs with 
     [0, 1, 2],
   )
 
-  // Legs: day-1 pairs i2→i1 (reversed reuse of the stored i1→i2 leg) and
-  // i1→i3 (no coords → 0/0), plus day-2's i4→i5.
+  // Legs: day-1 pairs i2→i1 (direction-safe estimate) and i1→i3
+  // (no coords → 0/0), plus day-2's i4→i5.
   assert.equal(result.legs.length, 3)
   const reversed = result.legs.find((leg) => leg.fromItemId === 'i2' && leg.toItemId === 'i1')
   assert.ok(reversed)
-  assert.equal(reversed.distanceKm, 30.3, 'numbers reused from the stored pair')
-  assert.deepEqual(reversed.polyline && [...reversed.polyline].pop(), [119.7, 49.2], 'polyline flipped')
+  assert.equal(reversed.distanceKm, 32.1, 'the reversed pair gets its own estimate')
+  assert.equal(reversed.durationMin, 32)
+  assert.equal(reversed.polyline, null, 'one-way geometry is not replayed')
   const tail = result.legs.find((leg) => leg.fromItemId === 'i1' && leg.toItemId === 'i3')
   assert.ok(tail)
   assert.equal(tail.distanceKm, 0)

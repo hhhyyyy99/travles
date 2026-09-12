@@ -23,7 +23,8 @@
  * - items:     `builtin-item-<dayIndex>-<order>`   (overview + schedule rows)
  * - stay item: `builtin-stay-day-<dayIndex>`       (one per overnight day;
  *              the ticket-03 localStorage migration UPSERTS these same ids)
- * - legs:      `builtin-leg-day-<dayIndex>`
+ * - legs:      `builtin-leg-day-<dayIndex>` (additional waypoint segments use
+ *              `builtin-leg-day-<dayIndex>-<segmentIndex>`)
  * - seed marker: app_meta key `builtin-trip.hailar-oct7`
  */
 
@@ -33,6 +34,123 @@ export const BUILTIN_TRIP_SEED_MARKER = 'builtin-trip.hailar-oct7'
 
 /** Guide dates are MM.DD only; the seed pins this year onto the range. */
 export const BUILTIN_TRIP_SEED_YEAR = 2026
+
+export type BuiltinTripPoint = {
+  amapId: string
+  name: string
+  lat: number
+  lng: number
+  category: string
+  rating: number
+  introSummary: string
+}
+
+/** Stable WGS-84 point catalog mirrored from src/data/itinerary.ts. */
+export const BUILTIN_TRIP_POINTS = {
+  airportH: {
+    amapId: 'airportH',
+    name: '海拉尔东山机场',
+    lat: 49.205,
+    lng: 119.826,
+    category: '交通',
+    rating: 0,
+    introSummary: '海拉尔东山机场，行程起终点。',
+  },
+  hailar: {
+    amapId: 'hailar',
+    name: '海拉尔 · 2 晚',
+    lat: 49.212,
+    lng: 119.766,
+    category: '城市',
+    rating: 0,
+    introSummary: '海拉尔市区，取车与返程住宿点。',
+  },
+  morigele: {
+    amapId: 'morigele',
+    name: '莫尔格勒河',
+    lat: 49.35,
+    lng: 119.62,
+    category: '景点',
+    rating: 0,
+    introSummary: '草原腹地的曲水景观。',
+  },
+  erguna: {
+    amapId: 'erguna',
+    name: '额尔古纳 · 1 晚',
+    lat: 50.243,
+    lng: 120.183,
+    category: '城市',
+    rating: 0,
+    introSummary: '额尔古纳城区，湿地行程落脚点。',
+  },
+  mordaoga: {
+    amapId: 'mordaoga',
+    name: '莫尔道嘎 · 1 晚',
+    lat: 51.26,
+    lng: 120.78,
+    category: '城市',
+    rating: 0,
+    introSummary: '莫尔道嘎镇与国家森林公园入口。',
+  },
+  shiwei: {
+    amapId: 'shiwei',
+    name: '室韦口岸',
+    lat: 51.34,
+    lng: 119.9,
+    category: '景点',
+    rating: 0,
+    introSummary: '中俄界河边的室韦口岸。',
+  },
+  heishantou: {
+    amapId: 'heishantou',
+    name: '黑山头 · 1 晚',
+    lat: 50.12,
+    lng: 119.28,
+    category: '城市',
+    rating: 0,
+    introSummary: '黑山头镇，边境草原落脚点。',
+  },
+  caidaihe: {
+    amapId: 'caidaihe',
+    name: '186彩带河',
+    lat: 49.88,
+    lng: 118.98,
+    category: '景点',
+    rating: 0,
+    introSummary: '俯瞰额尔古纳河与湿地的观景点。',
+  },
+  manzhouli: {
+    amapId: 'manzhouli',
+    name: '满洲里 · 1 晚',
+    lat: 49.597,
+    lng: 117.452,
+    category: '城市',
+    rating: 0,
+    introSummary: '满洲里市区，夜景与餐饮落脚点。',
+  },
+  hulunlake: {
+    amapId: 'hulunlake',
+    name: '呼伦湖',
+    lat: 48.97,
+    lng: 117.58,
+    category: '景点',
+    rating: 0,
+    introSummary: '呼伦湖湖畔停留点。',
+  },
+} as const satisfies Record<string, BuiltinTripPoint>
+
+export type BuiltinTripPointKey = keyof typeof BUILTIN_TRIP_POINTS
+
+/** Day point order mirrors each guide day's `points` array. */
+export const BUILTIN_TRIP_DAY_POINT_KEYS = [
+  ['airportH', 'hailar'],
+  ['hailar', 'morigele', 'erguna'],
+  ['erguna', 'mordaoga'],
+  ['mordaoga', 'shiwei', 'heishantou'],
+  ['heishantou', 'caidaihe', 'manzhouli'],
+  ['manzhouli', 'hulunlake', 'hailar'],
+  ['hailar', 'airportH'],
+] as const satisfies readonly (readonly BuiltinTripPointKey[])[]
 
 export type SeedScheduleRow = readonly [time: string, title: string, detail: string]
 
@@ -54,7 +172,7 @@ export interface SeedDay {
   desc: string
   tip: string
   schedule: readonly SeedScheduleRow[]
-  /** From roadRoutes.legs[legByDay[dayIndex]] (meters/seconds → km/minutes, [lng,lat] → polyline JSON). */
+  /** Aggregate reference route from roadRoutes.legs[legByDay[dayIndex]]. */
   leg: { distanceKm: number; durationMin: number; coordinates: readonly (readonly [number, number])[] }
 }
 
@@ -186,12 +304,12 @@ export const BUILTIN_TRIP_DAYS: readonly SeedDay[] = [
 
 /**
  * Item classification for guide schedule rows (PRD §6 types). Deterministic
- * keyword mapping; anything unmatched is an 'activity' card.
+ * keyword mapping; anything unmatched is an attraction card.
  */
-export function classifyScheduleItem(title: string): 'transport' | 'meal' | 'activity' {
-  if (/餐|涮/.test(title)) return 'meal'
-  if (/出发|抵达|入住|取车|还车|进入机场|起飞|前往|往|到|回/.test(title)) return 'transport'
-  return 'activity'
+export function classifyScheduleItem(title: string): 'traffic' | 'food' | 'attraction' {
+  if (/餐|涮/.test(title)) return 'food'
+  if (/出发|抵达|入住|取车|还车|进入机场|起飞|前往|往|到|回/.test(title)) return 'traffic'
+  return 'attraction'
 }
 
 /** `2026-10-02` style date from the guide's MM.DD + the seed year. */

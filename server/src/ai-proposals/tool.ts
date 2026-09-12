@@ -58,7 +58,7 @@ export function createTripSnapshotTool(options: { resolveStore?: () => Promise<T
       if (!options.resolveStore) return { ok: false, error: '行程存储不可用。' }
       try {
         const store = await options.resolveStore()
-        return { ok: true, tripId, ...readTripCanvas(store, tripId) }
+        return { ok: true, tripId, ...(await readTripCanvas(store, tripId)) }
       } catch {
         return { ok: false, error: '读取行程失败，请稍后重试。' }
       }

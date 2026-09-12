@@ -27,6 +27,7 @@ import {
 import {
   dayFitCoordinates,
   dayMileageKm,
+  dayRouteQuality,
   dayRouteSegments,
   formatMileageLabel,
   hiddenByCollision,
@@ -58,6 +59,14 @@ import {
   renderWorkbenchRoutes,
   type WorkbenchRouteDay,
 } from '../../services/workbenchMap'
+import { subscribeTripEvents } from '../../domain/tripEvents'
+
+const RECOMMENDATION_EVENT_REASONS = new Set([
+  'stash_added',
+  'stash_deleted',
+  'favorite_added',
+  'favorite_deleted',
+])
 
 export interface MapPanelProps {
   tripId: string
@@ -169,6 +178,24 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
   }, [tripId])
 
   useEffect(() => {
+    let active = true
+    const unsubscribe = subscribeTripEvents(tripId, {
+      onUpdate: (event) => {
+        if (active && event.kind === 'canvas' && RECOMMENDATION_EVENT_REASONS.has(event.reason)) {
+          refreshRecommendations()
+        }
+      },
+    })
+    return () => {
+      active = false
+      unsubscribe()
+    }
+    // The subscription is trip-scoped; refreshRecommendations reads current
+    // recommendation state through its ref and stable React state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripId])
+
+  useEffect(() => {
     if (!recommendationsEnabled) return
     const requestId = searchRequestRef.current + 1
     searchRequestRef.current = requestId
@@ -221,7 +248,7 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
         dayId: day.id,
         color: dayAccentColor(day.color, day.index),
         segments: dayRouteSegments(day, legs),
-        mileageLabel: formatMileageLabel(day, dayMileageKm(day, legs)),
+        mileageLabel: formatMileageLabel(day, dayMileageKm(day, legs), dayRouteQuality(day, legs)),
       })),
     [days, legs],
   )

@@ -81,6 +81,11 @@ export default function ChatPanel({
   const [streamText, setStreamText] = useState<string | null>(null)
   const [streamMeta, setStreamMeta] = useState<ChatMessageMeta | null>(null)
   const [streamPatch, setStreamPatch] = useState<AppliedPatchRecord | null>(null)
+  // Event-driven history reads can finish after a local send. Keep an older
+  // response from replacing the optimistic or just-persisted turn.
+  const historyReadSeqRef = useRef(0)
+  const localSendEpochRef = useRef(0)
+  const sendingRef = useRef(false)
   // Latest onTripPatched for the async send handler (avoid stale closures).
   const onTripPatchedRef = useRef(onTripPatched)
   onTripPatchedRef.current = onTripPatched
@@ -95,10 +100,14 @@ export default function ChatPanel({
     setHistory([])
     setLoadError(null)
     setHistoryLoading(true)
+    const requestSeq = ++historyReadSeqRef.current
+    const sendEpoch = localSendEpochRef.current
     void fetchChatHistory(tripId).then((result) => {
       if (cancelled) return
-      if (result.ok) setHistory(result.data)
-      else setLoadError(result.error)
+      if (requestSeq === historyReadSeqRef.current && sendEpoch === localSendEpochRef.current) {
+        if (result.ok) setHistory(result.data)
+        else setLoadError(result.error)
+      }
       setHistoryLoading(false)
     })
     return () => {
@@ -113,9 +122,23 @@ export default function ChatPanel({
     let active = true
     const unsubscribe = subscribeTripEvents(tripId, {
       onUpdate: (event) => {
-        if (!active || event.kind !== 'chat') return
+        // The server publishes message_created before the local SSE `done`
+        // event. Let done replace the optimistic bubble first; otherwise the
+        // history read and done handler can append the same turn twice.
+        if (!active || event.kind !== 'chat' || sendingRef.current) return
+        const requestSeq = ++historyReadSeqRef.current
+        const sendEpoch = localSendEpochRef.current
         void fetchChatHistory(tripId).then((result) => {
-          if (!active || !result.ok) return
+          if (!active || requestSeq !== historyReadSeqRef.current || sendEpoch !== localSendEpochRef.current || !result.ok) return
+          setHistory(result.data)
+        })
+      },
+      onReconnect: () => {
+        if (!active || sendingRef.current) return
+        const requestSeq = ++historyReadSeqRef.current
+        const sendEpoch = localSendEpochRef.current
+        void fetchChatHistory(tripId).then((result) => {
+          if (!active || requestSeq !== historyReadSeqRef.current || sendEpoch !== localSendEpochRef.current || !result.ok) return
           setHistory(result.data)
         })
       },
@@ -129,10 +152,13 @@ export default function ChatPanel({
   useEffect(scrollToEnd, [history, streamText])
 
   const sending = sendState.status === 'sending'
+  sendingRef.current = sending
 
   async function handleSend(content: string) {
     const trimmed = content.trim()
     if (trimmed === '' || sending) return
+    localSendEpochRef.current += 1
+    sendingRef.current = true
     setInput('')
     setSendState({ status: 'sending' })
     setStreamText('')
@@ -162,7 +188,7 @@ export default function ChatPanel({
 
     if (result.ok) {
       setHistory((prev) => [
-        ...prev.filter((m) => m.id !== optimistic.id),
+        ...prev.filter((m) => m.id !== optimistic.id && m.id !== result.userMessage.id && m.id !== result.assistantMessage.id),
         result.userMessage,
         result.assistantMessage,
       ])

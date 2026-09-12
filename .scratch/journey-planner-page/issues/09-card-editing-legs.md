@@ -31,11 +31,11 @@ canvas read (spec 用户故事 40).
 
 **Legs-recompute convention** (`items-admin/legs.ts`, unit-tested): legs join
 adjacent items *within a day* (no cross-day legs). Rules in order: ① reuse a
-stored leg for the same ordered pair verbatim; ② reuse a stored reversed-pair
-leg's numbers/mode and flip the polyline; ③ estimate — haversine straight
-line × 1.2 road factor, ~60 km/h ⇒ `durationMin ≈ km` (min 1), `polyline`
-null; ④ no usable POI coords on both sides ⇒ `0/0` + null polyline (the UI
-hides an empty chip). Ticket 15's route tools can upgrade estimates in place.
+stored leg for the same ordered pair verbatim; ② estimate a new ordered pair —
+haversine straight line × 1.2 road factor, ~60 km/h ⇒ `durationMin ≈ km` (min
+1), `polyline` null; ③ no usable POI coords on both sides ⇒ `0/0` + null
+polyline (the UI marks the route as pending). Reverse pairs never replay a
+stored one-way route; ticket 15's route tools can upgrade estimates in place.
 
 **System messages**: `ChatMessageRepository.recordSystemMessage(tripId, content)`
 appends a tolerant, never-throwing `role:'system'` row to the `messages`

@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import {
   CANVAS_NETWORK_ERROR,
   cardVisual,
+  crossDayDriveWarnings,
   dayAccentColor,
   dayDateLabel,
   fetchTripCanvas,
@@ -132,6 +133,34 @@ test('legs longer than six hours expose the split warning used by canvas and lis
   assert.equal(isLongDriveLeg(sixHours), false, 'exactly six hours is still within the boundary')
   assert.match(longDriveWarningText(long), /超过 6 小时/)
   assert.equal(longDriveWarningText(null), '')
+})
+
+test('cross-day POI transfers expose an estimated warning without a stored leg', () => {
+  const days = [
+    {
+      id: 'day-1', index: 0, date: '2026-10-02', theme: '', color: '', items: [
+        {
+          id: 'from', dayId: 'day-1', order: 0, type: 'attraction' as const, title: '第一天末站', note: '',
+          poi: { amapId: '', name: '第一天末站', lat: 49, lng: 119, category: '', rating: 0, introSummary: '' }, images: [], pending: false,
+        },
+      ],
+    },
+    {
+      id: 'day-2', index: 1, date: '2026-10-03', theme: '', color: '', items: [
+        {
+          id: 'to', dayId: 'day-2', order: 0, type: 'attraction' as const, title: '第二天首站', note: '',
+          poi: { amapId: '', name: '第二天首站', lat: 53, lng: 119, category: '', rating: 0, introSummary: '' }, images: [], pending: false,
+        },
+      ],
+    },
+  ]
+  const warnings = crossDayDriveWarnings(days)
+  assert.equal(warnings.length, 1)
+  assert.equal(warnings[0]?.fromDayId, 'day-1')
+  assert.equal(warnings[0]?.toDayId, 'day-2')
+  assert.equal(warnings[0]?.estimated, true)
+  assert.match(warnings[0]?.fromTitle ?? '', /第一天末站/)
+  assert.ok((warnings[0]?.durationMin ?? 0) > 360)
 })
 
 test('dayAccentColor prefers the server color and falls back per index', () => {

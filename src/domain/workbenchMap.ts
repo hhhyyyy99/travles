@@ -102,12 +102,35 @@ export function dayMileageKm(day: WorkbenchDay, legs: WorkbenchLeg[]): number {
   return total
 }
 
+export type RouteDisplayQuality = 'measured' | 'estimate' | 'pending'
+
+/**
+ * Route quality for map labels. A missing/empty leg remains pending; a leg
+ * without geometry is an estimate even when it has usable numeric metrics.
+ */
+export function dayRouteQuality(day: WorkbenchDay, legs: WorkbenchLeg[]): RouteDisplayQuality {
+  const lookup = legsByPair(legs)
+  const items = dayItemsInOrder(day)
+  let estimated = false
+  for (let i = 1; i < items.length; i += 1) {
+    const leg = lookup.get(`${items[i - 1]?.id}|${items[i]?.id}`)
+    if (!leg || (leg.distanceKm <= 0 && leg.durationMin <= 0)) return 'pending'
+    if (leg.polyline === null) estimated = true
+  }
+  return estimated ? 'estimate' : 'measured'
+}
+
 /** "10.02 周五 76km" — same date/weekday labels as the canvas day header. */
-export function formatMileageLabel(day: Pick<WorkbenchDay, 'date' | 'index'>, km: number): string {
+export function formatMileageLabel(
+  day: Pick<WorkbenchDay, 'date' | 'index'>,
+  km: number,
+  quality: RouteDisplayQuality = 'measured',
+): string {
   const date = dayDateLabel(day.date) || `D${day.index + 1}`
   const weekday = weekdayLabel(day.date)
   const distance = Number.isFinite(km) ? Math.round(km) : 0
-  return `${date}${weekday ? ` ${weekday}` : ''} ${distance}km`
+  const distanceLabel = quality === 'pending' ? '待查询' : quality === 'estimate' ? `约 ${distance}km` : `${distance}km`
+  return `${date}${weekday ? ` ${weekday}` : ''} ${distanceLabel}`
 }
 
 /* ------------------------------------------------------------------ *

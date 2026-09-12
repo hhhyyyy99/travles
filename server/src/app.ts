@@ -45,10 +45,10 @@ import { SqliteAiProviderStoreDriver } from './ai-providers/driver-sqlite.js'
 import { createProviderModel, providerFromEnv } from './ai-providers/model.js'
 import { mountAiProviderRoutes, type AiProviderProbe } from './ai-providers/routes.js'
 import type { AiProviderStoreDriver } from './ai-providers/types.js'
-import { routeAmapLeg } from './recommendations/route.js'
 import { TripEventHub } from './trip-events/hub.js'
 import { registerTripEventRoutes } from './trip-events/routes.js'
 import { synchronizeTripSchedule } from './trip-events/schedule.js'
+import { RouteLookupCache, routeAmapLeg } from './recommendations/route.js'
 
 export type AppEnv = {
   Bindings: HonoBindings
@@ -449,6 +449,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
   // in the pending pool.
   let recommendationsStore = options.recommendationsStore ?? null
   let recommendationsDb: SqlDatabase | null = workbenchDb
+  const routeCache = new RouteLookupCache()
   let resolveItemsAdminStoreForRecommendations: (() => Promise<ItemsAdminStoreDriver>) | null = null
   const resolveRecommendationsStore = async (): Promise<RecommendationsStoreDriver> => {
     if (recommendationsStore) return recommendationsStore
@@ -466,6 +467,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     resolveStore: resolveRecommendationsStore,
     searchPoi: options.searchPoi ?? searchAmapPoi,
     routeLegs: options.routeLegs ?? routeAmapLeg,
+    onTripUpdated: (tripId, reason) => notifyTrip(tripId, 'canvas', reason),
+    routeRefresh: { cache: routeCache },
     resolveItemsStore: async () => {
       if (!resolveItemsAdminStoreForRecommendations) throw new Error('路线存储尚未初始化')
       return resolveItemsAdminStoreForRecommendations()
@@ -671,9 +674,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     memoryConfigured,
     resolveTripPatchStore,
     events: tripEvents,
-    onTripPatched: async (tripId) => {
+    onTripPatched: async (tripId, appliedPatch) => {
       const store = await resolveTripPatchStore()
-      await synchronizeSchedule(tripId, store, true)
+      await synchronizeSchedule(tripId, store, appliedPatch.stats.daysRemoved > 0)
       notifyTrip(tripId, 'canvas', 'ai_patch')
     },
   })
@@ -688,6 +691,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     memoryConfigured,
     resolveTripPatchStore,
     proposalStore: new MemoryAiProposalStore(),
+    onApplied: async (tripId, appliedPatch) => {
+      const store = await resolveTripPatchStore()
+      await synchronizeSchedule(tripId, store, appliedPatch.stats.daysRemoved > 0)
+      notifyTrip(tripId, 'canvas', 'ai_proposal')
+    },
   })
 
   return app

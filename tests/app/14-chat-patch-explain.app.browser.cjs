@@ -123,6 +123,41 @@ async function mockApi({ page }) {
   })
 }
 
+const crossDayTripId = 'trip-cross-day-drive-warning'
+const crossDayTrip = { ...tripPayload, id: crossDayTripId, title: '跨天长途测试' }
+const crossDayCanvasPayload = {
+  trip: crossDayTrip,
+  days: [
+    {
+      id: 'cross-day-1', index: 0, date: '2026-10-02', theme: '第一天', color: '#c26d4f',
+      items: [{
+        id: 'cross-day-from', dayId: 'cross-day-1', order: 0, type: 'attraction', title: '第一天末站', note: '',
+        poi: { amapId: 'B-from', name: '第一天末站', lat: 49, lng: 119, category: '城市', rating: 0, introSummary: '' }, images: [], pending: false,
+      }],
+    },
+    {
+      id: 'cross-day-2', index: 1, date: '2026-10-03', theme: '第二天', color: '#3f7d5c',
+      items: [{
+        id: 'cross-day-to', dayId: 'cross-day-2', order: 0, type: 'attraction', title: '第二天首站', note: '',
+        poi: { amapId: 'B-to', name: '第二天首站', lat: 53, lng: 119, category: '城市', rating: 0, introSummary: '' }, images: [], pending: false,
+      }],
+    },
+  ],
+  legs: [],
+}
+
+async function mockCrossDayApi({ page }) {
+  await page.route('**/api/trips', (route) =>
+    route.fulfill({ status: 200, body: JSON.stringify({ trips: [crossDayTrip] }), headers: { 'content-type': 'application/json' } }),
+  )
+  await page.route('**/api/trips/*/canvas', (route) =>
+    route.fulfill({ status: 200, body: JSON.stringify(crossDayCanvasPayload), headers: { 'content-type': 'application/json' } }),
+  )
+  await page.route('**/api/trips/*/messages', (route) =>
+    route.fulfill({ status: 200, body: JSON.stringify({ messages: [] }), headers: { 'content-type': 'application/json' } }),
+  )
+}
+
 test('patch-explain details and long-drive warnings render in chat and canvas', async () => {
   const { page, close } = await openApp({
     entry: `/?view=workbench&trip=${TRIP_ID}`,
@@ -143,6 +178,23 @@ test('patch-explain details and long-drive warnings render in chat and canvas', 
     await warning.waitFor()
     assert.ok((await warning.textContent()).includes('超长，建议拆分'))
     assert.match(await warning.getAttribute('title'), /超过 6 小时/)
+  } finally {
+    await close()
+  }
+})
+
+test('canvas marks a cross-day long transfer as an unverified estimate', async () => {
+  const { page, close } = await openApp({
+    entry: `/?view=workbench&trip=${crossDayTripId}`,
+    setup: mockCrossDayApi,
+  })
+  try {
+    const warning = page.locator('[data-cross-day-warning]')
+    await warning.waitFor()
+    const text = await warning.textContent()
+    assert.ok(text.includes('跨天驾车估算'))
+    assert.ok(text.includes('坐标估算，未核实实际路况'))
+    assert.ok(text.includes('建议拆成两段'))
   } finally {
     await close()
   }

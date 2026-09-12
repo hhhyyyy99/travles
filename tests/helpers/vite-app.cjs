@@ -46,7 +46,7 @@ function waitFor(url, { timeoutMs = 20000 } = {}) {
  * Starts a real Vite server (dev or preview) on 127.0.0.1 with a free port and
  * --strictPort, and waits until the root entry responds. Returns {url, port, close}.
  */
-async function startViteApp({ mode } = {}) {
+async function startViteApp({ mode, serverPort } = {}) {
   const appMode = mode || process.env.APP_MODE || 'dev';
   const port = await freePort();
   const host = '127.0.0.1';
@@ -60,7 +60,11 @@ async function startViteApp({ mode } = {}) {
   const cacheDir = await mkdtemp(path.join(tmpdir(), 'journey-vite-test-'));
   const child = spawn(process.execPath, [cli, ...args], {
     cwd: repoRoot,
-    env: { ...process.env, APP_TEST_VITE_CACHE_DIR: cacheDir },
+    env: {
+      ...process.env,
+      ...(serverPort === undefined ? {} : { SERVER_PORT: String(serverPort) }),
+      APP_TEST_VITE_CACHE_DIR: cacheDir,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let logs = '';
@@ -104,11 +108,11 @@ async function startViteApp({ mode } = {}) {
  *   awaited right BEFORE navigation — the seam API-mock suites use to install
  *   `page.route` handlers (handlers registered before goto() win).
  */
-async function openApp({ mode, init, viewport, entry = '/', amapConfig404 = false, acceptDownloads = false, setup } = {}) {
+async function openApp({ mode, serverPort, init, viewport, entry = '/', amapConfig404 = false, acceptDownloads = false, setup } = {}) {
   let server;
   let browser;
   try {
-    server = await startViteApp({ mode });
+    server = await startViteApp({ mode, serverPort });
     browser = await chromium.launch({
       headless: true,
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined,

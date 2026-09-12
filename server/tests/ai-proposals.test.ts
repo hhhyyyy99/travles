@@ -59,6 +59,47 @@ function fakeProposalModel(input: unknown, options: { skipSnapshot?: boolean } =
   } as unknown as MastraLanguageModel
 }
 
+function snapshotBoundaryModel(input: unknown, observed: { prompts: unknown[] }): MastraLanguageModel {
+  let calls = 0
+  return {
+    specificationVersion: 'v2',
+    provider: 'test.proposals-boundary',
+    modelId: 'mock-proposals-boundary',
+    supportedUrls: Promise.resolve({}),
+    doGenerate: async () => {
+      throw new Error('doGenerate not used')
+    },
+    doStream: async ({ prompt }: { prompt?: unknown }) => {
+      calls += 1
+      if (calls === 2) observed.prompts.push(prompt)
+      const parts: Part[] = calls === 1
+        ? [
+            { type: 'tool-call', toolCallId: 'snapshot-boundary-1', toolName: 'read_trip_snapshot', input: '{}' },
+            { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+          ]
+        : calls === 2
+          ? [
+              { type: 'tool-call', toolCallId: 'proposal-boundary-1', toolName: 'create_trip_proposal', input: JSON.stringify(input) },
+              { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+            ]
+          : [
+              { type: 'text-start', id: 'boundary-text' },
+              { type: 'text-delta', id: 'boundary-text', delta: '建议已生成。' },
+              { type: 'text-end', id: 'boundary-text' },
+              { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+            ]
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            for (const part of parts) controller.enqueue(part)
+            controller.close()
+          },
+        }),
+      }
+    },
+  } as unknown as MastraLanguageModel
+}
+
 function request(method: string, body?: unknown): RequestInit {
   return {
     method,
@@ -126,6 +167,33 @@ test('smart parse returns structured items and does not write until confirm', as
   assert.equal(applied.status, 200)
   assert.equal((await patchStore.listDayRows(trip.id)).length, 1)
   assert.equal((await patchStore.listItemRows(trip.id)).length, 1)
+})
+
+test('standalone proposal apply preserves explicit day dates and refreshes the trip summary', async () => {
+  const input = {
+    ...PARSE_PROPOSAL,
+    patch: {
+      ops: PARSE_PROPOSAL.patch.ops.map((op) =>
+        op.op === 'add_day' ? { ...op, date: '2026-10-07' } : op,
+      ),
+    },
+  }
+  const store = new MemoryTripPatchStore()
+  const { app, trip } = await makeApp(input, store)
+  const preview = await app.request(`/api/trips/${trip.id}/ai/proposals`, request('POST', { kind: 'parse', text: '10 月 7 日去莫尔格勒河' }))
+  assert.equal(preview.status, 201)
+  const proposal = ((await preview.json()) as { proposal: { id: string } }).proposal
+
+  const applied = await app.request(`/api/trips/${trip.id}/ai/proposals/${proposal.id}/apply`, request('POST'))
+  assert.equal(applied.status, 200)
+  assert.equal((await store.listDayRows(trip.id))[0]?.date, '2026-10-07')
+  const tripResponse = await app.request(`/api/trips/${trip.id}`)
+  assert.equal(tripResponse.status, 200)
+  const updatedTrip = ((await tripResponse.json()) as { trip: TripSummary }).trip
+  assert.deepEqual(
+    { startDate: updatedTrip.startDate, endDate: updatedTrip.endDate, days: updatedTrip.days },
+    { startDate: '2026-10-07', endDate: '2026-10-07', days: 1 },
+  )
 })
 
 test('canceling a route optimization proposal leaves the existing itinerary unchanged', async () => {
@@ -249,6 +317,36 @@ test('optimization rejects a model turn that skips the read-only snapshot', asyn
     guidance: '请重试；优化建议需要先读取当前行程后再生成。',
     code: 'proposal_invalid',
   })
+})
+
+test('HTTP proposal generation forwards the awaited snapshot result to the model', async () => {
+  const input = {
+    kind: 'optimize',
+    title: '路线优化建议',
+    summary: '保留当前日期并调整顺序。',
+    diff: [{ action: 'move', label: '调整顺序' }],
+    patch: { ops: [{ op: 'move_item', itemId: 'snapshot-item-b', dayId: 'snapshot-day', order: 0 }] },
+  }
+  const observed = { prompts: [] as unknown[] }
+  const store = new MemoryTripPatchStore()
+  const { app, trip } = await makeApp(input, store, snapshotBoundaryModel(input, observed))
+  await store.upsertDayRow(trip.id, { id: 'snapshot-day', idx: 0, date: '2026-10-02', theme: '模型应看到的主题' })
+  await store.upsertItemRow(trip.id, {
+    id: 'snapshot-item-a', dayId: 'snapshot-day', itemOrder: 0, type: 'attraction', title: '模型应看到的起点', note: '',
+    poi: JSON.stringify({ name: '模型应看到的起点', location: { lat: 49, lng: 119 } }), pending: false,
+  })
+  await store.upsertItemRow(trip.id, {
+    id: 'snapshot-item-b', dayId: 'snapshot-day', itemOrder: 1, type: 'attraction', title: '模型应看到的终点', note: '',
+    poi: JSON.stringify({ name: '模型应看到的终点', location: { lat: 49.1, lng: 119.1 } }), pending: false,
+  })
+
+  const response = await app.request(`/api/trips/${trip.id}/ai/proposals`, request('POST', { kind: 'optimize' }))
+  assert.equal(response.status, 201)
+  assert.equal(observed.prompts.length, 1)
+  const modelPrompt = JSON.stringify(observed.prompts[0])
+  assert.match(modelPrompt, /模型应看到的主题/)
+  assert.match(modelPrompt, /模型应看到的起点/)
+  assert.match(modelPrompt, /模型应看到的终点/)
 })
 
 test('global optimization cannot delete cards or days', async () => {

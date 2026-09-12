@@ -18,7 +18,7 @@ export type TripScheduleStore = {
 }
 
 export type ScheduleSyncOptions = {
-  /** Rebase fully dated rows from the trip start after a removal/AI patch. */
+  /** Rebase fully dated rows from the trip start after an intentional day removal. */
   compactDates?: boolean
 }
 

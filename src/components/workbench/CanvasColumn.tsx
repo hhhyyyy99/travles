@@ -18,11 +18,12 @@
  * "添加" on the selected card. Page-level handlers stay optimistic and roll
  * back on failure; this component only reports intents.
  */
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { Car, Plus, Trash2, WandSparkles } from 'lucide-react'
 import {
   CARD_TYPE_LABEL,
   cardVisual,
+  crossDayDriveWarnings,
   dayAccentColor,
   dayDateLabel,
   formatLegLabel,
@@ -37,6 +38,7 @@ import {
 import type { RecommendationPoi, StashItem } from '../../domain/recommendations'
 import EditableTheme from './EditableTheme'
 import { CardMenu, DayPickerDialog, type CardMenuAction } from './CardMenu'
+import CrossDayDriveWarning from './CrossDayDriveWarning'
 
 const VISUAL_CLASSES = {
   traffic: {
@@ -101,6 +103,7 @@ export default function CanvasColumn({
   syncing = false,
 }: CanvasColumnProps) {
   const legLookup = legsByPair(legs)
+  const crossDayWarnings = crossDayDriveWarnings(days)
   // Cross-column drag state: the id of the card currently being dragged.
   const [draggingId, setDraggingId] = useState<string | null>(null)
   // Open "⋯" menu (card id) and the cross-day picker (移动到 / 复制到).
@@ -182,29 +185,36 @@ export default function CanvasColumn({
             这份行程还没有安排 —— 等圆周帮你规划，或稍后再来看看。
           </p>
         )}
-        {days.map((day) => (
-          <DayColumn
-            key={day.id}
-            day={day}
-            legLookup={legLookup}
-            onThemeSave={onThemeSave}
-            onDeleteDay={onDeleteDay}
-            onOptimizeDay={onOptimizeDay}
-            onCardClick={onCardClick}
-            highlightItemId={highlightItemId}
-            onMoveItem={onMoveItem}
-            onDeleteItem={onDeleteItem}
-            onAddCard={onAddCard}
-            onNoteSave={onNoteSave}
-            onImageAdd={onImageAdd}
-            onDropStash={onDropStash}
-            draggingId={draggingId}
-            setDraggingId={setDraggingId}
-            menuFor={menuFor}
-            setMenuFor={setMenuFor}
-            onCardAction={handleCardAction}
-          />
-        ))}
+        {days.map((day, index) => {
+          const warning = crossDayWarnings.find(
+            (candidate) => candidate.fromDayId === day.id && candidate.toDayId === days[index + 1]?.id,
+          )
+          return (
+            <Fragment key={day.id}>
+              <DayColumn
+                day={day}
+                legLookup={legLookup}
+                onThemeSave={onThemeSave}
+                onDeleteDay={onDeleteDay}
+                onOptimizeDay={onOptimizeDay}
+                onCardClick={onCardClick}
+                highlightItemId={highlightItemId}
+                onMoveItem={onMoveItem}
+                onDeleteItem={onDeleteItem}
+                onAddCard={onAddCard}
+                onNoteSave={onNoteSave}
+                onImageAdd={onImageAdd}
+                onDropStash={onDropStash}
+                draggingId={draggingId}
+                setDraggingId={setDraggingId}
+                menuFor={menuFor}
+                setMenuFor={setMenuFor}
+                onCardAction={handleCardAction}
+              />
+              {warning && <CrossDayDriveWarning warning={warning} />}
+            </Fragment>
+          )
+        })}
         {onAddDay && (
           <button
             type="button"
@@ -688,19 +698,25 @@ export function CanvasCard({
 
 function LegChip({ leg }: { leg: WorkbenchLeg | null }) {
   const label = formatLegLabel(leg)
-  if (!label) return null
-  const longDrive = isLongDriveLeg(leg)
+  if (!leg) return null
+  const pending = !label && leg.distanceKm <= 0 && leg.durationMin <= 0
+  if (!label && !pending) return null
+  const estimated = !pending && leg.polyline === null
+  const longDrive = !pending && isLongDriveLeg(leg)
+  const displayLabel = pending ? '路线待查询' : estimated ? `约 ${label}` : label
   return (
     <div
-      data-leg-chip={leg?.id ?? ''}
-      data-leg-warning={longDrive ? leg?.id : undefined}
-      title={longDrive ? longDriveWarningText(leg) : undefined}
+      data-leg-chip={leg.id}
+      data-leg-quality={pending ? 'pending' : estimated ? 'estimate' : 'measured'}
+      data-leg-warning={longDrive ? leg.id : undefined}
+      aria-label={pending ? '路线待查询' : estimated ? `预估路线：${displayLabel}` : `驾车路线：${displayLabel}`}
+      title={longDrive ? longDriveWarningText(leg) : pending ? '路线待查询' : estimated ? '直线估算，路线服务返回后会更新' : '高德驾车路线'}
       className={`flex items-center gap-[6px] rounded-[999px] border px-[10px] py-[3px] text-[11px] ${
         longDrive ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]' : 'border-line bg-paper text-muted'
       }`}
     >
       <Car aria-hidden="true" className="w-[12px]" />
-      {label}
+      {displayLabel}
       {longDrive && <span data-leg-warning-label>超长，建议拆分</span>}
     </div>
   )

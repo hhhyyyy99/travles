@@ -12,7 +12,7 @@ import { RequestContext } from '@mastra/core/request-context'
 import type { AppEnv } from '../app.js'
 import { readJsonBody } from '../http/body.js'
 import type { TripRepository } from '../trips/repository.js'
-import type { TripPatchStoreDriver } from '../trip-patch/types.js'
+import type { TripPatchRecord, TripPatchStoreDriver } from '../trip-patch/types.js'
 import { applyTripPatch } from '../trip-patch/apply.js'
 import { proposalRequestSchema } from './schema.js'
 import {
@@ -32,6 +32,8 @@ export type AiProposalRouteOptions = {
   memoryConfigured: boolean
   resolveTripPatchStore: () => Promise<TripPatchStoreDriver>
   proposalStore: AiProposalStore
+  /** Synchronize trip metadata after an explicitly confirmed proposal apply. */
+  onApplied?: (tripId: string, appliedPatch: TripPatchRecord) => Promise<void> | void
 }
 
 type ProposalRequest = { kind: ProposalKind; text?: string; dayId?: string }
@@ -177,10 +179,17 @@ export function registerAiProposalRoutes(app: Hono<AppEnv>, options: AiProposalR
       const status = result.code === 'not_found' ? 404 : result.code === 'storage' ? 503 : 422
       return c.json({ error: result.error, guidance: '行程未被改动，请修正后重新生成建议。', code: 'patch_invalid' }, status)
     }
+    const appliedPatch = { summary: result.summary, stats: result.stats, patch: result.patch }
+    try {
+      await options.onApplied?.(tripId, appliedPatch)
+    } catch {
+      // The proposal patch is already committed; a later event/refetch can
+      // repair summary metadata if this side effect fails.
+    }
     options.proposalStore.remove(tripId, proposalId)
     return c.json({
       proposalId,
-      appliedPatch: { summary: result.summary, stats: result.stats, patch: result.patch },
+      appliedPatch,
     })
   }
 

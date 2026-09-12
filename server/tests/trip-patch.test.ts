@@ -90,6 +90,13 @@ test('valid plan patch applies: days/items/legs rows land, summary and stats rep
   assert.ok(Number(legs[0]?.duration_min) > 20)
 })
 
+test('canvas POI mapping keeps coordinates from flat item-admin storage', () => {
+  assert.deepEqual(mapPoiRef(JSON.stringify({ name: 'API 景点', lat: 49.21, lng: 119.76 })), {
+    amapId: '', name: 'API 景点', lat: 49.21, lng: 119.76,
+    category: '', rating: 0, introSummary: '',
+  })
+})
+
 test('patch leg rebuild preserves known routes when a new stop is appended', async () => {
   const store = new MemoryTripPatchStore()
   assert.equal((await applyTripPatch(store, TRIP, planPatch())).ok, true)

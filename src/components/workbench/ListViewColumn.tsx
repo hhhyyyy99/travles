@@ -11,6 +11,7 @@ import { BedDouble, Car, Trash2, WandSparkles } from 'lucide-react'
 import {
   dayAccentColor,
   dayDateLabel,
+  crossDayDriveWarnings,
   formatLegLabel,
   isLongDriveLeg,
   legsByPair,
@@ -21,6 +22,7 @@ import {
   type WorkbenchLeg,
 } from '../../domain/workbench'
 import { CanvasCard } from './CanvasColumn'
+import CrossDayDriveWarning from './CrossDayDriveWarning'
 import EditableTheme from './EditableTheme'
 
 export type ListViewColumnProps = {
@@ -65,6 +67,9 @@ export default function ListViewColumn({
   }, [days, highlightItemId])
 
   const selected = days.find((day) => day.id === selectedId) ?? days[0] ?? null
+  const crossDayWarning = selected
+    ? crossDayDriveWarnings(days).find((warning) => warning.fromDayId === selected.id)
+    : undefined
 
   return (
     <div id="workbench-list" className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-paper" aria-busy={syncing}>
@@ -138,6 +143,7 @@ export default function ListViewColumn({
           onOptimizeDay={onOptimizeDay}
           onCardClick={onCardClick}
           highlightItemId={highlightItemId}
+          crossDayWarning={crossDayWarning}
         />
       )}
     </div>
@@ -152,6 +158,7 @@ function DayTimeline({
   onOptimizeDay,
   onCardClick,
   highlightItemId,
+  crossDayWarning,
 }: {
   day: WorkbenchDay
   legLookup: Map<string, WorkbenchLeg>
@@ -160,6 +167,7 @@ function DayTimeline({
   onOptimizeDay?: (day: WorkbenchDay) => void
   onCardClick?: (itemId: string) => void
   highlightItemId?: string | null
+  crossDayWarning?: ReturnType<typeof crossDayDriveWarnings>[number]
 }) {
   const accent = dayAccentColor(day.color, day.index)
   const dateLabel = dayDateLabel(day.date) || `D${day.index + 1}`
@@ -210,6 +218,11 @@ function DayTimeline({
         </div>
         {onThemeSave && <EditableTheme dayId={day.id} theme={day.theme} onSave={onThemeSave} />}
       </header>
+      {crossDayWarning && (
+        <div className="px-[14px] pt-[12px]">
+          <CrossDayDriveWarning warning={crossDayWarning} />
+        </div>
+      )}
       <div className="flex flex-col gap-[12px] p-[14px]">
         {day.items.length === 0 && (
           <p className="py-[12px] text-center text-[12px] text-muted">这一天还没有安排。</p>
@@ -298,19 +311,25 @@ function StayRow({
 /** 交通段行 — vertical variant of the canvas leg chip. */
 function LegRow({ leg }: { leg: WorkbenchLeg | null }) {
   const label = formatLegLabel(leg)
-  if (!label) return null
-  const longDrive = isLongDriveLeg(leg)
+  if (!leg) return null
+  const pending = !label && leg.distanceKm <= 0 && leg.durationMin <= 0
+  if (!label && !pending) return null
+  const estimated = !pending && leg.polyline === null
+  const longDrive = !pending && isLongDriveLeg(leg)
+  const displayLabel = pending ? '路线待查询' : estimated ? `约 ${label}` : label
   return (
     <div
-      data-list-leg={leg?.id ?? ''}
-      data-leg-warning={longDrive ? leg?.id : undefined}
-      title={longDrive ? longDriveWarningText(leg) : undefined}
+      data-list-leg={leg.id}
+      data-leg-quality={pending ? 'pending' : estimated ? 'estimate' : 'measured'}
+      data-leg-warning={longDrive ? leg.id : undefined}
+      aria-label={pending ? '路线待查询' : estimated ? `预估路线：${displayLabel}` : `驾车路线：${displayLabel}`}
+      title={longDrive ? longDriveWarningText(leg) : pending ? '路线待查询' : estimated ? '直线估算，路线服务返回后会更新' : '高德驾车路线'}
       className={`flex items-center gap-[6px] rounded-[999px] border px-[10px] py-[3px] text-[11px] ${
         longDrive ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]' : 'border-line bg-paper text-muted'
       }`}
     >
       <Car aria-hidden="true" className="w-[12px]" />
-      {label}
+      {displayLabel}
       {longDrive && <span data-leg-warning-label>超长，建议拆分</span>}
     </div>
   )

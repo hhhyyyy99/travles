@@ -320,7 +320,8 @@ test('card edits round-trip through SQLite and recompute legs in the canvas read
     // No injected stores: the app resolves the SQLite stores over the shared db.
     const app = await createApp({ tripRepository: repository, databaseUrl: dbUrl })
 
-    // Move i1 after i2 → day-1 = [i2, i1]; the old pair leg is reused reversed.
+    // Move i1 after i2 → day-1 = [i2, i1]; the reverse direction gets an
+    // explicit estimate until the route refresh provider answers.
     const moveRes = await app.request(`/api/trips/${tripId}/items/i1/move`, {
       method: 'POST',
       body: JSON.stringify({ index: 1 }),
@@ -343,7 +344,7 @@ test('card edits round-trip through SQLite and recompute legs in the canvas read
     )
     const pair = canvas.legs.find((leg) => leg.fromItemId === 'i2' && leg.toItemId === 'i1')
     assert.ok(pair, 'the reversed pair leg exists')
-    assert.equal(pair.distanceKm, 30.3, 'stored pair numbers are reused')
+    assert.equal(pair.distanceKm, 32.1, 'reverse direction uses its own estimate')
 
     // A free-text create lands in the canvas read with its POI-less card.
     const createRes = await app.request(`/api/trips/${tripId}/items`, {

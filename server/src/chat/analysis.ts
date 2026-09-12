@@ -4,9 +4,11 @@
  * The model still owns the natural-language explanation, but these checks keep
  * two safety boundaries from depending on a model remembering a hidden rule:
  * date/day contradictions are surfaced before a patch can land, and long
- * stored drive legs are passed back as structured warnings.
+ * stored or cross-day drive estimates are passed back as structured warnings.
  */
-import type { LegRow, ItemRow } from '../days/types.js'
+import { mapPoiRef } from '../days/repository.js'
+import type { DayRow, LegRow, ItemRow, PoiRef } from '../days/types.js'
+import { estimateLeg } from '../items-admin/legs.js'
 import type { RoundWarning } from './round-meta.js'
 
 export const LONG_DRIVE_LIMIT_MINUTES = 6 * 60
@@ -237,8 +239,8 @@ function normalizeDatePair(first: string | undefined, second: string | undefined
   return { start: a, end: b, reversed: b < a }
 }
 
-/** Convert stored leg rows into warnings the round metadata can carry. */
-export function longDriveWarnings(legs: LegRow[], items: ItemRow[]): RoundWarning[] {
+/** Convert stored and cross-day drive rows into warnings the round metadata can carry. */
+export function longDriveWarnings(legs: LegRow[], items: ItemRow[], days: DayRow[] = []): RoundWarning[] {
   const titles = new Map<string, string>()
   for (const row of Array.isArray(items) ? items : []) {
     const id = text(row?.id)
@@ -247,7 +249,11 @@ export function longDriveWarnings(legs: LegRow[], items: ItemRow[]): RoundWarnin
   }
 
   const warnings: RoundWarning[] = []
+  const storedPairs = new Set<string>()
   for (const leg of Array.isArray(legs) ? legs : []) {
+    const fromItemId = text(leg?.from_item_id)
+    const toItemId = text(leg?.to_item_id)
+    if (fromItemId && toItemId) storedPairs.add(`${fromItemId}|${toItemId}`)
     const mode = text(leg?.mode).toLowerCase()
     if (mode !== '' && !['drive', 'driving', 'car', '驾车', '自驾'].includes(mode)) continue
     const durationMin = number(leg?.duration_min)
@@ -264,7 +270,85 @@ export function longDriveWarnings(legs: LegRow[], items: ItemRow[]): RoundWarnin
       durationMin,
     })
   }
+  return [...warnings, ...crossDayLongDriveWarnings(days, items, storedPairs)]
+}
+
+/**
+ * Derive a warning for a day boundary when the adjacency-leg pipeline skips
+ * cross-day pairs. The estimate is deliberately conservative and labelled as
+ * unverified: it is based on POI coordinates, not a road-service response.
+ */
+export function crossDayLongDriveWarnings(
+  days: DayRow[],
+  items: ItemRow[],
+  storedPairs: ReadonlySet<string> = new Set(),
+): RoundWarning[] {
+  const orderedDays = (Array.isArray(days) ? days : [])
+    .map((row, sourceIndex) => ({ id: text(row?.id), index: integer(row?.idx), sourceIndex }))
+    .filter((entry) => entry.id !== '' && entry.index >= 0)
+    .sort((a, b) => a.index - b.index || a.sourceIndex - b.sourceIndex || a.id.localeCompare(b.id))
+  const itemsByDay = new Map<string, OrderedPoiItem[]>()
+  for (const [sourceIndex, row] of (Array.isArray(items) ? items : []).entries()) {
+    const id = text(row?.id)
+    const dayId = text(row?.day_id)
+    if (!id || !dayId) continue
+    const entry = {
+      id,
+      order: number(row?.item_order),
+      sourceIndex,
+      title: text(row?.title) || id,
+      poi: mapPoiRef(row?.poi),
+    }
+    const bucket = itemsByDay.get(dayId)
+    if (bucket) bucket.push(entry)
+    else itemsByDay.set(dayId, [entry])
+  }
+  for (const bucket of itemsByDay.values()) {
+    bucket.sort((a, b) => a.order - b.order || a.sourceIndex - b.sourceIndex || a.id.localeCompare(b.id))
+  }
+
+  const warnings: RoundWarning[] = []
+  for (let index = 0; index + 1 < orderedDays.length; index += 1) {
+    const currentDay = orderedDays[index]
+    const nextDay = orderedDays[index + 1]
+    if (!currentDay || !nextDay || nextDay.index !== currentDay.index + 1) continue
+    const from = lastPoi(itemsByDay.get(currentDay.id) ?? [])
+    const to = firstPoi(itemsByDay.get(nextDay.id) ?? [])
+    if (!from || !to || storedPairs.has(`${from.id}|${to.id}`)) continue
+    const estimate = estimateLeg(from.poi, to.poi)
+    if (!estimate || estimate.durationMin <= LONG_DRIVE_LIMIT_MINUTES) continue
+    warnings.push({
+      kind: 'long-drive',
+      title: '跨天长途驾驶估算',
+      message: `${from.title} → ${to.title}（跨天）按坐标估算驾驶 ${formatHours(estimate.durationMin)}，超过 6 小时。`,
+      suggestion: '这是坐标估算，未核实实际路况；建议拆成两段，增加中途休息或过夜点，再继续规划。',
+      from: from.title,
+      to: to.title,
+      durationMin: estimate.durationMin,
+      estimated: true,
+    })
+  }
   return warnings
+}
+
+type OrderedPoiItem = {
+  id: string
+  order: number
+  sourceIndex: number
+  title: string
+  poi: PoiRef | null
+}
+
+function firstPoi(items: OrderedPoiItem[]): OrderedPoiItem | null {
+  return items.find((item) => item.poi !== null) ?? null
+}
+
+function lastPoi(items: OrderedPoiItem[]): OrderedPoiItem | null {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (item !== undefined && item.poi !== null) return item
+  }
+  return null
 }
 
 export function warningAsText(warning: RoundWarning): string {
@@ -312,6 +396,11 @@ function text(value: unknown): string {
 function number(value: unknown): number {
   const result = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(result) && result >= 0 ? result : 0
+}
+
+function integer(value: unknown): number {
+  const result = Number(value)
+  return Number.isInteger(result) && result >= 0 ? result : -1
 }
 
 function formatHours(minutes: number): string {

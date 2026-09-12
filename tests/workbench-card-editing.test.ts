@@ -19,6 +19,7 @@ import {
   deleteWorkbenchItem,
   moveWorkbenchItem,
   poiFromPlace,
+  refreshWorkbenchLegs,
   tempItemId,
   updateWorkbenchItem,
   type FetchLike,
@@ -126,6 +127,27 @@ test('copyWorkbenchItem / createWorkbenchItem / updateWorkbenchItem / deleteWork
       'DELETE /api/trips/trip-1/items/a',
     ],
   )
+})
+
+test('refreshWorkbenchLegs posts the background route upgrade and normalizes its summary', async () => {
+  const calls: { url: string; init?: RequestInit }[] = []
+  const result = await refreshWorkbenchLegs(
+    'trip-1',
+    stubFetch(
+      {
+        legs: [LEG],
+        summary: { attempted: 1, updated: 1, pending: 0, truncated: false },
+      },
+      200,
+      calls,
+    ),
+  )
+  assert.ok(result.ok)
+  if (!result.ok) return
+  assert.equal(result.data.legs[0]?.polyline?.length, 2)
+  assert.deepEqual(result.data.summary, { attempted: 1, updated: 1, pending: 0, truncated: false })
+  assert.equal(calls[0]?.url, '/api/trips/trip-1/legs/refresh')
+  assert.equal(calls[0]?.init?.method, 'POST')
 })
 
 test('item client surfaces server errors verbatim and never throws on network loss', async () => {

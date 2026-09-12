@@ -117,7 +117,7 @@ import {
   PATCH_TURN_STATE_KEY,
   createPatchTurnState,
 } from '../trip-patch/tool.js'
-import type { TripPatchStoreDriver } from '../trip-patch/types.js'
+import type { TripPatchRecord, TripPatchStoreDriver } from '../trip-patch/types.js'
 import type { TripEventHub } from '../trip-events/hub.js'
 
 export type ChatRouteOptions = {
@@ -134,7 +134,7 @@ export type ChatRouteOptions = {
    */
   resolveTripPatchStore?: () => Promise<TripPatchStoreDriver>
   /** Broadcast a committed patch so other workbench tabs refetch the canvas. */
-  onTripPatched?: (tripId: string) => Promise<void> | void
+  onTripPatched?: (tripId: string, appliedPatch: TripPatchRecord) => Promise<void> | void
   /** Broadcast persisted chat turns to other tabs showing this trip. */
   events?: TripEventHub
 }
@@ -407,7 +407,7 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
 
       if (patchTurn.applied !== null) {
         try {
-          await options.onTripPatched?.(tripId)
+          await options.onTripPatched?.(tripId, patchTurn.applied)
         } catch {
           // The patch itself is already committed. A later event or manual
           // refresh can repair schedule metadata if this side effect fails.
@@ -529,7 +529,7 @@ async function analyzeTripTurn(
       isModification,
       storeReadFailed: false,
       snapshotHash,
-      warnings: [...longDriveWarnings(legRows, itemRows), ...conflicts.map(conflictToWarning)],
+      warnings: [...longDriveWarnings(legRows, itemRows, dayRows), ...conflicts.map(conflictToWarning)],
       conflicts,
     }
   } catch {
@@ -551,8 +551,12 @@ async function readLongDriveWarnings(
   if (!resolveStore) return []
   try {
     const store = await resolveStore()
-    const [items, legs] = await Promise.all([store.listItemRows(tripId), store.listLegRows(tripId)])
-    return longDriveWarnings(legs, items)
+    const [days, items, legs] = await Promise.all([
+      store.listDayRows(tripId),
+      store.listItemRows(tripId),
+      store.listLegRows(tripId),
+    ])
+    return longDriveWarnings(legs, items, days)
   } catch {
     return []
   }

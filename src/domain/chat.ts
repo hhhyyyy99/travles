@@ -54,6 +54,8 @@ export type ChatRoundWarning = {
   from?: string
   to?: string
   durationMin?: number
+  /** True when a warning is based on coordinates rather than a verified route. */
+  estimated?: boolean
 }
 
 /**
@@ -216,6 +218,7 @@ export function normalizeChatMeta(raw: unknown): ChatMessageMeta | null {
           ...(typeof item.from === 'string' && item.from ? { from: item.from } : {}),
           ...(typeof item.to === 'string' && item.to ? { to: item.to } : {}),
           ...(typeof item.durationMin === 'number' && Number.isFinite(item.durationMin) ? { durationMin: item.durationMin } : {}),
+          ...(item.estimated === true ? { estimated: true } : {}),
         })
       }
     }
