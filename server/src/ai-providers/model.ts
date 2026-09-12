@@ -155,18 +155,21 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
   if (!Object.keys(headers).some((key) => key.toLowerCase() === 'authorization') && provider.apiKey) {
     headers.authorization = `Bearer ${provider.apiKey}`
   }
-  const messages = options.prompt.flatMap(toChatMessage)
+  const fallback = !capabilities.functionCalling
+  const messages = options.prompt.flatMap((message) => toChatMessage(message, fallback))
   const tools = capabilities.functionCalling ? options.tools?.map((tool) => toTool(tool, provider.protocol)) : undefined
   if (provider.protocol === 'responses') {
     const system = options.prompt.filter((message) => message.role === 'system').map(contentOf).join('\n\n')
-    const input = options.prompt.filter((message) => message.role !== 'system').flatMap(toResponseInput)
-    if (!capabilities.functionCalling) appendFallbackInstruction(input, system, options.tools)
+    const input = options.prompt.filter((message) => message.role !== 'system').flatMap((message) => toResponseInput(message, fallback))
+    const instructions = fallback
+      ? [system, fallbackInstruction(options.tools)].filter(Boolean).join('\n\n')
+      : system
     return {
       url: endpointFor(provider.baseUrl, provider.protocol),
       headers,
       body: {
         model: provider.modelId,
-        ...(system ? { instructions: system } : {}),
+        ...(instructions ? { instructions } : {}),
         input,
         stream: capabilities.streaming,
         ...(tools && tools.length > 0 ? { tools } : {}),
@@ -192,7 +195,8 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
   }
 }
 
-function toChatMessage(message: PromptMessage): Record<string, unknown>[] {
+function toChatMessage(message: PromptMessage, fallback = false): Record<string, unknown>[] {
+  if (fallback) return toFallbackChatMessages(message)
   const content = message.content
   if (message.role === 'tool') {
     const results = Array.isArray(content) ? content.filter((part) => part.type === 'tool-result') : []
@@ -220,7 +224,22 @@ function toChatMessage(message: PromptMessage): Record<string, unknown>[] {
   }]
 }
 
-function toResponseInput(message: PromptMessage): Record<string, unknown>[] {
+function toFallbackChatMessages(message: PromptMessage): Record<string, unknown>[] {
+  const content = message.content
+  if (!Array.isArray(content)) return [{ role: fallbackChatRole(message.role), content: message.role === 'tool' ? `工具结果：${content}` : content }]
+  if (message.role === 'tool') {
+    const results = content.filter((part) => part.type === 'tool-result')
+    return results.length > 0
+      ? results.map((part) => ({ role: 'user', content: fallbackToolResultText(part) }))
+      : [{ role: 'user', content: '工具结果：' }]
+  }
+  const text = content.filter((part) => part.type === 'text' || part.type === 'reasoning').map((part) => part.text ?? '').filter(Boolean)
+  const toolCalls = content.filter((part) => part.type === 'tool-call').map(fallbackToolCallText)
+  return [{ role: fallbackChatRole(message.role), content: [...text, ...toolCalls].join('\n\n') }]
+}
+
+function toResponseInput(message: PromptMessage, fallback = false): Record<string, unknown>[] {
+  if (fallback) return toFallbackResponseInput(message)
   if (!Array.isArray(message.content)) return [{ role: responseRole(message.role), content: [{ type: 'input_text', text: message.content }] }]
   const output: Record<string, unknown>[] = []
   for (const part of message.content) {
@@ -233,6 +252,39 @@ function toResponseInput(message: PromptMessage): Record<string, unknown>[] {
     }
   }
   return output
+}
+
+function toFallbackResponseInput(message: PromptMessage): Record<string, unknown>[] {
+  const content = message.content
+  const role = fallbackResponseRole(message.role)
+  if (!Array.isArray(content)) return [{ role, content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text: message.content }] }]
+  const output: Record<string, unknown>[] = []
+  for (const part of content) {
+    if (part.type === 'text' || part.type === 'reasoning') {
+      output.push({ role, content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text: part.text ?? '' }] })
+    } else if (part.type === 'tool-call') {
+      output.push({ role: 'assistant', content: [{ type: 'output_text', text: fallbackToolCallText(part) }] })
+    } else if (part.type === 'tool-result') {
+      output.push({ role: 'user', content: [{ type: 'input_text', text: fallbackToolResultText(part) }] })
+    }
+  }
+  return output
+}
+
+function fallbackToolCallText(part: PromptPart): string {
+  return `工具调用「${part.toolName ?? ''}」：${JSON.stringify(part.input ?? {})}`
+}
+
+function fallbackToolResultText(part: PromptPart): string {
+  return `工具结果「${part.toolName ?? ''}」：${outputText(part.output ?? part.value ?? '')}`
+}
+
+function fallbackChatRole(role: string): 'system' | 'user' | 'assistant' {
+  return role === 'system' || role === 'assistant' || role === 'user' ? role : 'user'
+}
+
+function fallbackResponseRole(role: string): 'user' | 'assistant' | 'developer' {
+  return role === 'assistant' ? 'assistant' : role === 'system' ? 'developer' : 'user'
 }
 
 function responseRole(role: string): string {
@@ -278,6 +330,14 @@ function appendFallbackInstruction(
   system: string,
   tools?: Array<{ name: string; description?: string; inputSchema?: unknown; parameters?: unknown }>,
 ): void {
+  const instruction = fallbackInstruction(tools)
+  const content = system ? system + '\n\n' + instruction : instruction
+  messages.unshift({ role: 'system', content })
+}
+
+function fallbackInstruction(
+  tools?: Array<{ name: string; description?: string; inputSchema?: unknown; parameters?: unknown }>,
+): string {
   const toolList = (tools ?? []).map((tool) => ({
     name: tool.name,
     ...(tool.description ? { description: tool.description } : {}),
@@ -285,12 +345,7 @@ function appendFallbackInstruction(
       ? { parameters: tool.parameters ?? tool.inputSchema }
       : {}),
   }))
-  const instruction = `当前模型不支持 function calling。需要调用工具时，只输出 JSON：{"tool":"工具名","arguments":{}}；不要输出 Markdown 代码围栏。可调用工具：${JSON.stringify(toolList)}。普通回答直接输出文本。`
-  if (system) {
-    messages.unshift({ role: 'system', content: system + '\n\n' + instruction })
-  } else {
-    messages.unshift({ role: 'system', content: instruction })
-  }
+  return `当前模型不支持 function calling。需要调用工具时，只输出 JSON：{"tool":"工具名","arguments":{}}；不要输出 Markdown 代码围栏。可调用工具：${JSON.stringify(toolList)}。普通回答直接输出文本。`
 }
 
 function parseProviderStream(response: Response, protocol: AiProvider['protocol'], functionCalling: boolean): ReadableStream<StreamPart> {
@@ -314,6 +369,7 @@ function parseProviderStream(response: Response, protocol: AiProvider['protocol'
 
       const handleEvent = (event: string, payload: Record<string, unknown>): void => {
         const result = parseEvent(event, payload, protocol, functionCalling, toolCalls)
+        if (result.error) throw result.error
         if (result.text) {
           if (functionCalling) emitText(result.text)
           else textParts.push(result.text)
@@ -353,6 +409,7 @@ function parseProviderStream(response: Response, protocol: AiProvider['protocol'
         } else {
           buffered += tail
           const parsed = JSON.parse(buffered) as unknown
+          if (hasProviderError(parsed, protocol)) throw providerEventError(parsed)
           const result = parseJsonResponse(parsed, protocol, toolCalls)
           if (result.text) textParts.push(result.text)
           if (result.finishReason) finishReason = result.finishReason
@@ -436,16 +493,19 @@ class IncrementalSseParser {
     this.dataLines = []
     this.event = ''
     if (data === '[DONE]') return
+    let payload: unknown
     try {
-      const payload = JSON.parse(data) as unknown
-      if (payload && typeof payload === 'object') this.emit(event, payload as Record<string, unknown>)
+      payload = JSON.parse(data) as unknown
     } catch {
       // Ignore provider keepalive/malformed chunks; the stream may continue.
+      return
     }
+    if (payload && typeof payload === 'object') this.emit(event, payload as Record<string, unknown>)
   }
 }
 
-function parseEvent(event: string, payload: Record<string, unknown>, protocol: AiProvider['protocol'], functionCalling: boolean, toolCalls: Map<string, ToolCall>): { text?: string; finishReason?: 'stop' | 'length' | 'tool-calls' | 'error' | 'other' } {
+function parseEvent(event: string, payload: Record<string, unknown>, protocol: AiProvider['protocol'], functionCalling: boolean, toolCalls: Map<string, ToolCall>): { text?: string; error?: Error; finishReason?: 'stop' | 'length' | 'tool-calls' | 'error' | 'other' } {
+  if (event === 'error' || payload.type === 'error' || hasProviderError(payload, protocol)) return { error: providerEventError(payload) }
   if (protocol === 'responses') {
     const type = event || stringValue(payload.type)
     if (type === 'response.output_text.delta' || type === 'response.text.delta') return { text: stringValue(payload.delta) }
@@ -487,8 +547,10 @@ function parseEvent(event: string, payload: Record<string, unknown>, protocol: A
       if (completeArguments) call.args = completeArguments
       return {}
     }
+    if (type === 'response.failed') return { error: providerEventError(payload) }
     if (type === 'response.completed' || type === 'response.done') {
       const response = objectValue(payload.response) ?? payload
+      if (hasProviderError(response, protocol) || stringValue(response.status) === 'failed') return { error: providerEventError(response) }
       addResponseToolCalls(response, toolCalls)
       return { finishReason: 'stop' }
     }
@@ -633,6 +695,37 @@ function contentText(value: unknown): string {
     const object = objectValue(part)
     return stringValue(object?.text) || stringValue(object?.content)
   }).join('')
+}
+
+function hasProviderError(value: unknown, protocol: AiProvider['protocol']): boolean {
+  const root = objectValue(value)
+  if (!root) return false
+  if (root.error !== undefined && root.error !== null) return true
+  if (protocol !== 'responses') return false
+  const response = objectValue(root.response)
+  return response?.error !== undefined && response.error !== null
+}
+
+function providerEventError(value: unknown): Error & { statusCode?: number } {
+  const root = objectValue(value)
+  const response = objectValue(root?.response)
+  const rootError = objectValue(root?.error)
+  const responseError = objectValue(response?.error)
+  const code = stringValue(rootError?.code) || stringValue(responseError?.code) || stringValue(root?.code)
+  const status = numberValue(rootError?.status) ?? numberValue(responseError?.status) ?? numberValue(root?.status) ?? numberValue(response?.status)
+  const isAuth = status === 401 || status === 403 || /auth|api[_ -]?key|unauthor|forbidden/i.test(code)
+  const message = isAuth
+    ? '模型服务鉴权失败，请检查 API Key。'
+    : status !== undefined && status >= 500
+      ? `模型服务暂时不可用（HTTP ${status}）。`
+      : '模型服务返回失败。'
+  const error = new Error(message) as Error & { statusCode?: number }
+  if (status !== undefined) error.statusCode = status
+  return error
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function providerHttpError(status: number): Error & { statusCode: number } {

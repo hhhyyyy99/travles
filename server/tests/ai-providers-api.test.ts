@@ -440,6 +440,91 @@ test('Chat Completions prompt keeps every parallel tool result', async () => {
   assert.deepEqual(messages?.slice(1).map((message) => message.tool_call_id), ['call-a', 'call-b'])
 })
 
+test('degraded fallback history uses ordinary text for strict Chat and Responses providers', async () => {
+  for (const protocol of ['chat-completions', 'responses'] as const) {
+    const calls: Record<string, unknown>[] = []
+    const app = await createApp({
+      tripRepository: new TripRepository(new MemoryTripStoreDriver()),
+      aiProviderStore: new MemoryAiProviderStoreDriver(),
+      messageStore: new MemoryMessageStoreDriver(),
+      plannerMemory: new MockMemory({ storage: new InMemoryStore(), enableMessageHistory: true }),
+      aiProviderProbe: async () => ({
+        ok: true,
+        capabilities: {
+          streaming: false,
+          functionCalling: false,
+          degraded: true,
+          testedAt: '2026-09-12T00:00:00.000Z',
+          error: '该模型不支持 function calling，已降级为约定 JSON 文本解析。',
+        },
+      }),
+    })
+    const created = await app.request('/api/settings/ai-providers', jsonRequest('POST', { ...providerInput, protocol }))
+    assert.equal(created.status, 201)
+    const tripResponse = await app.request('/api/trips', jsonRequest('POST', { title: `严格 ${protocol}`, startDate: '2026-10-02', endDate: '2026-10-03' }))
+    const trip = (await tripResponse.json() as { trip: { id: string } }).trip
+    globalThis.fetch = (async (_input: string | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push(body)
+      const nativeToolFields = protocol === 'chat-completions'
+        ? (Array.isArray(body.messages) && body.messages.some((message) => {
+            const record = message as { role?: unknown; tool_calls?: unknown }
+            return record.role === 'tool' || record.tool_calls !== undefined
+          }))
+        : (Array.isArray(body.input) && body.input.some((item) => {
+            const record = item as { type?: unknown }
+            return record.type === 'function_call' || record.type === 'function_call_output'
+          }))
+      if (calls.length > 1 && nativeToolFields) {
+        return new Response(JSON.stringify({ error: { message: 'native tool fields rejected' } }), { status: 400, headers: { 'content-type': 'application/json' } })
+      }
+      const content = calls.length === 1
+        ? JSON.stringify({ tool: 'emit_round_meta', arguments: { round: 'qa' } })
+        : '降级后的普通回答'
+      return protocol === 'chat-completions'
+        ? new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }] }), { headers: { 'content-type': 'application/json' } })
+        : new Response(JSON.stringify({ output_text: content, output: [] }), { headers: { 'content-type': 'application/json' } })
+    }) as typeof fetch
+
+    const response = await app.request(`/api/trips/${trip.id}/messages`, jsonRequest('POST', { content: '继续回答' }))
+    const raw = await response.text()
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 2)
+    assert.match(raw, /降级后的普通回答/)
+    assert.match(raw, /event: done/)
+    assert.equal(raw.includes('native tool fields rejected'), false)
+  }
+})
+
+test('upstream SSE error and Responses failure events become sanitized stream errors', async () => {
+  for (const protocol of ['chat-completions', 'responses'] as const) {
+    const app = await createApp({
+      tripRepository: new TripRepository(new MemoryTripStoreDriver()),
+      aiProviderStore: new MemoryAiProviderStoreDriver(),
+      messageStore: new MemoryMessageStoreDriver(),
+      plannerMemory: new MockMemory({ storage: new InMemoryStore(), enableMessageHistory: true }),
+      aiProviderProbe: successfulProbe(),
+    })
+    const secret = `upstream-${protocol}-secret`
+    const created = await app.request('/api/settings/ai-providers', jsonRequest('POST', { ...providerInput, protocol, apiKey: secret }))
+    assert.equal(created.status, 201)
+    const tripResponse = await app.request('/api/trips', jsonRequest('POST', { title: `错误 ${protocol}`, startDate: '2026-10-02', endDate: '2026-10-03' }))
+    const trip = (await tripResponse.json() as { trip: { id: string } }).trip
+    globalThis.fetch = (async () => protocol === 'chat-completions'
+      ? new Response('data: {"choices":[{"delta":{"content":"部分"},"finish_reason":null}]}\n\ndata: {"error":{"message":"' + secret + '","code":"upstream_error"}}\n\n', { headers: { 'content-type': 'text/event-stream' } })
+      : new Response('event: response.failed\ndata: {"response":{"status":"failed","error":{"message":"' + secret + '","code":"server_error"}}}\n\n', { headers: { 'content-type': 'text/event-stream' } })) as typeof fetch
+    const response = await app.request(`/api/trips/${trip.id}/messages`, jsonRequest('POST', { content: '触发错误' }))
+    const raw = await response.text()
+    assert.equal(response.status, 200)
+    assert.match(raw, /event: error/)
+    assert.match(raw, /event: close/)
+    assert.equal(raw.includes('event: done'), false)
+    assert.equal(raw.includes(secret), false)
+    const history = await app.request(`/api/trips/${trip.id}/messages`)
+    assert.deepEqual((await history.json() as { messages: unknown[] }).messages, [])
+  }
+})
+
 test('switching the default provider changes the next model request and keeps trip context', async () => {
   const store = new MemoryAiProviderStoreDriver()
   const app = await createApp({
