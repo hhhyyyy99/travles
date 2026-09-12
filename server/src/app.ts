@@ -296,10 +296,6 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     }
   }
 
-  // Mount after resolving the repository so the long-lived stream can reject
-  // unknown trips before subscribing to the process-local event bus.
-  registerTripEventRoutes(app, { tripRepository, events: tripEvents })
-
   mountAiProviderRoutes(app, {
     repository: await resolveAiProviderRepository(),
     probe: options.aiProviderProbe,
