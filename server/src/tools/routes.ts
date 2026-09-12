@@ -31,6 +31,8 @@ export type ToolsRouteDeps = {
   tripRepository: TripRepository
   /** Resolved lazily by app.ts (injected driver in tests, SQLite otherwise). */
   resolveToolsStore: () => Promise<ToolsStoreDriver>
+  /** Broadcast successful side-panel writes to other trip workbenches. */
+  onTripUpdated?: (tripId: string, reason: string) => Promise<void> | void
 }
 
 export function mountToolsRoutes(app: ToolsApp, deps: ToolsRouteDeps): void {
@@ -61,6 +63,7 @@ export function mountToolsRoutes(app: ToolsApp, deps: ToolsRouteDeps): void {
       }
       const content = typeof body.content === 'string' ? body.content : ''
       const result = await tools.createNote(tripId, content)
+      if (result.ok) await deps.onTripUpdated?.(tripId, 'note_created')
       return toolsWrite(c, result, 201)
     }),
   )
@@ -71,12 +74,17 @@ export function mountToolsRoutes(app: ToolsApp, deps: ToolsRouteDeps): void {
       if (body === null) return c.json({ error: '请求体必须是有效的 JSON' }, 400)
       if (typeof body.content !== 'string') return c.json({ error: '便签内容无效' }, 400)
       const result = await tools.updateNote(tripId, c.req.param('noteId'), body.content)
+      if (result.ok) await deps.onTripUpdated?.(tripId, 'note_updated')
       return toolsWrite(c, result)
     }),
   )
 
   app.delete('/api/trips/:id/notes/:noteId', (c) =>
-    withTrip(c, async (tripId, tools) => toolsWrite(c, await tools.deleteNote(tripId, c.req.param('noteId')))),
+    withTrip(c, async (tripId, tools) => {
+      const result = await tools.deleteNote(tripId, c.req.param('noteId'))
+      if (result.ok) await deps.onTripUpdated?.(tripId, 'note_deleted')
+      return toolsWrite(c, result)
+    }),
   )
 
   // ---- Checklist (清单) — shares the ticket-03 table incl. migrated rows ----
@@ -92,6 +100,7 @@ export function mountToolsRoutes(app: ToolsApp, deps: ToolsRouteDeps): void {
       const content = typeof body.content === 'string' ? body.content.trim() : ''
       if (!content) return c.json({ error: '清单内容不能为空' }, 400)
       const result = await tools.createChecklistEntry(tripId, content)
+      if (result.ok) await deps.onTripUpdated?.(tripId, 'checklist_created')
       return toolsWrite(c, result, 201)
     }),
   )
@@ -110,14 +119,17 @@ export function mountToolsRoutes(app: ToolsApp, deps: ToolsRouteDeps): void {
         return c.json({ error: '没有可更新的字段' }, 400)
       }
       const result = await tools.updateChecklistEntry(tripId, c.req.param('entryId'), patch)
+      if (result.ok) await deps.onTripUpdated?.(tripId, 'checklist_updated')
       return toolsWrite(c, result)
     }),
   )
 
   app.delete('/api/trips/:id/checklist/:entryId', (c) =>
-    withTrip(c, async (tripId, tools) =>
-      toolsWrite(c, await tools.deleteChecklistEntry(tripId, c.req.param('entryId'))),
-    ),
+    withTrip(c, async (tripId, tools) => {
+      const result = await tools.deleteChecklistEntry(tripId, c.req.param('entryId'))
+      if (result.ok) await deps.onTripUpdated?.(tripId, 'checklist_deleted')
+      return toolsWrite(c, result)
+    }),
   )
 
   // ---- Gallery (图库) — manual uploads; card images are aggregated client-side
@@ -136,14 +148,17 @@ export function mountToolsRoutes(app: ToolsApp, deps: ToolsRouteDeps): void {
         caption: typeof body.caption === 'string' ? body.caption : undefined,
         itemId: typeof body.itemId === 'string' ? body.itemId : null,
       })
+      if (result.ok) await deps.onTripUpdated?.(tripId, 'gallery_added')
       return toolsWrite(c, result, 201)
     }),
   )
 
   app.delete('/api/trips/:id/gallery/:imageId', (c) =>
-    withTrip(c, async (tripId, tools) =>
-      toolsWrite(c, await tools.deleteGalleryImage(tripId, c.req.param('imageId'))),
-    ),
+    withTrip(c, async (tripId, tools) => {
+      const result = await tools.deleteGalleryImage(tripId, c.req.param('imageId'))
+      if (result.ok) await deps.onTripUpdated?.(tripId, 'gallery_deleted')
+      return toolsWrite(c, result)
+    }),
   )
 }
 

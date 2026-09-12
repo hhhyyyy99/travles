@@ -31,6 +31,7 @@ import {
   type ChatPoiLink,
   type ChatStreamError,
 } from '../../domain/chat'
+import { subscribeTripEvents } from '../../domain/tripEvents'
 import { parseAssistantContent, type InlineSpan } from '../../domain/chatMarkdown'
 
 type SendState =
@@ -55,6 +56,7 @@ export default function ChatPanel({
   onTripPatched?: () => void
 }) {
   const [history, setHistory] = useState<ChatMessage[]>([])
+  const [historyLoading, setHistoryLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [sendState, setSendState] = useState<SendState>({ status: 'idle' })
@@ -74,13 +76,35 @@ export default function ChatPanel({
     let cancelled = false
     setHistory([])
     setLoadError(null)
+    setHistoryLoading(true)
     void fetchChatHistory(tripId).then((result) => {
       if (cancelled) return
       if (result.ok) setHistory(result.data)
       else setLoadError(result.error)
+      setHistoryLoading(false)
     })
     return () => {
       cancelled = true
+    }
+  }, [tripId])
+
+  // System notes and AI turns created in another tab arrive through the same
+  // trip stream. Refresh only the persisted chat projection; the active local
+  // stream remains untouched while another browser is writing.
+  useEffect(() => {
+    let active = true
+    const unsubscribe = subscribeTripEvents(tripId, {
+      onUpdate: (event) => {
+        if (!active || event.kind !== 'chat') return
+        void fetchChatHistory(tripId).then((result) => {
+          if (!active || !result.ok) return
+          setHistory(result.data)
+        })
+      },
+    })
+    return () => {
+      active = false
+      unsubscribe()
     }
   }, [tripId])
 
@@ -136,7 +160,7 @@ export default function ChatPanel({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" aria-busy={historyLoading || sending}>
       <div className="flex items-center gap-[8px] border-b border-line px-[14px] py-[10px] text-[13px] font-[550]">
         <MessageCircle aria-hidden="true" className="w-[15px] text-green" />
         圆周 AI
@@ -156,7 +180,8 @@ export default function ChatPanel({
         {loadError !== null && (
           <p className="mx-auto my-[12px] text-center text-[13px] leading-[1.8] text-muted">{loadError}</p>
         )}
-        {loadError === null && history.length === 0 && streamText === null && (
+        {historyLoading && <ChatHistorySkeleton />}
+        {loadError === null && !historyLoading && history.length === 0 && streamText === null && (
           <p className="mx-auto my-[12px] text-center text-[13px] leading-[1.8] text-muted">
             和圆周说一句话，一起规划这段旅程。
           </p>
@@ -279,6 +304,15 @@ function ChatBubble({
         <div className="whitespace-pre-wrap">
           {blocks.length === 0 && streaming ? <span className="text-muted">思考中…</span> : blocks.map((block, index) => renderBlock(block, index, renderSpans))}
         </div>
+        {streaming && (
+          <span data-chat-generating className="inline-flex items-center gap-[5px] text-[11px] text-muted" aria-live="polite">
+            <span aria-hidden="true" className="workbench-spinner h-[11px] w-[11px] rounded-full border-2 border-line border-t-green" />
+            正在生成回复…
+          </span>
+        )}
+        <p data-reference-disclaimer className="text-[11px] leading-[1.6] text-muted">
+          信息仅供参考，出发前请以官方信息为准。
+        </p>
         {chips.length > 0 && (
           <div data-chat-chips className="flex flex-wrap gap-[6px]">
             {chips.map((chip) => (
@@ -299,6 +333,16 @@ function ChatBubble({
         {sources !== null && sources.length > 0 && <SourcesSection sources={sources} />}
         {!streaming && <CopyButton content={message.content} />}
       </div>
+    </div>
+  )
+}
+
+function ChatHistorySkeleton() {
+  return (
+    <div data-chat-loading className="flex flex-col gap-[10px]" aria-label="正在加载对话">
+      <div data-chat-skeleton className="h-[42px] w-[72%] self-start rounded-[10px] bg-line/50" />
+      <div data-chat-skeleton className="h-[34px] w-[62%] self-end rounded-[10px] bg-green/15" />
+      <div data-chat-skeleton className="h-[64px] w-[80%] self-start rounded-[10px] bg-line/50" />
     </div>
   )
 }

@@ -31,6 +31,7 @@
  * canvas stays structure-true without inventing numbers).
  */
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
+import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
 /** One POI reference on a card (subset of the canvas PoiRef the AI supplies). */
 export type PatchPoiRef = {
@@ -115,6 +116,8 @@ export interface TripPatchStoreDriver {
   upsertLegRow(tripId: string, leg: TripPatchLegUpsert): Promise<void>
   /** Delete every leg that references any of the given items (from OR to). */
   deleteLegsForItems(tripId: string, itemIds: string[]): Promise<void>
+  /** Optional schedule repair shared with day-admin writes. */
+  updateDaySchedule?(tripId: string, updates: DayScheduleUpdate[]): Promise<void>
 }
 
 /** Machine-readable failure class shared with the other repositories. */

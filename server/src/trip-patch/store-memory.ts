@@ -11,6 +11,7 @@ import type {
 } from '../days/types.js'
 import { TripPatchIdConflictError } from './types.js'
 import type { TripPatchDayUpsert, TripPatchItemUpsert, TripPatchLegUpsert, TripPatchStoreDriver } from './types.js'
+import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
 interface StoredDayRow extends DayRow {
   id: string
@@ -183,6 +184,17 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       if (row && row.trip_id === tripId && (ids.has(row.from_item_id) || ids.has(row.to_item_id))) {
         this.legRows.splice(i, 1)
       }
+    }
+  }
+
+  async updateDaySchedule(tripId: string, updates: DayScheduleUpdate[]): Promise<void> {
+    const byId = new Map(updates.map((update) => [update.id, update]))
+    for (const row of this.dayRows) {
+      if (row.trip_id !== tripId) continue
+      const update = byId.get(row.id)
+      if (!update) continue
+      row.idx = update.idx
+      row.date = update.date
     }
   }
 }

@@ -7,6 +7,7 @@
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { DayRow } from '../days/types.js'
 import type { DayInsert, DaysAdminStoreDriver, DayThemePatch } from './types.js'
+import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
 const DAY_COLUMNS = 'id, trip_id, idx, date, theme, color'
 
@@ -65,6 +66,17 @@ export class SqliteDaysAdminStoreDriver implements DaysAdminStoreDriver {
 
   async deleteDayRow(dayId: string): Promise<void> {
     await this.db.run('DELETE FROM days WHERE id = ?', [dayId])
+  }
+
+  async updateDaySchedule(tripId: string, updates: DayScheduleUpdate[]): Promise<void> {
+    for (const update of updates) {
+      await this.db.run('UPDATE days SET idx = ?, date = ? WHERE id = ? AND trip_id = ?', [
+        update.idx,
+        update.date,
+        update.id,
+        tripId,
+      ] as SqlValue[])
+    }
   }
 }
 

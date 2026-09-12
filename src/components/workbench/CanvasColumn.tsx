@@ -72,6 +72,8 @@ export type CanvasColumnProps = {
   onAddCard?: (dayId: string) => void
   onNoteSave?: (itemId: string, note: string) => void
   onImageAdd?: (itemId: string, url: string) => void
+  /** A mutation or remote snapshot is rebuilding legs; keep the layout stable. */
+  syncing?: boolean
 }
 
 export default function CanvasColumn({
@@ -88,6 +90,7 @@ export default function CanvasColumn({
   onAddCard,
   onNoteSave,
   onImageAdd,
+  syncing = false,
 }: CanvasColumnProps) {
   const legLookup = legsByPair(legs)
   // Cross-column drag state: the id of the card currently being dragged.
@@ -149,7 +152,17 @@ export default function CanvasColumn({
   }
 
   return (
-    <div id="workbench-canvas" className="h-full overflow-x-auto overflow-y-hidden bg-paper">
+    <div id="workbench-canvas" className="relative h-full overflow-x-auto overflow-y-hidden bg-paper" aria-busy={syncing}>
+      {syncing && (
+        <div
+          data-canvas-syncing
+          className="pointer-events-none absolute right-[14px] top-[10px] z-[20] inline-flex items-center gap-[5px] rounded-[5px] border border-line bg-white/95 px-[8px] py-[4px] text-[11px] text-muted shadow-sm"
+          aria-live="polite"
+        >
+          <span aria-hidden="true" className="workbench-spinner h-[11px] w-[11px] rounded-full border-2 border-line border-t-green" />
+          路线重算中…
+        </div>
+      )}
       <div className="flex h-full items-stretch gap-[16px] px-[16px] py-[16px]">
         {days.length === 0 && (
           <p

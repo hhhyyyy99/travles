@@ -6,6 +6,7 @@
  */
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
 import type { DayInsert, DaysAdminStoreDriver, DayThemePatch } from './types.js'
+import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
 export class MemoryDaysAdminStoreDriver implements DaysAdminStoreDriver {
   readonly dayRows = new Map<string, DayRow>()
@@ -80,5 +81,16 @@ export class MemoryDaysAdminStoreDriver implements DaysAdminStoreDriver {
   async deleteDayRow(dayId: string): Promise<void> {
     this.failNextWrite()
     this.dayRows.delete(dayId)
+  }
+
+  async updateDaySchedule(tripId: string, updates: DayScheduleUpdate[]): Promise<void> {
+    this.failNextWrite()
+    const byId = new Map(updates.map((update) => [update.id, update]))
+    for (const [id, row] of this.dayRows) {
+      if (row.trip_id !== tripId) continue
+      const update = byId.get(id)
+      if (!update) continue
+      this.dayRows.set(id, { ...row, idx: update.idx, date: update.date })
+    }
   }
 }
