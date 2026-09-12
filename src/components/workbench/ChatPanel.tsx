@@ -21,7 +21,7 @@
  *   (spec 用户故事 25); the history stays untouched.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Check, Copy, ListChecks, MessageCircle, PanelLeftClose, SendHorizontal } from 'lucide-react'
+import { Check, Copy, FileText, ListChecks, MessageCircle, PanelLeftClose, SendHorizontal } from 'lucide-react'
 import {
   fetchChatHistory,
   sendChatMessage,
@@ -32,6 +32,12 @@ import {
   type ChatStreamError,
 } from '../../domain/chat'
 import { parseAssistantContent, type InlineSpan } from '../../domain/chatMarkdown'
+import type {
+  AiProposalState,
+  ProposalKind,
+  ProposalRequest,
+  AiProposal,
+} from '../../domain/aiProposals'
 
 type SendState =
   | { status: 'idle' }
@@ -43,6 +49,11 @@ export default function ChatPanel({
   onCollapse,
   onFocusPoi,
   onTripPatched,
+  proposalState,
+  onRequestProposal,
+  onApplyProposal,
+  onCancelProposal,
+  onRetryProposal,
 }: {
   tripId: string
   onCollapse: () => void
@@ -53,6 +64,12 @@ export default function ChatPanel({
    * /canvas so the middle column and the map redraw live.
    */
   onTripPatched?: () => void
+  /** Ticket 13: preview/apply/cancel controls for AI proposal flows. */
+  proposalState?: AiProposalState
+  onRequestProposal?: (request: ProposalRequest) => void
+  onApplyProposal?: () => void
+  onCancelProposal?: () => void
+  onRetryProposal?: () => void
 }) {
   const [history, setHistory] = useState<ChatMessage[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -175,6 +192,14 @@ export default function ChatPanel({
             onFocusPoi={onFocusPoi}
           />
         )}
+        {proposalState && proposalState.status !== 'idle' && (
+          <ProposalReview
+            state={proposalState}
+            onApply={onApplyProposal}
+            onCancel={onCancelProposal}
+            onRetry={onRetryProposal}
+          />
+        )}
       </div>
 
       {sendState.status === 'error' && <ChatErrorBanner error={sendState.error} />}
@@ -186,29 +211,141 @@ export default function ChatPanel({
           void handleSend(input)
         }}
       >
-        <input
+        <textarea
           id="chat-input"
-          type="text"
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder={sending ? '圆周正在回复…' : '询问行程、路况、住宿…'}
+          placeholder={sending ? '圆周正在回复…' : '询问行程、路况、住宿，或粘贴攻略…'}
           disabled={sending}
           aria-label="输入消息"
-          className="h-[34px] min-w-0 flex-1 rounded-[6px] border border-line bg-white px-[10px] text-[13px] outline-none placeholder:text-muted focus:border-green"
+          rows={2}
+          className="min-h-[34px] max-h-[88px] min-w-0 flex-1 resize-y rounded-[6px] border border-line bg-white px-[10px] py-[7px] text-[13px] leading-[1.5] outline-none placeholder:text-muted focus:border-green"
         />
-        <button
-          id="chat-send"
-          type="submit"
-          data-action="chat-send"
-          disabled={sending || input.trim() === ''}
-          aria-label="发送消息"
-          className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[6px] bg-green text-white transition-opacity disabled:opacity-40"
-        >
-          <SendHorizontal aria-hidden="true" className="w-[15px]" />
-        </button>
+        <div className="flex shrink-0 flex-col gap-[5px]">
+          {onRequestProposal && (
+            <button
+              type="button"
+              data-action="ai-parse"
+              disabled={sending || proposalState?.status === 'loading' || input.trim() === ''}
+              onClick={() => onRequestProposal({ kind: 'parse', text: input.trim() })}
+              className="inline-flex h-[28px] items-center justify-center gap-[4px] rounded-[5px] border border-green/40 px-[7px] text-[11px] text-green transition-colors hover:bg-green hover:text-white disabled:opacity-40"
+            >
+              <FileText aria-hidden="true" className="w-[13px]" />
+              智能解析
+            </button>
+          )}
+          <button
+            id="chat-send"
+            type="submit"
+            data-action="chat-send"
+            disabled={sending || input.trim() === ''}
+            aria-label="发送消息"
+            className="grid h-[34px] w-[34px] self-end place-items-center rounded-[6px] bg-green text-white transition-opacity disabled:opacity-40"
+          >
+            <SendHorizontal aria-hidden="true" className="w-[15px]" />
+          </button>
+        </div>
       </form>
     </div>
   )
+}
+
+function ProposalReview({
+  state,
+  onApply,
+  onCancel,
+  onRetry,
+}: {
+  state: AiProposalState
+  onApply?: () => void
+  onCancel?: () => void
+  onRetry?: () => void
+}) {
+  if (state.status === 'loading') {
+    return (
+      <div data-ai-proposal data-ai-proposal-status="loading" className="rounded-[8px] border border-green/30 bg-white px-[10px] py-[9px] text-[12px] text-muted">
+        正在生成{proposalKindLabel(state.request.kind)}建议…
+      </div>
+    )
+  }
+  if (state.status === 'applied') {
+    return (
+      <div data-ai-proposal data-ai-proposal-status="applied" className="rounded-[8px] border border-green/30 bg-green/5 px-[10px] py-[9px] text-[12px]">
+        <p className="font-[550] text-green">建议已应用</p>
+        <p data-ai-proposal-applied className="mt-[3px] text-muted">{state.record.summary}</p>
+      </div>
+    )
+  }
+  const proposal = 'proposal' in state ? state.proposal : undefined
+  if (state.status === 'error') {
+    return (
+      <div data-ai-proposal data-ai-proposal-status="error" className="rounded-[8px] border border-[#b75342]/40 bg-[#fdf3f1] px-[10px] py-[9px] text-[12px]">
+        <p className="font-[550] text-[#b75342]">建议生成失败</p>
+        <p data-ai-proposal-error className="mt-[3px] text-muted">{state.error}</p>
+        <div className="mt-[7px] flex gap-[6px]">
+          {onRetry && (
+            <button type="button" data-ai-proposal-retry onClick={onRetry} className="rounded-[5px] bg-green px-[8px] py-[4px] text-[11px] text-white">
+              重试
+            </button>
+          )}
+          {onCancel && (
+            <button type="button" data-ai-proposal-cancel onClick={onCancel} className="rounded-[5px] border border-line px-[8px] py-[4px] text-[11px] text-muted">
+              取消
+            </button>
+          )}
+        </div>
+        {proposal && <ProposalSummary proposal={proposal} />}
+      </div>
+    )
+  }
+  if (!proposal) return null
+  return (
+    <div data-ai-proposal data-ai-proposal-status={state.status} data-ai-proposal-kind={proposal.kind} className="rounded-[8px] border border-green/35 bg-white px-[10px] py-[9px] text-[12px]">
+      <div className="flex items-start gap-[7px]">
+        <ListChecks aria-hidden="true" className="mt-[2px] w-[14px] shrink-0 text-green" />
+        <div className="min-w-0 flex-1">
+          <p data-ai-proposal-title className="font-[600] text-ink">{proposal.title}</p>
+          <p data-ai-proposal-summary className="mt-[3px] leading-[1.65] text-muted">{proposal.summary}</p>
+        </div>
+      </div>
+      <ProposalSummary proposal={proposal} />
+      <div className="mt-[9px] flex gap-[6px]">
+        {onApply && (
+          <button type="button" data-ai-proposal-confirm onClick={onApply} disabled={state.status === 'applying'} className="rounded-[5px] bg-green px-[9px] py-[5px] text-[11px] text-white disabled:opacity-50">
+            {state.status === 'applying' ? '应用中…' : '确认应用'}
+          </button>
+        )}
+        {onCancel && (
+          <button type="button" data-ai-proposal-cancel onClick={onCancel} disabled={state.status === 'applying'} className="rounded-[5px] border border-line px-[9px] py-[5px] text-[11px] text-muted disabled:opacity-50">
+            取消
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ProposalSummary({ proposal }: { proposal: AiProposal }) {
+  return (
+    <div data-ai-proposal-diff className="mt-[7px] border-t border-line pt-[6px]">
+      <p className="text-[11px] font-[550] text-muted">{proposalKindLabel(proposal.kind)} · {proposal.diff.length} 项变更</p>
+      <ul className="mt-[3px] space-y-[2px] text-[11px] text-muted">
+        {proposal.diff.slice(0, 8).map((change, index) => (
+          <li key={`${change.action}-${change.label}-${index}`} data-ai-proposal-change>
+            <span className="text-green">{change.label}</span>
+            {change.detail && <span> · {change.detail}</span>}
+          </li>
+        ))}
+      </ul>
+      {proposal.items && proposal.items.length > 0 && (
+        <p data-ai-proposal-items className="mt-[5px] text-[11px] text-muted">解析出 {proposal.items.length} 个行程项，确认后写入画布。</p>
+      )}
+    </div>
+  )
+}
+
+function proposalKindLabel(kind: ProposalKind): string {
+  return kind === 'parse' ? '智能解析' : kind === 'day-optimize' ? '天级优化' : '路线优化'
 }
 
 function ChatBubble({

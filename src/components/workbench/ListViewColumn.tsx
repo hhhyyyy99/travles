@@ -7,7 +7,7 @@
  * server data (GET /api/trips/:id/canvas).
  */
 import { useEffect, useRef, useState } from 'react'
-import { BedDouble, Car, Trash2 } from 'lucide-react'
+import { BedDouble, Car, Trash2, WandSparkles } from 'lucide-react'
 import {
   dayAccentColor,
   dayDateLabel,
@@ -27,9 +27,10 @@ export type ListViewColumnProps = {
   onAddDay?: () => void
   onThemeSave?: (dayId: string, theme: string) => void
   onDeleteDay?: (day: WorkbenchDay) => void
+  onOptimizeDay?: (day: WorkbenchDay) => void
 }
 
-export default function ListViewColumn({ days, legs, onAddDay, onThemeSave, onDeleteDay }: ListViewColumnProps) {
+export default function ListViewColumn({ days, legs, onAddDay, onThemeSave, onDeleteDay, onOptimizeDay }: ListViewColumnProps) {
   const legLookup = legsByPair(legs)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // Days seen so far, so a freshly added day can auto-select itself.
@@ -103,6 +104,7 @@ export default function ListViewColumn({ days, legs, onAddDay, onThemeSave, onDe
           legLookup={legLookup}
           onThemeSave={onThemeSave}
           onDeleteDay={onDeleteDay}
+          onOptimizeDay={onOptimizeDay}
         />
       )}
     </div>
@@ -114,11 +116,13 @@ function DayTimeline({
   legLookup,
   onThemeSave,
   onDeleteDay,
+  onOptimizeDay,
 }: {
   day: WorkbenchDay
   legLookup: Map<string, WorkbenchLeg>
   onThemeSave?: (dayId: string, theme: string) => void
   onDeleteDay?: (day: WorkbenchDay) => void
+  onOptimizeDay?: (day: WorkbenchDay) => void
 }) {
   const accent = dayAccentColor(day.color, day.index)
   const dateLabel = dayDateLabel(day.date) || `D${day.index + 1}`
@@ -140,6 +144,19 @@ function DayTimeline({
           <span className="text-[12px] text-muted">{weekdayLabel(day.date)}</span>
           <span className="text-[11px] text-muted">D{day.index + 1}</span>
           <span className="ml-auto text-[11px] text-muted">{day.items.length} 项</span>
+          {onOptimizeDay && (
+            <button
+              type="button"
+              data-action="optimize-day"
+              data-day-id={day.id}
+              title={`优化 ${dateLabel}`}
+              aria-label={`优化 ${dateLabel}`}
+              onClick={() => onOptimizeDay(day)}
+              className="grid h-[22px] w-[22px] place-items-center rounded-[4px] text-muted hover:text-green transition-colors"
+            >
+              <WandSparkles aria-hidden="true" className="w-[13px]" />
+            </button>
+          )}
           {onDeleteDay && (
             <button
               type="button"

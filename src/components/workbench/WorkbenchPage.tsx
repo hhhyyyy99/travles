@@ -37,6 +37,13 @@ import {
   type WorkbenchItemCreateInput,
 } from '../../domain/workbench'
 import type { ChatPoiLink } from '../../domain/chat'
+import {
+  applyAiProposal,
+  cancelAiProposal,
+  createAiProposal,
+  type AiProposalState,
+  type ProposalRequest,
+} from '../../domain/aiProposals'
 import { AI_WIDTH_MAX, AI_WIDTH_MIN } from '../../domain/workbenchLayout'
 import type { WorkbenchView } from '../../domain/workbenchLayout'
 import { useWorkbenchLayout } from '../../hooks/useWorkbenchLayout'
@@ -72,6 +79,9 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
   // 添加卡片弹窗 (ticket 09) — open for a specific day (day-column "+" or the
   // selected card's toolbar "添加").
   const [addCardDay, setAddCardDay] = useState<string | null>(null)
+  // Ticket 13: one active proposal at a time. Generation is read-only; only
+  // the explicit confirm action below calls the server apply route.
+  const [proposalState, setProposalState] = useState<AiProposalState>({ status: 'idle' })
 
   // Latest ready data for async handlers (avoids stale-closure rollbacks).
   const readyData = state.status === 'ready' ? state.data : null
@@ -109,6 +119,41 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
       // Refetch failures keep the current canvas — the chat card still reports
       // the write; a manual refresh recovers.
     })
+  }
+
+  const handleProposalRequest = async (request: ProposalRequest) => {
+    if (proposalState.status === 'loading' || proposalState.status === 'applying') return
+    setActionError('')
+    setProposalState({ status: 'loading', request })
+    const result = await createAiProposal(tripId, request)
+    if (result.ok) setProposalState({ status: 'ready', proposal: result.data })
+    else setProposalState({ status: 'error', request, error: result.error })
+  }
+
+  const handleProposalRetry = () => {
+    if (proposalState.status !== 'error') return
+    void handleProposalRequest(proposalState.request)
+  }
+
+  const handleProposalCancel = () => {
+    const current = proposalState
+    setProposalState({ status: 'idle' })
+    if ('proposal' in current && current.proposal) {
+      void cancelAiProposal(tripId, current.proposal.id)
+    }
+  }
+
+  const handleProposalApply = async () => {
+    if (proposalState.status !== 'ready') return
+    const proposal = proposalState.proposal
+    setProposalState({ status: 'applying', proposal })
+    const result = await applyAiProposal(tripId, proposal.id)
+    if (result.ok) {
+      setProposalState({ status: 'applied', record: result.data.appliedPatch })
+      handleTripPatched()
+    } else {
+      setProposalState({ status: 'error', request: { kind: proposal.kind, ...(proposal.targetDayId ? { dayId: proposal.targetDayId } : {}) }, error: result.error, proposal })
+    }
   }
 
   // ---- Day management (ticket 10) -------------------------------------------
@@ -272,7 +317,14 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
 
   return (
     <div className="flex h-screen min-h-0 flex-col bg-paper text-ink">
-      {state.status === 'ready' && <WorkbenchTopbar trip={state.data.trip} onBack={onBack} />}
+      {state.status === 'ready' && (
+        <WorkbenchTopbar
+          trip={state.data.trip}
+          onBack={onBack}
+          onOptimize={() => void handleProposalRequest({ kind: 'optimize' })}
+          optimizing={proposalState.status === 'loading' && proposalState.request.kind === 'optimize'}
+        />
+      )}
       {state.status !== 'ready' && (
         <header className="flex h-[60px] shrink-0 items-center gap-[16px] border-b border-line bg-white px-[16px]">
           <button
@@ -310,7 +362,17 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
               className="flex shrink-0 flex-col border-r border-line bg-white"
               style={{ width: layout.aiWidth }}
             >
-              <ChatPanel tripId={tripId} onCollapse={() => toggle('ai')} onFocusPoi={setMapFocus} onTripPatched={handleTripPatched} />
+              <ChatPanel
+                tripId={tripId}
+                onCollapse={() => toggle('ai')}
+                onFocusPoi={setMapFocus}
+                onTripPatched={handleTripPatched}
+                proposalState={proposalState}
+                onRequestProposal={(request) => void handleProposalRequest(request)}
+                onApplyProposal={() => void handleProposalApply()}
+                onCancelProposal={handleProposalCancel}
+                onRetryProposal={handleProposalRetry}
+              />
             </div>
             <AiResizeHandle width={layout.aiWidth} onResize={resizeAi} />
           </>
@@ -359,6 +421,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
                     onAddDay={handleAddDay}
                     onThemeSave={handleThemeSave}
                     onDeleteDay={handleDeleteDay}
+                    onOptimizeDay={(day) => void handleProposalRequest({ kind: 'day-optimize', dayId: day.id })}
                   />
                 ) : (
                   <CanvasColumn
@@ -367,6 +430,7 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
                     onAddDay={handleAddDay}
                     onThemeSave={handleThemeSave}
                     onDeleteDay={handleDeleteDay}
+                    onOptimizeDay={(day) => void handleProposalRequest({ kind: 'day-optimize', dayId: day.id })}
                     onCardClick={setSelectedItemId}
                     highlightItemId={selectedItemId}
                     onMoveItem={handleMoveItem}
