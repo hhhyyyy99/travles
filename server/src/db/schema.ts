@@ -122,6 +122,9 @@ export const SCHEMA_STATEMENTS: string[] = [
     headers TEXT,
     protocol TEXT NOT NULL DEFAULT 'chat-completions',
     is_default INTEGER NOT NULL DEFAULT 0,
+    capabilities TEXT,
+    last_tested_at TEXT,
+    last_error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
@@ -151,5 +154,14 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
     await db.run('ALTER TABLE messages ADD COLUMN meta TEXT')
   } catch {
     // Column already exists (fresh database or a previous run) — fine.
+  }
+  // Ticket 12: provider capability state is persisted so a restart keeps the
+  // last successful probe and the explicit JSON-text fallback notice.
+  for (const column of ['capabilities TEXT', 'last_tested_at TEXT', 'last_error TEXT']) {
+    try {
+      await db.run(`ALTER TABLE ai_providers ADD COLUMN ${column}`)
+    } catch {
+      // The column already exists on fresh databases or after a prior boot.
+    }
   }
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { BookOpen, CalendarDays, MapPin, Pencil, Plus, Trash2, X } from 'lucide-react'
+import { BookOpen, CalendarDays, MapPin, Pencil, Plus, Settings, Trash2, X } from 'lucide-react'
 import {
   createTrip,
   deleteTrip,
@@ -22,9 +22,12 @@ import { migrateLegacyDataToServer } from '../domain/migration'
  */
 export default function TripListPage({
   onOpenGuide,
+  onOpenSettings,
   onOpenTrip,
 }: {
   onOpenGuide: () => void
+  /** Deployment-only AI provider settings entry. */
+  onOpenSettings?: () => void
   /** Optional so the component stays usable without a workbench (tests). */
   onOpenTrip?: (tripId: string) => void
 }) {
@@ -132,15 +135,18 @@ export default function TripListPage({
           草原之间
           <span className="text-[10px] font-[450] text-muted ml-[14px] max-sm:hidden">旅行工作台 / 行程列表</span>
         </div>
-        <button
-          id="open-guide"
-          type="button"
-          onClick={onOpenGuide}
-          className="flex items-center gap-[7px] border border-line rounded-[5px] px-[14px] h-[38px] text-[13px] hover:border-green hover:text-green transition-colors"
-        >
-          <BookOpen aria-hidden="true" className="w-[15px]" />
-          示例行程 · 呼伦贝尔指南
-        </button>
+        <div className="flex items-center gap-[8px]">
+          {onOpenSettings && <button id="open-ai-settings" type="button" title="AI 接入设置" aria-label="AI 接入设置" onClick={onOpenSettings} className="grid h-[38px] w-[38px] place-items-center rounded-[5px] border border-line text-muted hover:border-green hover:text-green transition-colors"><Settings aria-hidden="true" className="w-[15px]" /></button>}
+          <button
+            id="open-guide"
+            type="button"
+            onClick={onOpenGuide}
+            className="flex items-center gap-[7px] border border-line rounded-[5px] px-[14px] h-[38px] text-[13px] hover:border-green hover:text-green transition-colors"
+          >
+            <BookOpen aria-hidden="true" className="w-[15px]" />
+            示例行程 · 呼伦贝尔指南
+          </button>
+        </div>
       </header>
 
       <main className="mx-auto max-w-[1440px] px-[4%] max-sm:px-[5%]">

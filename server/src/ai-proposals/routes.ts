@@ -27,7 +27,8 @@ import type { AiProposal, AiProposalStore, ProposalKind, ProposalToolResult } fr
 export type AiProposalRouteOptions = {
   tripRepository: TripRepository
   planner: Agent
-  modelConfigured: boolean
+  /** False when no model is configured; dynamic for ticket-12 provider changes. */
+  modelConfigured: boolean | (() => boolean | Promise<boolean>)
   memoryConfigured: boolean
   resolveTripPatchStore: () => Promise<TripPatchStoreDriver>
   proposalStore: AiProposalStore
@@ -40,7 +41,15 @@ export function registerAiProposalRoutes(app: Hono<AppEnv>, options: AiProposalR
   const create = async (c: Context<AppEnv>) => {
     const tripId = routeParam(c, 'id')
     if (await options.tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
-    if (!options.modelConfigured) {
+    let modelConfigured = false
+    try {
+      modelConfigured = typeof options.modelConfigured === 'function'
+        ? await options.modelConfigured()
+        : options.modelConfigured
+    } catch {
+      modelConfigured = false
+    }
+    if (!modelConfigured) {
       return c.json(
         {
           error: '模型服务未配置，无法生成建议。',
