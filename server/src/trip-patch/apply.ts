@@ -24,14 +24,18 @@
  *    the patch never repositioned are exempt (legacy/seed data stays valid).
  *
  * Legs are implied by adjacency: after the ops, every day whose card
- * POSITIONS changed (add/move/remove item) gets its leg rows rebuilt as
- * placeholder rows (mode 'drive', null distance/duration — 待重算; ticket 09
- * owns real recomputation). Canvas reads tolerate the nulls (the leg chip
- * renders nothing until data exists).
+ * POSITIONS changed (add/move/remove item) gets its leg rows rebuilt through
+ * ticket 09's shared recompute (items-admin/legs.ts): a stored pair leg is
+ * reused verbatim, a reversed stored leg keeps its numbers, otherwise the
+ * pair is estimated (haversine × 1.2 road factor) when both ends carry POI
+ * coordinates, and a coordinate-less (待定) pair degrades to an empty 0/0 leg
+ * the canvas chip hides. Patch-applied days therefore always carry usable
+ * estimated legs — never placeholder NULL rows.
  */
 import { isValidDateString } from '../trips/dates.js'
-import { mapPoiRef } from '../days/repository.js'
-import type { ItemType } from '../days/types.js'
+import { mapLegRow, mapPoiRef } from '../days/repository.js'
+import type { CanvasItem, CanvasLeg, ItemType, PoiRef } from '../days/types.js'
+import { recomputeTripLegs } from '../items-admin/legs.js'
 import type {
   PatchPoiRef,
   TripPatchApplyResult,
@@ -325,7 +329,9 @@ function itemUpsert(item: ProjectedItem): {
     type: item.type,
     title: item.title,
     note: item.note,
-    poi: item.poi === null ? null : JSON.stringify(item.poi),
+    // Canonical storage shape (same JSON the workbench read mapper expects):
+    // {name, location: {lat, lng}, amapId, category, rating, introSummary}.
+    poi: item.poi === null ? null : JSON.stringify(toPoiStorage(item.poi)),
     pending: item.pending,
   }
 }
@@ -341,28 +347,97 @@ function nextDateAfter(days: Iterable<ProjectedDay>): string {
   return Number.isFinite(next.getTime()) ? next.toISOString().slice(0, 10) : ''
 }
 
+/**
+ * Projected (post-patch) item → the CanvasItem shape ticket 09's recompute
+ * reads. Only id/dayId/order/poi influence the derivation; the rest is
+ * carried verbatim so the reuse/estimate rules see exactly what the canvas
+ * read model would see.
+ */
+function toCanvasItem(item: ProjectedItem): CanvasItem {
+  return {
+    id: item.id,
+    dayId: item.dayId,
+    order: item.order,
+    type: item.type,
+    title: item.title,
+    note: item.note,
+    poi: item.poi === null ? null : toPoiRef(item.poi),
+    images: [],
+    pending: item.pending,
+  }
+}
+
+/** Flat PatchPoiRef → the canonical PoiRef read shape (defaults filled). */
+function toPoiRef(poi: PatchPoiRef): PoiRef {
+  return {
+    amapId: poi.amapId ?? '',
+    name: poi.name,
+    lat: poi.lat,
+    lng: poi.lng,
+    category: poi.category ?? '',
+    rating: poi.rating ?? 0,
+    introSummary: '',
+  }
+}
+
+/** Flat PatchPoiRef → the canonical nested POI storage JSON (days read mapper convention). */
+function toPoiStorage(poi: PatchPoiRef): {
+  amapId: string
+  name: string
+  location: { lat: number; lng: number }
+  category: string
+  rating: number
+  introSummary: string
+} {
+  return {
+    amapId: poi.amapId ?? '',
+    name: poi.name,
+    location: { lat: poi.lat, lng: poi.lng },
+    category: poi.category ?? '',
+    rating: poi.rating ?? 0,
+    introSummary: '',
+  }
+}
+
+/**
+ * Stored legs available to the recompute's reuse rules (ticket 09). Rows
+ * written as placeholders by an older patch applier (NULL distance/duration)
+ * are excluded on purpose: reusing them verbatim would freeze the NULLs
+ * forever instead of letting the estimate fallback fill real numbers.
+ */
+function usableStoredLegs(rows: Awaited<ReturnType<TripPatchStoreDriver['listLegRows']>>): CanvasLeg[] {
+  const legs: CanvasLeg[] = []
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (row === null || typeof row !== 'object') continue
+    if (row.distance_km === null || row.distance_km === undefined) continue
+    if (row.duration_min === null || row.duration_min === undefined) continue
+    const leg = mapLegRow(row)
+    if (leg !== null) legs.push(leg)
+  }
+  return legs
+}
+
 async function rebuildLegsForDay(
   store: TripPatchStoreDriver,
   tripId: string,
   day: ProjectedDay,
+  previousLegs: CanvasLeg[],
   stats: TripPatchStats,
 ): Promise<void> {
-  const items = sortedItems(day)
+  const items = sortedItems(day).map(toCanvasItem)
   const ids = items.map((item) => item.id)
   await store.deleteLegsForItems(tripId, ids)
-  for (let i = 1; i < items.length; i += 1) {
-    const from = items[i - 1]
-    const to = items[i]
-    if (!from || !to) continue
+  // Ticket 09 recompute (reuse → reversed → haversine × 1.2 estimate → 0/0),
+  // run over the patched day so the canvas shows estimated legs immediately.
+  for (const leg of recomputeTripLegs(items, previousLegs)) {
     await store.upsertLegRow(tripId, {
-      id: `patchleg-${from.id}-${to.id}`,
-      fromItemId: from.id,
-      toItemId: to.id,
-      mode: 'drive',
-      // Placeholder distances (待重算): real computation is ticket 09's job.
-      distanceKm: null,
-      durationMin: null,
-      polyline: null,
+      id: leg.id,
+      fromItemId: leg.fromItemId,
+      toItemId: leg.toItemId,
+      mode: leg.mode,
+      distanceKm: leg.distanceKm,
+      durationMin: leg.durationMin,
+      polyline: leg.polyline === null ? null : JSON.stringify(leg.polyline),
     })
     stats.legsWritten += 1
   }
@@ -409,6 +484,7 @@ export async function applyTripPatch(
 
   try {
     await store.withTransaction(async () => {
+      const previousLegs = usableStoredLegs(await store.listLegRows(tripId))
       for (const op of ops) {
         switch (op.op) {
           case 'add_day': {
@@ -472,7 +548,7 @@ export async function applyTripPatch(
       for (const dayId of reference.touchedDays) {
         const day = reference.days.get(dayId)
         if (!day) continue // day itself removed — its legs were deleted with it
-        await rebuildLegsForDay(store, tripId, day, stats)
+        await rebuildLegsForDay(store, tripId, day, previousLegs, stats)
       }
     })
   } catch {

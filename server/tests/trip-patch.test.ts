@@ -14,6 +14,7 @@ import assert from 'node:assert/strict'
 
 import { MemoryTripPatchStore } from '../src/trip-patch/store-memory.js'
 import { applyTripPatch } from '../src/trip-patch/apply.js'
+import { mapPoiRef } from '../src/days/repository.js'
 
 const TRIP = 'trip-patch-unit'
 
@@ -70,12 +71,37 @@ test('valid plan patch applies: days/items/legs rows land, summary and stats rep
   assert.equal(stay?.pending, 1)
   assert.ok(String(stay?.poi).includes('全季酒店'))
 
-  // Adjacency legs: one placeholder row (null distance — 待重算 by ticket 09).
+  assert.deepEqual(mapPoiRef(stay?.poi), {
+    amapId: '', name: '全季酒店', lat: 49.2122, lng: 119.7462,
+    category: '', rating: 0, introSummary: '',
+  })
+
   const legs = await store.listLegRows(TRIP)
   assert.equal(legs.length, 1)
   assert.equal(legs[0]?.from_item_id, 'item-a')
   assert.equal(legs[0]?.to_item_id, 'item-b')
-  assert.equal(legs[0]?.distance_km, null)
+  assert.ok(Number(legs[0]?.distance_km) > 20)
+  assert.ok(Number(legs[0]?.duration_min) > 20)
+})
+
+test('patch leg rebuild preserves known routes when a new stop is appended', async () => {
+  const store = new MemoryTripPatchStore()
+  assert.equal((await applyTripPatch(store, TRIP, planPatch())).ok, true)
+  await store.upsertLegRow(TRIP, {
+    id: 'leg-item-a-item-b', fromItemId: 'item-a', toItemId: 'item-b', mode: 'drive',
+    distanceKm: 35, durationMin: 42, polyline: '[[119.7478,49.4072],[119.7462,49.2122]]',
+  })
+  const result = await applyTripPatch(store, TRIP, {
+    ops: [{ op: 'add_item', itemId: 'item-c', dayId: 'day-1', type: 'food', title: '晚餐',
+      poi: poi('晚餐', 49.2, 119.75) }],
+  })
+  assert.equal(result.ok, true)
+  const legs = await store.listLegRows(TRIP)
+  const known = legs.find((leg) => leg.from_item_id === 'item-a')
+  assert.equal(known?.distance_km, 35)
+  assert.equal(known?.duration_min, 42)
+  assert.equal(known?.polyline, '[[119.7478,49.4072],[119.7462,49.2122]]')
+  assert.ok(Number(legs.find((leg) => leg.to_item_id === 'item-c')?.distance_km) > 0)
 })
 
 test('two stays on one day are rejected with a readable error, nothing is written', async () => {
