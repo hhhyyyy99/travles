@@ -10,7 +10,7 @@ export type ParsedTripIntake = {
 
 export type TripIntakeError = { ok: false; error: string } | { ok: true; value: ParsedTripIntake }
 
-const DURATION_PATTERN = /(\d{1,2}|[一二三四五六七八九十百]+)\s*(?:天|日)/
+const DURATION_PATTERN = /(\d{1,2}|[一二三四五六七八九十百两]+)\s*(?:天|日)/
 const DATE_PATTERN = /\d{4}[-/.]\d{1,2}[-/.]\d{1,2}/g
 const TENTATIVE_DATE_PATTERN = /国庆|暑假|寒假|周末|下周|本周|月底|月初|\d{1,2}\s*月|[一二三四五六七八九十]+月/
 
@@ -59,12 +59,17 @@ function extractDestination(sentence: string, durationIndex: number): string {
 }
 
 function cleanDestination(value: string): string {
-  return value.replace(/^(?:去|到|前往)/, '').replace(/[，,。；;]+$/, '').trim().slice(0, 60)
+  return value
+    .replace(/^(?:去|到|前往)/, '')
+    .replace(/(?:旅游|旅行|游玩|游览|玩)$/, '')
+    .replace(/[，,。；;]+$/, '')
+    .trim()
+    .slice(0, 60)
 }
 
 function parseDuration(value: string): number {
   if (/^\d+$/.test(value)) return Number(value)
-  const digits: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10, 百: 100 }
+  const digits: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10, 百: 100, 两: 2 }
   if (value === '十') return 10
   if (value.startsWith('十')) return 10 + (digits[value.slice(1)] ?? 0)
   if (value.endsWith('十')) return (digits[value.slice(0, -1)] ?? 0) * 10

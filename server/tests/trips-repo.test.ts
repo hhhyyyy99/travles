@@ -95,6 +95,16 @@ test('createFromIntake preserves the original sentence and allows a date-pending
   }
 })
 
+test('intake accepts natural Chinese duration and strips travel wording from the destination title', async () => {
+  const { repo } = setup()
+  const result = await repo.createFromIntake({ sentence: '我想去呼伦贝尔玩两天，慢慢走' })
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(result.trip.title, '呼伦贝尔 · 2日行程')
+  assert.equal(result.trip.planningContext?.durationDays, 2)
+  assert.equal(result.trip.planningContext?.destination, '呼伦贝尔')
+})
+
 test('list returns created trips oldest-first and never throws', async () => {
   const { repo } = setup()
   assert.deepEqual(await repo.list(), [])
