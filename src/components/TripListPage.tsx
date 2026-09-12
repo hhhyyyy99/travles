@@ -9,6 +9,7 @@ import {
   formatTripSchedule,
   previewDaysNights,
   renameTrip,
+  type ApiResult,
   type TripFormInput,
   type TripIntakeInput,
   type TripSummary,
@@ -78,42 +79,40 @@ export default function TripListPage({
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault()
     if (submitting) return
-    setFormError(null)
     setActionError(null)
     if (form.title.trim().length === 0) {
       setFormError('请填写行程标题。')
       return
     }
-    setSubmitting(true)
-    const result = await createTrip(form)
-    setSubmitting(false)
-    if (!result.ok) {
-      setFormError(result.error)
-      return
-    }
-    setForm({ title: '', startDate: '', endDate: '' })
-    setTrips((prev) => [...(prev ?? []), result.data])
+    await submitTripCreation(
+      () => createTrip(form),
+      setSubmitting,
+      setFormError,
+      (trip) => {
+        setForm({ title: '', startDate: '', endDate: '' })
+        setTrips((prev) => [...(prev ?? []), trip])
+      },
+    )
   }
 
   const handleIntake = async (event: React.FormEvent) => {
     event.preventDefault()
     if (intakeSubmitting) return
-    setIntakeError(null)
     setActionError(null)
     if (!intake.sentence.trim()) {
       setIntakeError('请写一句目的地、天数和偏好。')
       return
     }
-    setIntakeSubmitting(true)
-    const result = await createTripFromSentence(intake)
-    setIntakeSubmitting(false)
-    if (!result.ok) {
-      setIntakeError(result.error)
-      return
-    }
-    setIntake({ sentence: '' })
-    setTrips((prev) => [...(prev ?? []), result.data])
-    onOpenTrip?.(result.data.id, result.data.planningContext?.originalSentence ?? intake.sentence.trim())
+    await submitTripCreation(
+      () => createTripFromSentence(intake),
+      setIntakeSubmitting,
+      setIntakeError,
+      (trip) => {
+        setIntake({ sentence: '' })
+        setTrips((prev) => [...(prev ?? []), trip])
+        onOpenTrip?.(trip.id, trip.planningContext?.originalSentence ?? intake.sentence.trim())
+      },
+    )
   }
 
   const startRename = (trip: TripSummary) => {
@@ -411,4 +410,21 @@ export default function TripListPage({
       )}
     </div>
   )
+}
+
+async function submitTripCreation(
+  request: () => Promise<ApiResult<TripSummary>>,
+  setBusy: (busy: boolean) => void,
+  setError: (error: string | null) => void,
+  onSuccess: (trip: TripSummary) => void,
+): Promise<void> {
+  setError(null)
+  setBusy(true)
+  const result = await request()
+  setBusy(false)
+  if (!result.ok) {
+    setError(result.error)
+    return
+  }
+  onSuccess(result.data)
 }

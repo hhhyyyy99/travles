@@ -68,12 +68,7 @@ export class TripRepository {
       updated_at: now,
       planning_context: null,
     }
-    try {
-      await this.driver.insertTripRow(row)
-    } catch {
-      return { ok: false, error: '保存失败', code: 'storage' }
-    }
-    return { ok: true, trip: mapRowToSummary(row) as TripSummary }
+    return this.persistTrip(row)
   }
 
   /** Create a private date-pending draft from one destination/duration sentence. */
@@ -90,12 +85,17 @@ export class TripRepository {
       created_at: now,
       updated_at: now,
     }
+    return this.persistTrip(row)
+  }
+
+  private async persistTrip(row: TripInsertRow): Promise<TripWriteResult> {
     try {
       await this.driver.insertTripRow(row)
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
     }
-    return { ok: true, trip: mapRowToSummary(row) as TripSummary }
+    const trip = mapRowToSummary(row)
+    return trip === null ? { ok: false, error: '保存失败', code: 'storage' } : { ok: true, trip }
   }
 
   /** Rename (title only) — keeps dates. */
