@@ -2,6 +2,8 @@ const { chromium } = require('playwright');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
+const { mkdtemp, rm } = require('node:fs/promises');
+const { tmpdir } = require('node:os');
 
 const repoRoot = path.resolve(__dirname, '../..');
 
@@ -54,32 +56,37 @@ async function startViteApp({ mode } = {}) {
       : ['--host', host, '--port', String(port), '--strictPort'];
   // vite's package.json does not export ./bin/vite.js, so resolve the file directly
   const cli = path.join(repoRoot, 'node_modules', 'vite', 'bin', 'vite.js');
+  // Each server owns its cache: parallel suites must not delete each other's optimizer output.
+  const cacheDir = await mkdtemp(path.join(tmpdir(), 'journey-vite-test-'));
   const child = spawn(process.execPath, [cli, ...args], {
     cwd: repoRoot,
-    env: { ...process.env },
+    env: { ...process.env, APP_TEST_VITE_CACHE_DIR: cacheDir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let logs = '';
   child.stdout.on('data', (chunk) => (logs += chunk.toString()));
   child.stderr.on('data', (chunk) => (logs += chunk.toString()));
   let exited = false;
-  child.on('exit', () => (exited = true));
+  const stopped = new Promise((resolve) => {
+    child.once('exit', () => { exited = true; resolve(); });
+    child.once('error', () => { exited = true; resolve(); });
+  });
+  const close = async () => {
+    if (!exited) child.kill('SIGTERM');
+    await stopped;
+    await rm(cacheDir, { recursive: true, force: true });
+  };
   const url = `http://${host}:${port}`;
   try {
     await waitFor(`${url}/`);
   } catch (error) {
-    child.kill('SIGTERM');
+    await close();
     throw new Error(`${error.message}\nvite (${appMode}) logs:\n${logs}`);
   }
   return {
     url,
     port,
-    close: async () => {
-      if (!exited) {
-        child.kill('SIGTERM');
-        await new Promise((resolve) => child.once('exit', resolve));
-      }
-    },
+    close,
   };
 }
 

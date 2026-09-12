@@ -10,6 +10,7 @@ const serverPort = process.env.SERVER_PORT ?? '4310'
 // Ticket 09 cutover: the production entries are index.html (the guide) and
 // trip.html (redirect stub preserving query + hash for legacy bookmarks).
 export default defineConfig({
+  cacheDir: process.env.APP_TEST_VITE_CACHE_DIR,
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
