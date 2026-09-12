@@ -105,7 +105,10 @@ import type { RoundMetaPayload, RoundWarning } from './round-meta.js'
 import { readRoundFromToolArgs } from './round-meta.js'
 import {
   detectTimeConstraintConflicts,
+  isModificationRequest,
+  isScheduleRequest,
   longDriveWarnings,
+  warningAsText,
   type TimeConstraintConflict,
 } from './analysis.js'
 import {
@@ -168,7 +171,9 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
 
     const analysis = await analyzeTripTurn(trip, content, options.resolveTripPatchStore)
     const allowPatchApply =
-      analysis.conflicts.length === 0 && (!analysis.hasExistingPlan || isPatchConfirmation(content))
+      analysis.conflicts.length === 0 &&
+      !analysis.storeReadFailed &&
+      (!analysis.hasExistingPlan || isPatchConfirmation(content))
 
     // Start the agent run before committing to SSE so failures at run
     // construction can still fall back to a plain HTTP error.
@@ -179,6 +184,10 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
     const patchTurn = createPatchTurnState(PATCH_TURN_MAX_ATTEMPTS, allowPatchApply)
     requestContext.set(PATCH_TRIP_ID_KEY, trip.id)
     requestContext.set(PATCH_TURN_STATE_KEY, patchTurn)
+    // Ticket 13's read_trip_snapshot tool uses the proposal context key. Set
+    // it here too so patch-explain turns can inspect the same current canvas
+    // without introducing a second snapshot implementation.
+    requestContext.set('ai.proposal.tripId', trip.id)
     try {
       output = await planner.stream(buildPlannerPrompt(content, analysis, allowPatchApply), {
         ...(options.memoryConfigured
@@ -208,7 +217,11 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
       let round: string | null = null
       // Last validated payload from the turn's emit_round_meta tool result.
       let meta: RoundMetaPayload | null = null
-      const forcedPatchExplain = !allowPatchApply && (analysis.hasExistingPlan || analysis.conflicts.length > 0)
+      const forcedPatchExplain =
+        !allowPatchApply &&
+        (analysis.conflicts.length > 0 ||
+          patchTurn.blockedBeforeConfirmation ||
+          (analysis.isModification && analysis.hasExistingPlan))
 
       const writeStart = async (): Promise<void> => {
         started = true
@@ -295,8 +308,9 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         ...postApplyWarnings,
         ...analysis.conflicts.map(conflictToWarning),
       ])
-      if (boundaryWarnings.length > 0 || patchTurn.blockedBeforeConfirmation) {
-        const nextRound = analysis.conflicts.length > 0 || patchTurn.blockedBeforeConfirmation ? 'patch-explain' : round ?? 'qa'
+      const mustExplainPatch = forcedPatchExplain || patchTurn.blockedBeforeConfirmation
+      if (boundaryWarnings.length > 0 || mustExplainPatch) {
+        const nextRound = mustExplainPatch ? 'patch-explain' : round ?? 'qa'
         const current = meta ?? { round: nextRound }
         meta = {
           ...current,
@@ -318,6 +332,19 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
               }
             : {}),
         }
+      }
+
+      // A model can omit the prose version of a deterministic warning. Add
+      // the split recommendation to the assistant stream so it is visible in
+      // the conversation as well as in the structured warning panel.
+      const missingWarningText = boundaryWarnings
+        .filter((warning) => !full.includes(warning.message))
+        .map(warningAsText)
+        .join('\n')
+      if (missingWarningText !== '') {
+        const suffix = `${full === '' ? '' : '\n\n'}⚠️ ${missingWarningText}\n`
+        full += suffix
+        await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: suffix }) })
       }
 
       // Ticket 08: the model kept submitting invalid patches until its retry
@@ -379,6 +406,8 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
 
 type TripTurnAnalysis = {
   hasExistingPlan: boolean
+  isModification: boolean
+  storeReadFailed: boolean
   warnings: RoundWarning[]
   conflicts: TimeConstraintConflict[]
 }
@@ -391,10 +420,14 @@ async function analyzeTripTurn(
 ): Promise<TripTurnAnalysis> {
   // A newly created trip may carry placeholder dates from the create form;
   // only compare against stored trip dates once an actual plan exists.
-  const explicitConflicts = detectTimeConstraintConflicts(content)
+  const isModification = isModificationRequest(content)
+  const scheduleRequest = isScheduleRequest(content)
+  const explicitConflicts = scheduleRequest ? detectTimeConstraintConflicts(content) : []
   if (!resolveStore) {
     return {
       hasExistingPlan: false,
+      isModification,
+      storeReadFailed: false,
       warnings: explicitConflicts.map(conflictToWarning),
       conflicts: explicitConflicts,
     }
@@ -407,15 +440,23 @@ async function analyzeTripTurn(
       store.listLegRows(trip.id),
     ])
     const hasExistingPlan = dayRows.some((row) => typeof row?.id === 'string' && row.id !== '')
-    const conflicts = hasExistingPlan ? detectTimeConstraintConflicts(content, trip) : explicitConflicts
+    const conflicts = scheduleRequest
+      ? hasExistingPlan
+        ? detectTimeConstraintConflicts(content, trip)
+        : explicitConflicts
+      : []
     return {
       hasExistingPlan,
+      isModification,
+      storeReadFailed: false,
       warnings: [...longDriveWarnings(legRows, itemRows), ...conflicts.map(conflictToWarning)],
       conflicts,
     }
   } catch {
     return {
       hasExistingPlan: false,
+      isModification,
+      storeReadFailed: true,
       warnings: explicitConflicts.map(conflictToWarning),
       conflicts: explicitConflicts,
     }
@@ -446,15 +487,18 @@ function buildPlannerPrompt(content: string, analysis: TripTurnAnalysis, allowPa
   if (analysis.warnings.some((warning) => warning.kind === 'long-drive')) {
     parts.push('\n[路线警示]\n当前行程有超过 6 小时的驾驶段，请在 AI 回复中给出拆分、休息或中途过夜建议。')
   }
-  if (!allowPatchApply && analysis.hasExistingPlan) {
+  if (!allowPatchApply && analysis.isModification && analysis.hasExistingPlan) {
     parts.push(
-      '\n[修改确认协议]\n这是对既有行程的修改请求。先输出 patch-explain，复述变更、影响范围、冲突和解决选项；本轮绝对不要调用 apply_trip_patch。只有用户后续选择以「确认方案」开头的选项后，才可调用 apply_trip_patch。',
+      '\n[修改确认协议]\n这是对既有行程的修改请求。先调用 read_trip_snapshot 读取当前安排，再输出 patch-explain，复述变更、影响范围、冲突和解决选项；本轮绝对不要调用 apply_trip_patch。只有用户后续选择以「确认方案」开头的选项后，才可调用 apply_trip_patch。',
     )
   }
-  if (allowPatchApply && analysis.hasExistingPlan) {
+  if (allowPatchApply && analysis.isModification && analysis.hasExistingPlan) {
     parts.push(
       '\n[修改已确认]\n用户已确认影响分析中的方案。请输出逐日重排结果，明确列出为满足约束所做的妥协，然后调用 apply_trip_patch。',
     )
+  }
+  if (analysis.storeReadFailed) {
+    parts.push('\n[行程状态暂不可读]\n暂时无法读取既有行程，本轮不要调用 apply_trip_patch；请先告知用户稍后重试。')
   }
   return parts.join('\n')
 }

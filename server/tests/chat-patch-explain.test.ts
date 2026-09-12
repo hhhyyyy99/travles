@@ -18,7 +18,7 @@ import { MemoryTripPatchStore } from '../src/trip-patch/store-memory.js'
 import type { MastraLanguageModel } from '@mastra/core/agent'
 import { MockMemory } from '@mastra/core/memory'
 import { InMemoryStore } from '@mastra/core/storage'
-import { detectTimeConstraintConflicts, longDriveWarnings } from '../src/chat/analysis.js'
+import { detectTimeConstraintConflicts, isModificationRequest, longDriveWarnings } from '../src/chat/analysis.js'
 
 type StreamPart =
   | { type: 'stream-start'; warnings: [] }
@@ -33,8 +33,9 @@ type Script = {
   text?: string
 }
 
-function scriptedModel(scripts: Script[]): MastraLanguageModel {
+function scriptedModel(scripts: Script[]): MastraLanguageModel & { prompts: string[] } {
   let call = 0
+  const prompts: string[] = []
   return {
     specificationVersion: 'v2',
     provider: 'test.patch-explain',
@@ -43,9 +44,11 @@ function scriptedModel(scripts: Script[]): MastraLanguageModel {
     doGenerate: async () => {
       throw new Error('doGenerate not used')
     },
-    doStream: async () => {
+    prompts,
+    doStream: async ({ prompt }: { prompt?: unknown }) => {
       const script = scripts[call] ?? { text: '好的。' }
       call += 1
+      if (prompt !== undefined) prompts.push(JSON.stringify(prompt))
       const parts: StreamPart[] = [{ type: 'stream-start', warnings: [] }]
       for (const [index, toolCall] of (script.toolCalls ?? []).entries()) {
         parts.push({
@@ -74,7 +77,7 @@ function scriptedModel(scripts: Script[]): MastraLanguageModel {
         }),
       }
     },
-  } as unknown as MastraLanguageModel
+  } as unknown as MastraLanguageModel & { prompts: string[] }
 }
 
 function jsonRequest(method: string, body: unknown): RequestInit {
@@ -163,6 +166,7 @@ test('modification is explained first and only the confirmation choice applies t
   assert.equal(firstMeta.round, 'patch-explain')
   assert.equal(firstMeta.conflicts?.length, 1)
   assert.equal(firstMeta.chips?.length, 2)
+  assert.ok(model.prompts[0]?.includes('read_trip_snapshot'), 'patch explanation prompt requires the current itinerary snapshot')
 
   const second = await app.request(
     '/api/trips/' + trip.id + '/messages',
@@ -223,4 +227,65 @@ test('analysis emits a split suggestion for a drive longer than six hours', () =
   assert.equal(warnings.length, 1)
   assert.equal(warnings[0]?.kind, 'long-drive')
   assert.match(warnings[0]?.suggestion ?? '', /拆成两段/)
+})
+
+test('ordinary questions on an existing plan keep the qa round and do not require confirmation', async () => {
+  const model = scriptedModel([
+    {
+      toolCalls: [{ toolName: 'emit_round_meta', input: { round: 'qa' } }],
+    },
+    { text: '海拉尔明天晴到多云，早晚温差较大。' },
+  ])
+  const { app, trip, patchStore } = await makeApp(model)
+  await patchStore.upsertDayRow(trip.id, { id: 'day-1', idx: 0, date: '2026-10-02', theme: '原计划' })
+
+  const response = await app.request('/api/trips/' + trip.id + '/messages', jsonRequest('POST', { content: '海拉尔明天天气怎么样？' }))
+  assert.equal(response.status, 200)
+  const events = parseSse(await response.text())
+  assert.deepEqual(events.map((entry) => entry.event), ['start', 'delta', 'meta', 'done'])
+  assert.deepEqual((events[0]?.data as { round: string }).round, 'qa')
+  assert.equal((events.find((entry) => entry.event === 'meta')?.data as { round: string }).round, 'qa')
+  assert.equal((await patchStore.listDayRows(trip.id))[0]?.theme, '原计划')
+})
+
+test('a long existing drive is shown in metadata and assistant text with a split suggestion', async () => {
+  const model = scriptedModel([
+    { toolCalls: [{ toolName: 'emit_round_meta', input: { round: 'qa' } }] },
+    { text: '我先看一下当前路线。' },
+  ])
+  const { app, trip, patchStore } = await makeApp(model)
+  await patchStore.upsertDayRow(trip.id, { id: 'day-1', idx: 0, date: '2026-10-02', theme: '长途日' })
+  await patchStore.upsertItemRow(trip.id, {
+    id: 'item-a', dayId: 'day-1', itemOrder: 0, type: 'attraction', title: '海拉尔', note: '', poi: null, pending: false,
+  })
+  await patchStore.upsertItemRow(trip.id, {
+    id: 'item-b', dayId: 'day-1', itemOrder: 1, type: 'attraction', title: '满洲里', note: '', poi: null, pending: false,
+  })
+  await patchStore.upsertLegRow(trip.id, {
+    id: 'leg-long', fromItemId: 'item-a', toItemId: 'item-b', mode: 'drive', distanceKm: 500, durationMin: 361, polyline: null,
+  })
+
+  const response = await app.request('/api/trips/' + trip.id + '/messages', jsonRequest('POST', { content: '这段路线有什么需要注意？' }))
+  assert.equal(response.status, 200)
+  const events = parseSse(await response.text())
+  const meta = events.find((entry) => entry.event === 'meta')?.data as { round: string; warnings?: { kind: string; suggestion?: string }[] }
+  assert.equal(meta.round, 'qa')
+  assert.equal(meta.warnings?.[0]?.kind, 'long-drive')
+  assert.match(meta.warnings?.[0]?.suggestion ?? '', /拆成两段/)
+  const done = events.find((entry) => entry.event === 'done')?.data as { assistantMessage: { content: string } }
+  assert.match(done.assistantMessage.content, /建议拆成两段/)
+})
+
+test('time-order and reversed-date contradictions are surfaced before planning', () => {
+  const timeConflicts = detectTimeConstraintConflicts('请安排 10/2 18:00 抵达海拉尔，10/2 17:00 返程')
+  assert.ok(timeConflicts.some((conflict) => conflict.message.includes('抵达时间')))
+
+  const reversed = detectTimeConstraintConflicts('行程日期 10/5 到 10/2')
+  assert.ok(reversed.some((conflict) => conflict.message.includes('结束时间早于开始时间')))
+})
+
+test('modification intent is limited to explicit itinerary edits', () => {
+  assert.equal(isModificationRequest('请把第二天改住海拉尔'), true)
+  assert.equal(isModificationRequest('重新生成一份计划'), true)
+  assert.equal(isModificationRequest('海拉尔明天天气怎么样？'), false)
 })
