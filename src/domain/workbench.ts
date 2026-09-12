@@ -236,6 +236,18 @@ export function formatLegLabel(leg: WorkbenchLeg | null): string {
   return parts.join(' · ')
 }
 
+/** A drive longer than six hours needs a visible split/overnight warning. */
+export const LONG_DRIVE_LIMIT_MINUTES = 6 * 60
+
+export function isLongDriveLeg(leg: WorkbenchLeg | null): boolean {
+  return leg !== null && leg.mode === 'drive' && leg.durationMin > LONG_DRIVE_LIMIT_MINUTES
+}
+
+export function longDriveWarningText(leg: WorkbenchLeg | null): string {
+  if (!isLongDriveLeg(leg)) return ''
+  return `驾驶超过 6 小时，建议拆分行程并增加中途休息或过夜点`
+}
+
 /** Per-day accent color with a stable fallback palette (PRD: 多日分色). */
 const DAY_COLORS = ['#c26d4f', '#3f7d5c', '#4f6dc2', '#8a5fbf', '#b75342', '#2f7d8a', '#a8791f']
 

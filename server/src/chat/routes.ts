@@ -101,8 +101,16 @@ import type { TripSummary } from '../trips/types.js'
 import { ChatMessageRepository } from './repository.js'
 import type { AppEnv } from '../app.js'
 import { readJsonBody } from '../http/body.js'
-import type { RoundMetaPayload } from './round-meta.js'
+import type { RoundMetaPayload, RoundWarning } from './round-meta.js'
 import { readRoundFromToolArgs } from './round-meta.js'
+import {
+  detectTimeConstraintConflicts,
+  isModificationRequest,
+  isScheduleRequest,
+  longDriveWarnings,
+  warningAsText,
+  type TimeConstraintConflict,
+} from './analysis.js'
 import {
   PATCH_TRIP_ID_KEY,
   PATCH_TURN_STATE_KEY,
@@ -161,17 +169,27 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
       return c.json({ error: '消息内容不能为空' }, 400)
     }
 
+    const analysis = await analyzeTripTurn(trip, content, options.resolveTripPatchStore)
+    const allowPatchApply =
+      analysis.conflicts.length === 0 &&
+      !analysis.storeReadFailed &&
+      (!analysis.hasExistingPlan || isPatchConfirmation(content))
+
     // Start the agent run before committing to SSE so failures at run
     // construction can still fall back to a plain HTTP error.
     let output: Awaited<ReturnType<typeof planner.stream>>
     // Ticket 08: per-turn RequestContext seeds the apply_trip_patch tool with
     // the trip id and the retry state the route owns (read back after the run).
     const requestContext = new RequestContext()
-    const patchTurn = createPatchTurnState(PATCH_TURN_MAX_ATTEMPTS)
+    const patchTurn = createPatchTurnState(PATCH_TURN_MAX_ATTEMPTS, allowPatchApply)
     requestContext.set(PATCH_TRIP_ID_KEY, trip.id)
     requestContext.set(PATCH_TURN_STATE_KEY, patchTurn)
+    // Ticket 13's read_trip_snapshot tool uses the proposal context key. Set
+    // it here too so patch-explain turns can inspect the same current canvas
+    // without introducing a second snapshot implementation.
+    requestContext.set('ai.proposal.tripId', trip.id)
     try {
-      output = await planner.stream(content, {
+      output = await planner.stream(buildPlannerPrompt(content, analysis, allowPatchApply), {
         ...(options.memoryConfigured
           ? { memory: { thread: `trip-${trip.id}`, resource: trip.id } }
           : {}),
@@ -199,10 +217,22 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
       let round: string | null = null
       // Last validated payload from the turn's emit_round_meta tool result.
       let meta: RoundMetaPayload | null = null
+      const forcedPatchExplain =
+        !allowPatchApply &&
+        (analysis.conflicts.length > 0 ||
+          patchTurn.blockedBeforeConfirmation ||
+          (analysis.isModification && analysis.hasExistingPlan))
 
       const writeStart = async (): Promise<void> => {
         started = true
-        await stream.writeSSE({ event: 'start', data: JSON.stringify({ round: round ?? 'qa' }) })
+        await stream.writeSSE({ event: 'start', data: JSON.stringify({ round: round ?? (forcedPatchExplain ? 'patch-explain' : 'qa') }) })
+        if (analysis.conflicts.length > 0) {
+          const warningText = analysis.conflicts
+            .map((conflict) => `⚠️ ${conflict.message} ${conflict.suggestion}`)
+            .join('\n')
+          full += `${warningText}\n`
+          await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: `${warningText}\n` }) })
+        }
       }
 
       try {
@@ -223,6 +253,7 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
             // the round type can still pin the start event here.
             if (!round && !started) {
               round = readRoundFromToolArgs(payload.args)
+              if (forcedPatchExplain) round = 'patch-explain'
             }
             continue
           }
@@ -264,6 +295,56 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
       if (failed) {
         await stream.writeSSE({ event: 'close', data: '{}' })
         return
+      }
+
+      // Keep the boundary warnings visible even when the model omitted the
+      // optional fields from emit_round_meta. The itinerary itself stays on
+      // the server; only these concise warnings cross the model/UI boundary.
+      const postApplyWarnings = patchTurn.applied
+        ? await readLongDriveWarnings(options.resolveTripPatchStore, tripId)
+        : []
+      const boundaryWarnings = dedupeWarnings([
+        ...analysis.warnings,
+        ...postApplyWarnings,
+        ...analysis.conflicts.map(conflictToWarning),
+      ])
+      const mustExplainPatch = forcedPatchExplain || patchTurn.blockedBeforeConfirmation
+      if (boundaryWarnings.length > 0 || mustExplainPatch) {
+        const nextRound = mustExplainPatch ? 'patch-explain' : round ?? 'qa'
+        const current = meta ?? { round: nextRound }
+        meta = {
+          ...current,
+          round: nextRound,
+          ...(boundaryWarnings.length > 0
+            ? { warnings: dedupeWarnings([...(current.warnings ?? []), ...boundaryWarnings]) }
+            : {}),
+          ...(analysis.conflicts.length > 0
+            ? { conflicts: dedupeStrings([...(current.conflicts ?? []), ...analysis.conflicts.map((conflict) => conflict.message)]) }
+            : {}),
+          ...(nextRound === 'patch-explain' && (!current.chips || current.chips.length === 0)
+            ? {
+                chips: [
+                  {
+                    label: '确认并按这个方案重排',
+                    value: '确认方案：按刚才的影响分析执行重排',
+                  },
+                ],
+              }
+            : {}),
+        }
+      }
+
+      // A model can omit the prose version of a deterministic warning. Add
+      // the split recommendation to the assistant stream so it is visible in
+      // the conversation as well as in the structured warning panel.
+      const missingWarningText = boundaryWarnings
+        .filter((warning) => !full.includes(warning.message))
+        .map(warningAsText)
+        .join('\n')
+      if (missingWarningText !== '') {
+        const suffix = `${full === '' ? '' : '\n\n'}⚠️ ${missingWarningText}\n`
+        full += suffix
+        await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: suffix }) })
       }
 
       // Ticket 08: the model kept submitting invalid patches until its retry
@@ -321,6 +402,133 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
       })
     })
   })
+}
+
+type TripTurnAnalysis = {
+  hasExistingPlan: boolean
+  isModification: boolean
+  storeReadFailed: boolean
+  warnings: RoundWarning[]
+  conflicts: TimeConstraintConflict[]
+}
+
+/** Inspect trip rows locally for guardrails and confirmation gating. */
+async function analyzeTripTurn(
+  trip: TripSummary,
+  content: string,
+  resolveStore?: () => Promise<TripPatchStoreDriver>,
+): Promise<TripTurnAnalysis> {
+  // A newly created trip may carry placeholder dates from the create form;
+  // only compare against stored trip dates once an actual plan exists.
+  const isModification = isModificationRequest(content)
+  const scheduleRequest = isScheduleRequest(content)
+  const explicitConflicts = scheduleRequest ? detectTimeConstraintConflicts(content) : []
+  if (!resolveStore) {
+    return {
+      hasExistingPlan: false,
+      isModification,
+      storeReadFailed: false,
+      warnings: explicitConflicts.map(conflictToWarning),
+      conflicts: explicitConflicts,
+    }
+  }
+  try {
+    const store = await resolveStore()
+    const [dayRows, itemRows, legRows] = await Promise.all([
+      store.listDayRows(trip.id),
+      store.listItemRows(trip.id),
+      store.listLegRows(trip.id),
+    ])
+    const hasExistingPlan = dayRows.some((row) => typeof row?.id === 'string' && row.id !== '')
+    const conflicts = scheduleRequest
+      ? hasExistingPlan
+        ? detectTimeConstraintConflicts(content, trip)
+        : explicitConflicts
+      : []
+    return {
+      hasExistingPlan,
+      isModification,
+      storeReadFailed: false,
+      warnings: [...longDriveWarnings(legRows, itemRows), ...conflicts.map(conflictToWarning)],
+      conflicts,
+    }
+  } catch {
+    return {
+      hasExistingPlan: false,
+      isModification,
+      storeReadFailed: true,
+      warnings: explicitConflicts.map(conflictToWarning),
+      conflicts: explicitConflicts,
+    }
+  }
+}
+
+async function readLongDriveWarnings(
+  resolveStore: (() => Promise<TripPatchStoreDriver>) | undefined,
+  tripId: string,
+): Promise<RoundWarning[]> {
+  if (!resolveStore) return []
+  try {
+    const store = await resolveStore()
+    const [items, legs] = await Promise.all([store.listItemRows(tripId), store.listLegRows(tripId)])
+    return longDriveWarnings(legs, items)
+  } catch {
+    return []
+  }
+}
+
+function buildPlannerPrompt(content: string, analysis: TripTurnAnalysis, allowPatchApply: boolean): string {
+  const parts = [content]
+  if (analysis.conflicts.length > 0) {
+    parts.push(
+      `\n[边界约束]\n${analysis.conflicts.map((conflict) => `${conflict.message} ${conflict.suggestion}`).join('\n')}\n先指出冲突，不得静默选择，也不要调用 apply_trip_patch。`,
+    )
+  }
+  if (analysis.warnings.some((warning) => warning.kind === 'long-drive')) {
+    parts.push('\n[路线警示]\n当前行程有超过 6 小时的驾驶段，请在 AI 回复中给出拆分、休息或中途过夜建议。')
+  }
+  if (!allowPatchApply && analysis.isModification && analysis.hasExistingPlan) {
+    parts.push(
+      '\n[修改确认协议]\n这是对既有行程的修改请求。先调用 read_trip_snapshot 读取当前安排，再输出 patch-explain，复述变更、影响范围、冲突和解决选项；本轮绝对不要调用 apply_trip_patch。只有用户后续选择以「确认方案」开头的选项后，才可调用 apply_trip_patch。',
+    )
+  }
+  if (allowPatchApply && analysis.isModification && analysis.hasExistingPlan) {
+    parts.push(
+      '\n[修改已确认]\n用户已确认影响分析中的方案。请输出逐日重排结果，明确列出为满足约束所做的妥协，然后调用 apply_trip_patch。',
+    )
+  }
+  if (analysis.storeReadFailed) {
+    parts.push('\n[行程状态暂不可读]\n暂时无法读取既有行程，本轮不要调用 apply_trip_patch；请先告知用户稍后重试。')
+  }
+  return parts.join('\n')
+}
+
+function isPatchConfirmation(content: string): boolean {
+  const text = content.trim()
+  return /确认方案|确认并执行|按这个(?:方案)?(?:重排|执行)|就按.*(?:重排|调整|执行)|同意.*(?:重排|调整|执行)/.test(text)
+}
+
+function conflictToWarning(conflict: TimeConstraintConflict): RoundWarning {
+  return {
+    kind: 'time-conflict',
+    title: '时间约束冲突',
+    message: conflict.message,
+    suggestion: conflict.suggestion,
+  }
+}
+
+function dedupeWarnings(warnings: RoundWarning[]): RoundWarning[] {
+  const seen = new Set<string>()
+  return warnings.filter((warning) => {
+    const key = `${warning.kind}|${warning.title}|${warning.message}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => typeof value === 'string' && value.trim() !== ''))]
 }
 
 /** Map a model-stream failure to an SSE error payload (spec 用户故事 25). */

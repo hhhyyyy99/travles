@@ -13,8 +13,10 @@ import {
   dayDateLabel,
   fetchTripCanvas,
   formatLegLabel,
+  isLongDriveLeg,
   legsByPair,
   weekdayLabel,
+  longDriveWarningText,
   type FetchLike,
 } from '../src/domain/workbench'
 
@@ -121,6 +123,15 @@ test('legsByPair joins adjacent cards and formatLegLabel formats the chip', () =
     formatLegLabel({ id: 'x', fromItemId: 'a', toItemId: 'b', mode: 'drive', distanceKm: 12, durationMin: 90 }),
     '12 千米 · 90 分钟',
   )
+})
+
+test('legs longer than six hours expose the split warning used by canvas and list views', () => {
+  const long = { id: 'long', fromItemId: 'a', toItemId: 'b', mode: 'drive', distanceKm: 420, durationMin: 361 }
+  const sixHours = { ...long, id: 'six', durationMin: 360 }
+  assert.equal(isLongDriveLeg(long), true)
+  assert.equal(isLongDriveLeg(sixHours), false, 'exactly six hours is still within the boundary')
+  assert.match(longDriveWarningText(long), /超过 6 小时/)
+  assert.equal(longDriveWarningText(null), '')
 })
 
 test('dayAccentColor prefers the server color and falls back per index', () => {

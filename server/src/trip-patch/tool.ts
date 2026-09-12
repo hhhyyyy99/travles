@@ -38,10 +38,21 @@ export type PatchTurnState = {
   maxAttempts: number
   exhausted: boolean
   applied: TripPatchRecord | null
+  /** Existing trips require an explicit confirmation chip before writes. */
+  allowApply: boolean
+  /** A model tried to write before confirmation; keep the turn non-fatal. */
+  blockedBeforeConfirmation: boolean
 }
 
-export function createPatchTurnState(maxAttempts = 3): PatchTurnState {
-  return { attempts: 0, maxAttempts, exhausted: false, applied: null }
+export function createPatchTurnState(maxAttempts = 3, allowApply = true): PatchTurnState {
+  return {
+    attempts: 0,
+    maxAttempts,
+    exhausted: false,
+    applied: null,
+    allowApply,
+    blockedBeforeConfirmation: false,
+  }
 }
 
 export type ApplyTripPatchToolOptions = {
@@ -61,6 +72,15 @@ export function createApplyTripPatchTool(options: ApplyTripPatchToolOptions = {}
       const state = context.requestContext.get(PATCH_TURN_STATE_KEY) as PatchTurnState | null
       if (typeof tripId !== 'string' || tripId === '' || state === null) {
         return { ok: false, retryable: false, error: '缺少行程上下文，无法写入行程。' }
+      }
+      if (!state.allowApply) {
+        state.blockedBeforeConfirmation = true
+        return {
+          ok: false,
+          retryable: false,
+          pendingConfirmation: true,
+          error: '这是一项会影响既有行程的修改，请先让用户确认影响分析中的方案。',
+        }
       }
       state.attempts += 1
       if (!options.resolveStore) {
