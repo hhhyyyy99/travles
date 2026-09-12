@@ -3,12 +3,18 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 
 import { createApp } from '../src/app.js'
+import { MemoryTripStoreDriver } from '../src/trips/driver-memory.js'
+import { TripRepository } from '../src/trips/repository.js'
 
 const require = createRequire(import.meta.url)
 const pkg = require('../package.json') as { version?: string }
 
+function healthApp() {
+  return createApp({ tripRepository: new TripRepository(new MemoryTripStoreDriver()) })
+}
+
 test('GET /api/health returns version info from the real app instance', async () => {
-  const app = await createApp()
+  const app = await healthApp()
 
   const res = await app.request('/api/health')
   assert.equal(res.status, 200)
@@ -23,7 +29,7 @@ test('GET /api/health returns version info from the real app instance', async ()
 })
 
 test('GET /api/health reports the mounted Mastra instance', async () => {
-  const app = await createApp()
+  const app = await healthApp()
 
   const res = await app.request('/api/health')
   assert.equal(res.status, 200)
@@ -33,7 +39,7 @@ test('GET /api/health reports the mounted Mastra instance', async () => {
 })
 
 test('unknown /api routes do not shadow the health endpoint', async () => {
-  const app = await createApp()
+  const app = await healthApp()
 
   const res = await app.request('/api/health/extra')
   assert.equal(res.status, 404)

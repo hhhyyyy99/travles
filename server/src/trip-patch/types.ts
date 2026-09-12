@@ -30,7 +30,7 @@
  * distances; this ticket writes placeholder rows with null distance so the
  * canvas stays structure-true without inventing numbers).
  */
-import type { DayRow, ItemRow, LegRow } from '../days/types.js'
+import type { DayRow, ItemRow, LegQuality, LegRow } from '../days/types.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
 /** One POI reference on a card (subset of the canvas PoiRef the AI supplies). */
@@ -102,6 +102,7 @@ export interface TripPatchLegUpsert {
   distanceKm: number | null
   durationMin: number | null
   polyline: string | null
+  quality?: LegQuality
 }
 
 /**

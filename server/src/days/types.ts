@@ -23,6 +23,9 @@
 
 export type ItemType = 'traffic' | 'stay' | 'attraction' | 'food' | 'other'
 
+/** Provenance of the distance/time shown for a leg. */
+export type LegQuality = 'reference' | 'estimate' | 'measured' | 'pending'
+
 export type PoiRef = {
   amapId: string
   name: string
@@ -64,6 +67,8 @@ export type CanvasLeg = {
   distanceKm: number
   durationMin: number
   polyline: [number, number][] | null
+  /** Optional for old callers; read mappers infer it when storage is blank. */
+  quality?: LegQuality
 }
 
 export type TripCanvas = {
@@ -103,6 +108,7 @@ export interface LegRow {
   distance_km: unknown
   duration_min: unknown
   polyline: unknown
+  quality?: unknown
 }
 
 /** Read-only driver seam (SQLite in production, in-memory in tests). */

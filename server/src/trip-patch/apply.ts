@@ -35,7 +35,7 @@
 import { isValidDateString } from '../trips/dates.js'
 import { mapLegRow, mapPoiRef } from '../days/repository.js'
 import type { CanvasItem, CanvasLeg, ItemType, PoiRef } from '../days/types.js'
-import { recomputeTripLegs } from '../items-admin/legs.js'
+import { adjacentTripPairs, recomputeTripLegs } from '../items-admin/legs.js'
 import { TripPatchIdConflictError } from './types.js'
 import type { PatchPoiRef, TripPatchApplyResult, TripPatchStats, TripPatchStoreDriver } from './types.js'
 import type { TripPatchInput } from './schema.js'
@@ -186,6 +186,10 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
       case 'remove_day': {
         const day = projection.days.get(op.dayId as string)
         if (!day) return fail(i, `天「${op.dayId}」不存在`)
+        for (const neighbor of neighboringDays(projection, day.id)) {
+          markDayItems(neighbor)
+          projection.touchedDays.add(neighbor.id)
+        }
         projection.days.delete(day.id)
         break
       }
@@ -232,6 +236,7 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
           // this day and exclude every old leg touching the changed card.
           projection.touchedDays.add(found.day.id)
           projection.invalidatedLegItems.add(item.id)
+          item.fromPatch = true
         }
         if (op.legPending !== undefined) item.legPending = op.legPending as boolean
         break
@@ -261,6 +266,8 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
           if (current) current.order = position
         }
         target.items = targetItems
+        markDayItems(found.day)
+        markDayItems(target)
         projection.touchedDays.add(target.id)
         projection.touchedDays.add(found.day.id)
         break
@@ -270,6 +277,7 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
         if (!found) return fail(i, `卡片「${op.itemId}」不存在`)
         found.day.items = reindexItems(found.day).filter((entry) => entry.id !== op.itemId)
         reindexItems(found.day)
+        markDayItems(found.day)
         projection.touchedDays.add(found.day.id)
         break
       }
@@ -369,22 +377,42 @@ function validateStays(projection: Projection): ValidationFailure | { ok: true }
 
 /** 交通段可达：patch 触及的相邻卡片对，两端有坐标，或已标记待定。 */
 function validateReachability(projection: Projection): ValidationFailure | { ok: true } {
-  for (const day of projection.days.values()) {
-    const items = sortedItems(day)
-    for (let i = 1; i < items.length; i += 1) {
-      const from = items[i - 1]
-      const to = items[i]
-      if (!from || !to) continue
-      if (!from.fromPatch && !to.fromPatch) continue // untouched legacy pair — exempt
-      if (hasCoords(from) && hasCoords(to)) continue
-      if (from.pending || to.pending || from.legPending || to.legPending) continue
-      return {
-        ok: false,
-        error: `交通段不可达：相邻卡片「${from.title}」→「${to.title}」缺少坐标且未标记待定。请补充 POI 坐标，或将无坐标卡片 pending/legPending 置为 true。`,
-      }
+  for (const { from, to } of projectedAdjacentPairs(projection)) {
+    if (!from.fromPatch && !to.fromPatch) continue // untouched legacy pair — exempt
+    if (hasCoords(from) && hasCoords(to)) continue
+    if (from.pending || to.pending || from.legPending || to.legPending) continue
+    return {
+      ok: false,
+      error: `交通段不可达：相邻卡片「${from.title}」→「${to.title}」缺少坐标且未标记待定。请补充 POI 坐标，或将无坐标卡片 pending/legPending 置为 true。`,
     }
   }
   return { ok: true }
+}
+
+function projectedAdjacentPairs(projection: Projection): Array<{ from: ProjectedItem; to: ProjectedItem }> {
+  const byId = new Map<string, ProjectedItem>()
+  const items: CanvasItem[] = []
+  for (const day of projection.days.values()) {
+    for (const item of sortedItems(day)) {
+      byId.set(item.id, item)
+      items.push(toCanvasItem(item))
+    }
+  }
+  const order = [...projection.days.values()].map((day) => ({ id: day.id, index: day.idx }))
+  return adjacentTripPairs(items, order)
+    .map((pair) => ({ from: byId.get(pair.from.id), to: byId.get(pair.to.id) }))
+    .filter((pair): pair is { from: ProjectedItem; to: ProjectedItem } => pair.from !== undefined && pair.to !== undefined)
+}
+
+function markDayItems(day: ProjectedDay): void {
+  for (const item of day.items) item.fromPatch = true
+}
+
+function neighboringDays(projection: Projection, dayId: string): ProjectedDay[] {
+  const ordered = [...projection.days.values()].sort((a, b) => a.idx - b.idx || a.id.localeCompare(b.id))
+  const index = ordered.findIndex((day) => day.id === dayId)
+  if (index < 0) return []
+  return [ordered[index - 1], ordered[index + 1]].filter((day): day is ProjectedDay => day !== undefined)
 }
 
 // ---------------------------------------------------------------------------
@@ -496,23 +524,30 @@ function usableStoredLegs(rows: Awaited<ReturnType<TripPatchStoreDriver['listLeg
   return legs
 }
 
-async function rebuildLegsForDay(
+async function rebuildLegsForTrip(
   store: TripPatchStoreDriver,
   tripId: string,
-  day: ProjectedDay,
+  projection: Projection,
   previousLegs: CanvasLeg[],
   invalidatedLegItems: ReadonlySet<string>,
   stats: TripPatchStats,
 ): Promise<void> {
-  const items = sortedItems(day).map(toCanvasItem)
-  const ids = items.map((item) => item.id)
-  await store.deleteLegsForItems(tripId, ids)
+  const items = [...projection.days.values()].flatMap((day) => sortedItems(day)).map(toCanvasItem)
+  const dayOrder = [...projection.days.values()].map((day) => ({ id: day.id, index: day.idx }))
+  const ids = new Set<string>()
+  for (const item of items) ids.add(item.id)
+  for (const leg of previousLegs) {
+    ids.add(leg.fromItemId)
+    ids.add(leg.toItemId)
+  }
+  await store.deleteLegsForItems(tripId, [...ids])
   const reusableLegs = previousLegs.filter(
     (leg) => !invalidatedLegItems.has(leg.fromItemId) && !invalidatedLegItems.has(leg.toItemId),
   )
-  // Ticket 09 recompute (reuse → reversed → haversine × 1.2 estimate → 0/0),
-  // run over the patched day so the canvas shows estimated legs immediately.
-  for (const leg of recomputeTripLegs(items, reusableLegs)) {
+  // Recompute same-day pairs and the bridges between consecutive days from
+  // one projected snapshot so deleting/moving a card cannot leave a stale
+  // boundary leg behind.
+  for (const leg of recomputeTripLegs(items, reusableLegs, dayOrder)) {
     await store.upsertLegRow(tripId, {
       id: leg.id,
       fromItemId: leg.fromItemId,
@@ -521,6 +556,7 @@ async function rebuildLegsForDay(
       distanceKm: leg.distanceKm,
       durationMin: leg.durationMin,
       polyline: leg.polyline === null ? null : JSON.stringify(leg.polyline),
+      quality: leg.quality,
     })
     stats.legsWritten += 1
   }
@@ -645,11 +681,13 @@ export async function applyTripPatch(
           await transactionStore.upsertItemRow(tripId, itemUpsert(item))
         }
       }
-      // Rebuild adjacency legs for every day whose card list changed.
-      for (const dayId of reference.touchedDays) {
-        const day = reference.days.get(dayId)
-        if (!day) continue // day itself removed — its legs were deleted with it
-        await rebuildLegsForDay(transactionStore, tripId, day, previousLegs, reference.invalidatedLegItems, stats)
+      // Rebuild all adjacency legs whenever a card/day layout changed. A
+      // boundary can change even when its surviving endpoint cards did not.
+      const layoutChanged = ops.some((op) =>
+        op.op === 'add_item' || op.op === 'move_item' || op.op === 'remove_item' || op.op === 'remove_day',
+      ) || reference.touchedDays.size > 0
+      if (layoutChanged) {
+        await rebuildLegsForTrip(transactionStore, tripId, reference, previousLegs, reference.invalidatedLegItems, stats)
       }
     })
   } catch (error) {

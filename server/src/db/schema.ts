@@ -58,7 +58,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     mode TEXT NOT NULL DEFAULT 'drive',
     distance_km REAL,
     duration_min REAL,
-    polyline TEXT
+    polyline TEXT,
+    quality TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
@@ -171,5 +172,10 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
     } catch {
       // The column already exists on fresh databases or after a prior boot.
     }
+  }
+  try {
+    await db.run('ALTER TABLE legs ADD COLUMN quality TEXT')
+  } catch {
+    // The column already exists on fresh databases or after a prior run.
   }
 }

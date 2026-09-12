@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 
 import { MemoryItemsAdminStoreDriver } from '../src/items-admin/driver-memory.js'
 import { ItemsAdminRepository } from '../src/items-admin/repository.js'
-import { estimateLeg, haversineKm, recomputeTripLegs } from '../src/items-admin/legs.js'
+import { adjacentTripPairs, estimateLeg, haversineKm, recomputeTripLegs } from '../src/items-admin/legs.js'
 import type { CanvasItem, CanvasLeg, ItemRow, LegRow, PoiRef } from '../src/days/types.js'
 
 const TRIP = 't1'
@@ -170,6 +170,7 @@ test('recomputeTripLegs estimates unknown pairs (haversine × 1.2, ~60 km/h) and
     distanceKm: 0,
     durationMin: 0,
     polyline: null,
+    quality: 'pending',
   })
 })
 
@@ -178,7 +179,7 @@ test('haversineKm matches the known Hailar–Ergun distance ballpark', () => {
   assert.ok(km > 110 && km < 130, `unexpected distance ${km}`)
 })
 
-test('recomputeTripLegs groups per day and never links across days', () => {
+test('recomputeTripLegs keeps callers without day order on same-day pairs', () => {
   const legs = recomputeTripLegs(
     [item('a', 'd1', 0), item('b', 'd1', 1), item('c', 'd2', 0, { poi: poi(119.7, 49.2) })],
     [],
@@ -186,6 +187,27 @@ test('recomputeTripLegs groups per day and never links across days', () => {
   assert.equal(legs.length, 1, 'single-item day d2 produces no leg')
   assert.equal(legs[0]!.fromItemId, 'a')
   assert.equal(legs[0]!.toItemId, 'b')
+})
+
+test('authoritative day order adds exact bridges and skips empty-day gaps', () => {
+  const items = [
+    item('a', 'd1', 0),
+    item('b', 'd1', 1),
+    item('c', 'd3', 0),
+    item('d', 'd4', 0),
+  ]
+  const dayOrder = [
+    { id: 'd1', index: 0 },
+    { id: 'd2', index: 1 },
+    { id: 'd3', index: 2 },
+    { id: 'd4', index: 3 },
+  ]
+  const pairs = adjacentTripPairs(items, dayOrder)
+  assert.deepEqual(pairs.map((pair) => [pair.from.id, pair.to.id]), [['a', 'b'], ['c', 'd']])
+  assert.deepEqual(
+    recomputeTripLegs(items, [], dayOrder).map((leg) => [leg.fromItemId, leg.toItemId]),
+    [['a', 'b'], ['c', 'd']],
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -213,8 +235,8 @@ test('moveItem reorders within a day: renumbers orders and recomputes legs with 
   )
 
   // Legs: day-1 pairs i2→i1 (direction-safe estimate) and i1→i3
-  // (no coords → 0/0), plus day-2's i4→i5.
-  assert.equal(result.legs.length, 3)
+  // (no coords → 0/0), day-2's i4→i5, and the incoming day-2 bridge i3→i4.
+  assert.equal(result.legs.length, 4)
   const reversed = result.legs.find((leg) => leg.fromItemId === 'i2' && leg.toItemId === 'i1')
   assert.ok(reversed)
   assert.equal(reversed.distanceKm, 32.1, 'the reversed pair gets its own estimate')
@@ -224,6 +246,7 @@ test('moveItem reorders within a day: renumbers orders and recomputes legs with 
   assert.ok(tail)
   assert.equal(tail.distanceKm, 0)
   assert.equal(tail.polyline, null)
+  assert.equal(result.legs.find((leg) => leg.fromItemId === 'i3' && leg.toItemId === 'i4')?.quality, 'pending')
 })
 
 test('moveItem crosses days, renumbers both, and estimates the new adjacent pairs', async () => {
@@ -244,8 +267,9 @@ test('moveItem crosses days, renumbers both, and estimates the new adjacent pair
     rows.filter((entry) => entry.dayId === 'day-2').map((entry) => entry.id),
     ['i1', 'i4', 'i5'],
   )
-  assert.equal(result.legs.length, 3, 'one leg per adjacent pair per day, never across days')
+  assert.equal(result.legs.length, 4, 'same-day pairs plus the incoming day-2 boundary')
   assert.ok(result.legs.some((leg) => leg.fromItemId === 'i2' && leg.toItemId === 'i3'))
+  assert.ok(result.legs.some((leg) => leg.fromItemId === 'i3' && leg.toItemId === 'i1'))
   assert.ok(result.legs.some((leg) => leg.fromItemId === 'i1' && leg.toItemId === 'i4'))
   assert.ok(result.legs.some((leg) => leg.fromItemId === 'i4' && leg.toItemId === 'i5'))
   assert.equal(result.item.id, 'i1')
@@ -386,8 +410,9 @@ test('deleteItem removes the card, closes the gap, and recomputes legs', async (
     day1.map((entry) => entry.order),
     [0, 1],
   )
-  assert.equal(result.legs.length, 2, 'day-1 pair i1→i3 + day-2 pair i4→i5')
+  assert.equal(result.legs.length, 3, 'day-1 pair i1→i3 + incoming bridge + day-2 pair i4→i5')
   assert.ok(result.legs.some((leg) => leg.fromItemId === 'i1' && leg.toItemId === 'i3'))
+  assert.ok(result.legs.some((leg) => leg.fromItemId === 'i3' && leg.toItemId === 'i4'))
 
   const ghost = await repo.deleteItem(TRIP, 'i2')
   assert.deepEqual(ghost, { ok: false, error: '卡片不存在', code: 'not_found' })

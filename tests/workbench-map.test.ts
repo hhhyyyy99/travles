@@ -10,6 +10,8 @@ import assert from 'node:assert/strict'
 
 import {
   fetchTripCanvas,
+  formatLegDisplayLabel,
+  legQuality,
   type WorkbenchDay,
   type WorkbenchItem,
   type WorkbenchLeg,
@@ -128,6 +130,14 @@ test('dayRouteQuality distinguishes measured, estimated, and pending map routes'
   assert.equal(dayRouteQuality(dayData, [leg('l', 'a', 'b')]), 'estimate')
   assert.equal(dayRouteQuality(dayData, [leg('l', 'a', 'b', { distanceKm: 0, durationMin: 0 })]), 'pending')
   assert.equal(dayRouteQuality(dayData, []), 'pending')
+  assert.equal(dayRouteQuality(dayData, [leg('l', 'a', 'b', { quality: 'reference', polyline: [[119.7, 49.2], [119.8, 49.3]] })]), 'estimate')
+  assert.equal(legQuality(leg('l', 'a', 'b', { quality: 'reference' })), 'reference')
+})
+
+test('reference and estimated leg labels stay approximate while measured labels do not', () => {
+  assert.equal(formatLegDisplayLabel(leg('reference', 'a', 'b', { quality: 'reference', polyline: [[119.7, 49.2], [119.8, 49.3]] })), '约 10 千米 · 12 分钟')
+  assert.equal(formatLegDisplayLabel(leg('estimate', 'a', 'b', { quality: 'estimate' })), '约 10 千米 · 12 分钟')
+  assert.equal(formatLegDisplayLabel(leg('measured', 'a', 'b', { quality: 'measured', polyline: [[119.7, 49.2], [119.8, 49.3]] })), '10 千米 · 12 分钟')
 })
 
 test('formatMileageLabel makes map estimates and pending routes explicit', () => {
@@ -201,8 +211,34 @@ test('fit coordinates cover segments and POIs across days', () => {
     day({ id: 'day-2', index: 1, items: [item('c', 0, { dayId: 'day-2', poi: poi({ lat: 49.5, lng: 119.9 }) })] }),
   ]
   const all = tripFitCoordinates(days, [leg('l1', 'a', 'b')])
-  assert.deepEqual(all, [[49.2, 119.7], [49.3, 119.8], [49.2, 119.7], [49.3, 119.8], [49.5, 119.9]], 'segments first, then the day POI points')
+  assert.deepEqual(all, [[49.2, 119.7], [49.3, 119.8], [49.2, 119.7], [49.3, 119.8], [49.3, 119.8], [49.5, 119.9], [49.5, 119.9]], 'the incoming bridge is included in the next day fit')
   assert.ok(dayFitCoordinates(days[0]!, []).length >= 2)
+})
+
+test('incoming cross-day route quality and mileage use a stored bridge', () => {
+  const previous = day({
+    id: 'day-1',
+    index: 0,
+    items: [item('from', 0, { poi: poi({ lat: 49.2, lng: 119.7 }) })],
+  })
+  const current = day({
+    id: 'day-2',
+    index: 1,
+    items: [item('to', 0, { dayId: 'day-2', poi: poi({ lat: 49.3, lng: 119.8 }) })],
+  })
+  const bridge = leg('bridge', 'from', 'to', {
+    distanceKm: 22.2,
+    durationMin: 24,
+    polyline: [[119.7, 49.2], [119.75, 49.25], [119.8, 49.3]],
+    quality: 'reference',
+  })
+  assert.equal(dayMileageKm(current, [bridge], previous), 22.2)
+  assert.equal(dayRouteQuality(current, [bridge], previous), 'estimate')
+  assert.deepEqual(dayRouteSegments(current, [bridge], previous), [[
+    [49.2, 119.7],
+    [49.25, 119.75],
+    [49.3, 119.8],
+  ]])
 })
 
 test('fetchTripCanvas keeps leg polylines and drops corrupt entries', async () => {

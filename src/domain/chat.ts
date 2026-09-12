@@ -182,17 +182,7 @@ export function normalizeChatMeta(raw: unknown): ChatMessageMeta | null {
       }
     }
   }
-  const sources: ChatSource[] = []
-  if (Array.isArray(m.sources)) {
-    for (const entry of m.sources) {
-      if (entry === null || typeof entry !== 'object') continue
-      const title = (entry as { title?: unknown }).title
-      const url = (entry as { url?: unknown }).url
-      if (typeof title === 'string' && title && typeof url === 'string' && url) {
-        sources.push({ title, url })
-      }
-    }
-  }
+  const sources = normalizeSources(m.sources)
   const readTextList = (value: unknown): string[] =>
     Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '') : []
   const warnings: ChatRoundWarning[] = []
@@ -229,7 +219,7 @@ export function normalizeChatMeta(raw: unknown): ChatMessageMeta | null {
     ...(poiLinks.length > 0 ? { poiLinks } : {}),
     ...(typeof m.think === 'string' && m.think ? { think: m.think } : {}),
     ...(typeof m.thinkComplete === 'boolean' ? { thinkComplete: m.thinkComplete } : {}),
-    ...(sources.length > 0 ? { sources } : {}),
+    ...(sources !== null ? { sources } : {}),
     ...(readTextList(m.impacts).length > 0 ? { impacts: readTextList(m.impacts) } : {}),
     ...(readTextList(m.conflicts).length > 0 ? { conflicts: readTextList(m.conflicts) } : {}),
     ...(readTextList(m.compromises).length > 0 ? { compromises: readTextList(m.compromises) } : {}),

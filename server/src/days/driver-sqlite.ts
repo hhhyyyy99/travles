@@ -26,7 +26,7 @@ export class SqliteWorkbenchStoreDriver implements WorkbenchStoreDriver {
 
   async listLegRows(tripId: string): Promise<LegRow[]> {
     const { rows } = await this.db.run(
-      'SELECT id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline FROM legs WHERE trip_id = ?',
+      'SELECT id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality FROM legs WHERE trip_id = ?',
       [tripId],
     )
     return rows as unknown as LegRow[]

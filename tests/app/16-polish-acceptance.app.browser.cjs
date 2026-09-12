@@ -446,7 +446,7 @@ test('ticket 16 real backend/SSE acceptance: sync, reconnect, compact tabs, and 
     const response = await moveResponse
     const recomputed = await response.json()
     assert.equal(response.status(), 200)
-    assert.equal(recomputed.legs.length, 133, 'the backend returned one adjacent leg for each of 7 x 20-card days')
+    assert.equal(recomputed.legs.length, 139, 'the backend returned 133 intra-day legs plus 6 consecutive-day bridges')
     await heavy.page.waitForFunction(
       ({ sourceId, targetId }) => {
         const firstDay = document.querySelector('[data-canvas-day]')

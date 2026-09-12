@@ -244,11 +244,15 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
 
   const routes = useMemo<WorkbenchRouteDay[]>(
     () =>
-      days.map((day) => ({
+      days.map((day, index) => ({
         dayId: day.id,
         color: dayAccentColor(day.color, day.index),
-        segments: dayRouteSegments(day, legs),
-        mileageLabel: formatMileageLabel(day, dayMileageKm(day, legs), dayRouteQuality(day, legs)),
+        segments: dayRouteSegments(day, legs, days[index - 1]),
+        mileageLabel: formatMileageLabel(
+          day,
+          dayMileageKm(day, legs, days[index - 1]),
+          dayRouteQuality(day, legs, days[index - 1]),
+        ),
       })),
     [days, legs],
   )
@@ -327,7 +331,8 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
     setViewDropdownOpen(false)
     const day = days.find((candidate) => candidate.id === dayId)
     const handle = handleRef.current
-    if (day && handle) fitWorkbenchCoordinates(handle, dayFitCoordinates(day, legs))
+    const dayIndex = days.findIndex((candidate) => candidate.id === dayId)
+    if (day && handle) fitWorkbenchCoordinates(handle, dayFitCoordinates(day, legs, days[dayIndex - 1]))
   }
 
   const images = selected?.item.images ?? []

@@ -172,6 +172,7 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       existing.distance_km = leg.distanceKm
       existing.duration_min = leg.durationMin
       existing.polyline = leg.polyline
+      existing.quality = legQualityForWrite(leg.quality, leg.distanceKm, leg.durationMin, leg.polyline)
       return
     }
     this.legRows.push({
@@ -183,6 +184,7 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       distance_km: leg.distanceKm,
       duration_min: leg.durationMin,
       polyline: leg.polyline,
+      quality: legQualityForWrite(leg.quality, leg.distanceKm, leg.durationMin, leg.polyline),
     })
   }
 
@@ -234,4 +236,15 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
     record.consumedAt = new Date().toISOString()
     return true
   }
+}
+
+function legQualityForWrite(
+  quality: TripPatchLegUpsert['quality'],
+  distanceKm: number | null,
+  durationMin: number | null,
+  polyline: string | null,
+): NonNullable<TripPatchLegUpsert['quality']> {
+  if (quality) return quality
+  if ((distanceKm ?? 0) <= 0 && (durationMin ?? 0) <= 0) return 'pending'
+  return polyline === null ? 'estimate' : 'measured'
 }

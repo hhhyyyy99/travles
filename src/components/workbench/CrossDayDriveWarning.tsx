@@ -1,7 +1,7 @@
 import { AlertTriangle } from 'lucide-react'
-import type { CrossDayDriveWarning as CrossDayDriveWarningData } from '../../domain/workbench'
+import type { CrossDayTransfer } from '../../domain/workbench'
 
-export default function CrossDayDriveWarning({ warning }: { warning: CrossDayDriveWarningData }) {
+export default function CrossDayDriveWarning({ warning }: { warning: CrossDayTransfer }) {
   return (
     <aside
       data-cross-day-warning={warning.id}

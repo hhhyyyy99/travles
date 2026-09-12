@@ -23,11 +23,13 @@ import { Car, Plus, Trash2, WandSparkles } from 'lucide-react'
 import {
   CARD_TYPE_LABEL,
   cardVisual,
-  crossDayDriveWarnings,
+  crossDayTransfers,
   dayAccentColor,
   dayDateLabel,
+  formatLegDisplayLabel,
   formatLegLabel,
   isLongDriveLeg,
+  legQuality,
   legsByPair,
   longDriveWarningText,
   weekdayLabel,
@@ -103,7 +105,7 @@ export default function CanvasColumn({
   syncing = false,
 }: CanvasColumnProps) {
   const legLookup = legsByPair(legs)
-  const crossDayWarnings = crossDayDriveWarnings(days)
+  const crossDayTransfersForCanvas = crossDayTransfers(days, legs)
   // Cross-column drag state: the id of the card currently being dragged.
   const [draggingId, setDraggingId] = useState<string | null>(null)
   // Open "⋯" menu (card id) and the cross-day picker (移动到 / 复制到).
@@ -186,8 +188,8 @@ export default function CanvasColumn({
           </p>
         )}
         {days.map((day, index) => {
-          const warning = crossDayWarnings.find(
-            (candidate) => candidate.fromDayId === day.id && candidate.toDayId === days[index + 1]?.id,
+          const incoming = crossDayTransfersForCanvas.find(
+            (candidate) => candidate.toDayId === day.id && candidate.fromDayId === days[index - 1]?.id,
           )
           return (
             <Fragment key={day.id}>
@@ -210,8 +212,8 @@ export default function CanvasColumn({
                 menuFor={menuFor}
                 setMenuFor={setMenuFor}
                 onCardAction={handleCardAction}
+                incomingTransfer={incoming}
               />
-              {warning && <CrossDayDriveWarning warning={warning} />}
             </Fragment>
           )
         })}
@@ -258,6 +260,7 @@ function DayColumn({
   menuFor,
   setMenuFor,
   onCardAction,
+  incomingTransfer,
 }: {
   day: WorkbenchDay
   legLookup: Map<string, WorkbenchLeg>
@@ -277,6 +280,7 @@ function DayColumn({
   menuFor: string | null
   setMenuFor: (itemId: string | null) => void
   onCardAction: (action: CardMenuAction, item: WorkbenchItem, day: WorkbenchDay, index: number) => void
+  incomingTransfer?: ReturnType<typeof crossDayTransfers>[number]
 }) {
   const accent = dayAccentColor(day.color, day.index)
   const dateLabel = dayDateLabel(day.date) || `D${day.index + 1}`
@@ -373,6 +377,12 @@ function DayColumn({
         }}
         onDrop={(event) => handleDrop(event, null)}
       >
+        {incomingTransfer && (
+          <div data-cross-day-transfer={incomingTransfer.id} className="flex flex-col gap-[6px]">
+            <CrossDayLeg transfer={incomingTransfer} />
+            {incomingTransfer.longDrive && <CrossDayDriveWarning warning={incomingTransfer} />}
+          </div>
+        )}
         {day.items.map((item, i) => (
           <div key={item.id} className="flex flex-col gap-[10px]">
             {i > 0 && <LegChip leg={legLookup.get(`${day.items[i - 1]?.id}|${item.id}`) ?? null} />}
@@ -701,13 +711,14 @@ function LegChip({ leg }: { leg: WorkbenchLeg | null }) {
   if (!leg) return null
   const pending = !label && leg.distanceKm <= 0 && leg.durationMin <= 0
   if (!label && !pending) return null
-  const estimated = !pending && leg.polyline === null
+  const quality = legQuality(leg)
+  const estimated = !pending && (quality === 'reference' || quality === 'estimate')
   const longDrive = !pending && isLongDriveLeg(leg)
-  const displayLabel = pending ? '路线待查询' : estimated ? `约 ${label}` : label
+  const displayLabel = pending ? '路线待查询' : formatLegDisplayLabel(leg)
   return (
     <div
       data-leg-chip={leg.id}
-      data-leg-quality={pending ? 'pending' : estimated ? 'estimate' : 'measured'}
+      data-leg-quality={pending ? 'pending' : quality}
       data-leg-warning={longDrive ? leg.id : undefined}
       aria-label={pending ? '路线待查询' : estimated ? `预估路线：${displayLabel}` : `驾车路线：${displayLabel}`}
       title={longDrive ? longDriveWarningText(leg) : pending ? '路线待查询' : estimated ? '直线估算，路线服务返回后会更新' : '高德驾车路线'}
@@ -718,6 +729,28 @@ function LegChip({ leg }: { leg: WorkbenchLeg | null }) {
       <Car aria-hidden="true" className="w-[12px]" />
       {displayLabel}
       {longDrive && <span data-leg-warning-label>超长，建议拆分</span>}
+    </div>
+  )
+}
+
+export function CrossDayLeg({ transfer }: { transfer: ReturnType<typeof crossDayTransfers>[number] }) {
+  const label = formatLegDisplayLabel(transfer.leg)
+  const quality = legQuality(transfer.leg)
+  const pending = quality === 'pending' || label === ''
+  const displayLabel = pending ? '路线待查询' : label
+  return (
+    <div
+      data-cross-day-leg={transfer.id}
+      data-leg-quality={quality}
+      aria-label={pending ? '跨天路线待查询' : `跨天路线：${displayLabel}`}
+      title={pending ? '跨天起终点缺少可用坐标，路线待查询' : quality === 'measured' ? '高德驾车路线' : '跨天距离与时长为估算，路线服务返回后会更新'}
+      className={`flex items-center gap-[6px] rounded-[999px] border px-[10px] py-[3px] text-[11px] ${
+        transfer.longDrive ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]' : 'border-line bg-paper text-muted'
+      }`}
+    >
+      <Car aria-hidden="true" className="w-[12px]" />
+      {displayLabel}
+      <span className="text-[10px]">{transfer.estimated ? '估算' : '实测'}</span>
     </div>
   )
 }

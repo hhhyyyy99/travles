@@ -98,6 +98,7 @@ import { RequestContext } from '@mastra/core/request-context'
 import type { Agent } from '@mastra/core/agent'
 import type { TripRepository } from '../trips/repository.js'
 import type { TripSummary } from '../trips/types.js'
+import type { DayRow, ItemRow, LegRow } from '../days/types.js'
 import { ChatMessageRepository } from './repository.js'
 import type { AppEnv } from '../app.js'
 import { readJsonBody } from '../http/body.js'
@@ -489,6 +490,18 @@ type TripTurnAnalysis = {
   conflicts: TimeConstraintConflict[]
 }
 
+type TripRows = { days: DayRow[]; items: ItemRow[]; legs: LegRow[] }
+
+/** Read one authoritative trip projection for all chat guardrails. */
+async function readTripRows(store: TripPatchStoreDriver, tripId: string): Promise<TripRows> {
+  const [days, items, legs] = await Promise.all([
+    store.listDayRows(tripId),
+    store.listItemRows(tripId),
+    store.listLegRows(tripId),
+  ])
+  return { days, items, legs }
+}
+
 /** Inspect trip rows locally for guardrails and confirmation gating. */
 async function analyzeTripTurn(
   trip: TripSummary,
@@ -512,11 +525,7 @@ async function analyzeTripTurn(
   }
   try {
     const store = await resolveStore()
-    const [dayRows, itemRows, legRows] = await Promise.all([
-      store.listDayRows(trip.id),
-      store.listItemRows(trip.id),
-      store.listLegRows(trip.id),
-    ])
+    const { days: dayRows, items: itemRows, legs: legRows } = await readTripRows(store, trip.id)
     const hasExistingPlan = dayRows.some((row) => typeof row?.id === 'string' && row.id !== '')
     const snapshotHash = hashTripSnapshot(trip, dayRows, itemRows, legRows)
     const conflicts = scheduleRequest
@@ -551,11 +560,7 @@ async function readLongDriveWarnings(
   if (!resolveStore) return []
   try {
     const store = await resolveStore()
-    const [days, items, legs] = await Promise.all([
-      store.listDayRows(tripId),
-      store.listItemRows(tripId),
-      store.listLegRows(tripId),
-    ])
+    const { days, items, legs } = await readTripRows(store, tripId)
     return longDriveWarnings(legs, items, days)
   } catch {
     return []

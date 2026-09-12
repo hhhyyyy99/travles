@@ -21,7 +21,7 @@ import {
   mapLegRow,
 } from '../days/repository.js'
 import type { CanvasItem, CanvasLeg, ItemImage, ItemRow, ItemType, PoiRef } from '../days/types.js'
-import { recomputeTripLegs } from './legs.js'
+import { recomputeTripLegs, type LegDayOrder } from './legs.js'
 import type {
   ItemDeleteResult,
   ItemFullUpsert,
@@ -66,7 +66,7 @@ export class ItemsAdminRepository {
   async moveItem(tripId: string, itemId: string, input: ItemMoveInput = {}): Promise<ItemMutationResult> {
     const loaded = await this.loadItems(tripId)
     if (!loaded.ok) return loaded
-    const { items, legs: previousLegs } = loaded
+    const { items, legs: previousLegs, dayOrder } = loaded
     const moving = items.find((item) => item.id === itemId)
     if (!moving) return { ok: false, error: '卡片不存在', code: 'not_found' }
 
@@ -84,7 +84,7 @@ export class ItemsAdminRepository {
 
     // A move only rewrites positions (order patches keep poi/images columns
     // untouched); copies and creates also upsert their new full row.
-    return this.persistLayout(tripId, nextItems, previousLegs, [moving.dayId, targetDayId], insertedItem(nextItems, moved.id), false)
+    return this.persistLayout(tripId, nextItems, previousLegs, dayOrder, [moving.dayId, targetDayId], insertedItem(nextItems, moved.id), false)
   }
 
   /**
@@ -94,7 +94,7 @@ export class ItemsAdminRepository {
   async copyItem(tripId: string, itemId: string, input: ItemMoveInput = {}): Promise<ItemMutationResult> {
     const loaded = await this.loadItems(tripId)
     if (!loaded.ok) return loaded
-    const { items, legs: previousLegs } = loaded
+    const { items, legs: previousLegs, dayOrder } = loaded
     const source = items.find((item) => item.id === itemId)
     if (!source) return { ok: false, error: '卡片不存在', code: 'not_found' }
 
@@ -113,7 +113,7 @@ export class ItemsAdminRepository {
     const index = input.index === undefined ? targetList.length : clampIndex(input.index, targetList.length)
     const nextItems = insertIntoList(items, targetList, index, copy)
 
-    return this.persistLayout(tripId, nextItems, previousLegs, [targetDayId], insertedItem(nextItems, copy.id), true)
+    return this.persistLayout(tripId, nextItems, previousLegs, dayOrder, [targetDayId], insertedItem(nextItems, copy.id), true)
   }
 
   /**
@@ -123,7 +123,7 @@ export class ItemsAdminRepository {
   async createItem(tripId: string, input: ItemCreateInput): Promise<ItemMutationResult> {
     const loaded = await this.loadItems(tripId)
     if (!loaded.ok) return loaded
-    const { items, legs: previousLegs } = loaded
+    const { items, legs: previousLegs, dayOrder } = loaded
 
     const dayId = typeof input.dayId === 'string' && input.dayId.trim() ? input.dayId.trim() : ''
     if (!dayId) return { ok: false, error: '缺少目标日程', code: 'invalid' }
@@ -156,7 +156,7 @@ export class ItemsAdminRepository {
     const index = input.index === undefined ? targetList.length : clampIndex(input.index, targetList.length)
     const nextItems = insertIntoList(items, targetList, index, created)
 
-    return this.persistLayout(tripId, nextItems, previousLegs, [dayId], insertedItem(nextItems, created.id), true)
+    return this.persistLayout(tripId, nextItems, previousLegs, dayOrder, [dayId], insertedItem(nextItems, created.id), true)
   }
 
   /**
@@ -215,7 +215,7 @@ export class ItemsAdminRepository {
     if (!removing) return { ok: false, error: '卡片不存在', code: 'not_found' }
 
     const nextItems = items.filter((item) => item.id !== itemId)
-    const legs = renumberAndRecompute(nextItems, [removing.dayId], previousLegs)
+    const legs = renumberAndRecompute(nextItems, [removing.dayId], previousLegs, loaded.dayOrder)
     try {
       await this.driver.withTransaction(async (transactionDriver) => {
         await transactionDriver.deleteItemRow(tripId, itemId)
@@ -235,11 +235,16 @@ export class ItemsAdminRepository {
   /** Tolerant read of the trip's items + legs; driver failure → storage error. */
   private async loadItems(
     tripId: string,
-  ): Promise<{ ok: true; items: CanvasItem[]; legs: CanvasLeg[] } | { ok: false; error: string; code: ItemsAdminErrorCode }> {
+  ): Promise<{ ok: true; items: CanvasItem[]; legs: CanvasLeg[]; dayOrder: LegDayOrder[] } | { ok: false; error: string; code: ItemsAdminErrorCode }> {
+    let dayRows: Awaited<ReturnType<ItemsAdminStoreDriver['listDayRows']>>
     let itemRows: ItemRow[]
     let legRows: Awaited<ReturnType<ItemsAdminStoreDriver['listLegRows']>>
     try {
-      ;[itemRows, legRows] = await Promise.all([this.driver.listItemRows(tripId), this.driver.listLegRows(tripId)])
+      ;[dayRows, itemRows, legRows] = await Promise.all([
+        this.driver.listDayRows(tripId),
+        this.driver.listItemRows(tripId),
+        this.driver.listLegRows(tripId),
+      ])
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
     }
@@ -250,7 +255,13 @@ export class ItemsAdminRepository {
     const legs = (Array.isArray(legRows) ? legRows : [])
       .map(mapLegRow)
       .filter((leg): leg is CanvasLeg => leg !== null)
-    return { ok: true, items, legs }
+    const dayOrder = (Array.isArray(dayRows) ? dayRows : [])
+      .map((row) => ({
+        id: typeof row?.id === 'string' ? row.id : '',
+        index: Number(row?.idx),
+      }))
+      .filter((day): day is LegDayOrder => day.id !== '' && Number.isInteger(day.index) && day.index >= 0)
+    return { ok: true, items, legs, dayOrder }
   }
 
   private async dayExistsSafe(tripId: string, dayId: string): Promise<boolean> {
@@ -270,13 +281,14 @@ export class ItemsAdminRepository {
     tripId: string,
     nextItems: CanvasItem[],
     previousLegs: CanvasLeg[],
+    dayOrder: LegDayOrder[],
     affectedDayIds: string[],
     affectedItem: CanvasItem,
     upsertAffectedItem: boolean,
   ): Promise<ItemMutationResult> {
     const normalizedItems = renumberItems(nextItems, affectedDayIds)
     const finalItem = normalizedItems.find((item) => item.id === affectedItem.id) ?? affectedItem
-    const nextLegs = recomputeTripLegs(normalizedItems, previousLegs)
+    const nextLegs = recomputeTripLegs(normalizedItems, previousLegs, dayOrder)
     const orders = affectedDayIds.flatMap((dayId) => orderPatchesForDay(normalizedItems, dayId))
     try {
       await this.driver.withTransaction(async (transactionDriver) => {
@@ -310,8 +322,9 @@ function renumberAndRecompute(
   items: CanvasItem[],
   affectedDayIds: string[],
   previousLegs: CanvasLeg[],
+  dayOrder: LegDayOrder[],
 ): CanvasLeg[] {
-  return recomputeTripLegs(renumberItems(items, affectedDayIds), previousLegs)
+  return recomputeTripLegs(renumberItems(items, affectedDayIds), previousLegs, dayOrder)
 }
 
 /** Order patches (0..n-1) for one day's items after a layout change. */

@@ -14,6 +14,7 @@ import type {
   ItemType,
   ItemRow,
   LegRow,
+  LegQuality,
   PoiRef,
   TripCanvas,
   WorkbenchStoreDriver,
@@ -110,15 +111,31 @@ export function mapLegRow(row: LegRow): CanvasLeg | null {
   const fromItemId = asText(row?.from_item_id)
   const toItemId = asText(row?.to_item_id)
   if (!id || !fromItemId || !toItemId) return null
+  const distanceKm = asNonNegativeNumber(row?.distance_km)
+  const durationMin = asNonNegativeNumber(row?.duration_min)
+  const polyline = mapPolyline(row?.polyline)
   return {
     id,
     fromItemId,
     toItemId,
     mode: asText(row?.mode) || 'drive',
-    distanceKm: asNonNegativeNumber(row?.distance_km),
-    durationMin: asNonNegativeNumber(row?.duration_min),
-    polyline: mapPolyline(row?.polyline),
+    distanceKm,
+    durationMin,
+    polyline,
+    quality: normalizeLegQuality(row?.quality, distanceKm, durationMin, polyline),
   }
+}
+
+/** Infer provenance for databases created before `legs.quality` existed. */
+export function normalizeLegQuality(
+  value: unknown,
+  distanceKm: number,
+  durationMin: number,
+  polyline: [number, number][] | null,
+): LegQuality {
+  if (value === 'reference' || value === 'estimate' || value === 'measured' || value === 'pending') return value
+  if (distanceKm <= 0 && durationMin <= 0) return 'pending'
+  return polyline === null ? 'estimate' : 'measured'
 }
 
 /**

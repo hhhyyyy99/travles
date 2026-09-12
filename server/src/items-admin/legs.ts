@@ -5,9 +5,9 @@
  *
  * ## Convention (documented for ticket 15's routing tools)
  *
- * - Legs connect **adjacent items within one day** — the same per-day route
- *   model the canvas chips and the map panel draw. Cross-day jumps produce
- *   no leg rows.
+ * - Legs connect **adjacent items within one day** plus the exact last-card →
+ *   first-card bridge for consecutive days when an authoritative day order is
+ *   supplied. The bridge belongs to the incoming day in the UI projection.
  * - **Reuse first:** an already-stored leg for the same ordered (from, to)
  *   item pair keeps its mode/distance/duration/polyline verbatim. A reversed
  *   pair is never replayed: one-way road geometry and driving time can change
@@ -26,6 +26,7 @@
  * tolerant row mapping before they reach this module.
  */
 import type { CanvasItem, CanvasLeg, PoiRef } from '../days/types.js'
+import { normalizeLegQuality } from '../days/repository.js'
 
 /**
  * A planned leg row ready for storage — structurally the canvas leg shape
@@ -33,6 +34,9 @@ import type { CanvasItem, CanvasLeg, PoiRef } from '../days/types.js'
  * talk about "the recomputed set" without reaching into the read module.
  */
 export type PlannedLeg = CanvasLeg
+
+export type LegDayOrder = { id: string; index: number }
+export type AdjacentItemPair = { from: CanvasItem; to: CanvasItem }
 
 /** Road-distance inflation over the straight-line estimate. */
 const ROAD_FACTOR = 1.2
@@ -47,7 +51,7 @@ const EARTH_RADIUS_KM = 6371
  * pair with deterministic ids (`leg-<fromItemId>-<toItemId>`), ready for
  * `replaceLegs`.
  */
-export function recomputeTripLegs(items: CanvasItem[], previousLegs: CanvasLeg[]): CanvasLeg[] {
+export function recomputeTripLegs(items: CanvasItem[], previousLegs: CanvasLeg[], dayOrder?: LegDayOrder[]): CanvasLeg[] {
   const byPair = new Map<string, CanvasLeg>()
   for (const leg of previousLegs) {
     if (!leg.fromItemId || !leg.toItemId) continue
@@ -55,6 +59,18 @@ export function recomputeTripLegs(items: CanvasItem[], previousLegs: CanvasLeg[]
     if (!byPair.has(key)) byPair.set(key, leg)
   }
 
+  const legs: CanvasLeg[] = []
+  for (const pair of adjacentTripPairs(items, dayOrder)) legs.push(plannedLegFor(pair.from, pair.to, byPair))
+  return legs
+}
+
+/**
+ * Return every same-day adjacency plus each consecutive-day boundary. A
+ * missing day order keeps this helper backward-compatible for single-day
+ * callers; repositories pass the authoritative `days.idx` order when they
+ * need cross-day bridges.
+ */
+export function adjacentTripPairs(items: CanvasItem[], dayOrder?: LegDayOrder[]): AdjacentItemPair[] {
   const byDay = new Map<string, CanvasItem[]>()
   for (const item of items) {
     if (!item.dayId) continue
@@ -63,16 +79,33 @@ export function recomputeTripLegs(items: CanvasItem[], previousLegs: CanvasLeg[]
     else byDay.set(item.dayId, [item])
   }
 
-  const legs: CanvasLeg[] = []
-  for (const bucket of byDay.values()) {
-    bucket.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
-    for (let i = 1; i < bucket.length; i += 1) {
-      const from = bucket[i - 1]!
-      const to = bucket[i]!
-      legs.push(plannedLegFor(from, to, byPair))
-    }
+  const order = dayOrder && dayOrder.length > 0
+    ? [...dayOrder]
+        .filter((day) => typeof day?.id === 'string' && day.id !== '')
+        .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id))
+    : [...byDay.keys()].map((id, index) => ({ id, index }))
+  const known = new Set(order.map((day) => day.id))
+  for (const id of byDay.keys()) {
+    if (!known.has(id)) order.push({ id, index: order.length })
   }
-  return legs
+
+  const pairs: AdjacentItemPair[] = []
+  let previous: { day: LegDayOrder; items: CanvasItem[] } | null = null
+  for (const day of order) {
+    const currentItems = [...(byDay.get(day.id) ?? [])].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+    for (let index = 1; index < currentItems.length; index += 1) {
+      const from = currentItems[index - 1]
+      const to = currentItems[index]
+      if (from && to) pairs.push({ from, to })
+    }
+    if (dayOrder && dayOrder.length > 0 && previous && previous.day.index + 1 === day.index) {
+      const from = previous.items.at(-1)
+      const to = currentItems[0]
+      if (from && to) pairs.push({ from, to })
+    }
+    previous = { day, items: currentItems }
+  }
+  return pairs
 }
 
 /** Same-ordered-pair reuse → estimate → empty leg. */
@@ -88,13 +121,14 @@ function plannedLegFor(from: CanvasItem, to: CanvasItem, byPair: Map<string, Can
       distanceKm: same.distanceKm,
       durationMin: same.durationMin,
       polyline: same.polyline,
+      quality: normalizeLegQuality(same.quality, same.distanceKm, same.durationMin, same.polyline),
     }
   }
   const estimate = estimateLeg(from.poi, to.poi)
   if (estimate) {
-    return { id, fromItemId: from.id, toItemId: to.id, mode: 'drive', ...estimate, polyline: null }
+    return { id, fromItemId: from.id, toItemId: to.id, mode: 'drive', ...estimate, polyline: null, quality: 'estimate' }
   }
-  return { id, fromItemId: from.id, toItemId: to.id, mode: 'drive', distanceKm: 0, durationMin: 0, polyline: null }
+  return { id, fromItemId: from.id, toItemId: to.id, mode: 'drive', distanceKm: 0, durationMin: 0, polyline: null, quality: 'pending' }
 }
 
 /**

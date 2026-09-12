@@ -43,6 +43,8 @@ export type WorkbenchItem = {
   pending: boolean
 }
 
+export type LegQuality = 'reference' | 'estimate' | 'measured' | 'pending'
+
 export type WorkbenchDay = {
   id: string
   index: number
@@ -61,6 +63,8 @@ export type WorkbenchLeg = {
   durationMin: number
   /** WGS-84 [lng, lat][] driving geometry from the server; null → straight-line fallback. */
   polyline: [number, number][] | null
+  /** Provenance of the leg metrics; omitted by older API fixtures. */
+  quality?: LegQuality
 }
 
 export type TripCanvasData = {
@@ -264,6 +268,23 @@ export function formatLegLabel(leg: WorkbenchLeg | null): string {
   return parts.join(' · ')
 }
 
+/** Normalize legacy payloads where quality was inferred from geometry. */
+export function legQuality(leg: WorkbenchLeg | null): LegQuality {
+  if (!leg) return 'pending'
+  if (leg.quality === 'reference' || leg.quality === 'estimate' || leg.quality === 'measured' || leg.quality === 'pending') {
+    return leg.quality
+  }
+  if (leg.distanceKm <= 0 && leg.durationMin <= 0) return 'pending'
+  return leg.polyline === null ? 'estimate' : 'measured'
+}
+
+/** Human label shared by canvas/list cards, with approximate provenance. */
+export function formatLegDisplayLabel(leg: WorkbenchLeg | null): string {
+  const label = formatLegLabel(leg)
+  if (!label) return ''
+  return legQuality(leg) === 'reference' || legQuality(leg) === 'estimate' ? `约 ${label}` : label
+}
+
 /** A drive longer than six hours needs a visible split/overnight warning. */
 export const LONG_DRIVE_LIMIT_MINUTES = 6 * 60
 
@@ -289,65 +310,113 @@ export type CrossDayDriveWarning = {
   estimated: true
 }
 
+export type CrossDayTransfer = {
+  id: string
+  fromDayId: string
+  toDayId: string
+  fromItemId: string
+  toItemId: string
+  fromTitle: string
+  toTitle: string
+  distanceKm: number
+  durationMin: number
+  estimated: boolean
+  longDrive: boolean
+  leg: WorkbenchLeg
+}
+
+/** Resolve the incoming bridge between two consecutive day columns. */
+export function crossDayTransfer(
+  previousDay: WorkbenchDay,
+  day: WorkbenchDay,
+  legs: WorkbenchLeg[] = [],
+): CrossDayTransfer | null {
+  if (!previousDay || !day || day.index !== previousDay.index + 1) return null
+  const from = orderedItems(previousDay).at(-1)
+  const to = orderedItems(day)[0]
+  if (!from || !to) return null
+  const stored = legsByPair(legs).get(`${from.id}|${to.id}`)
+  const estimate = !stored ? estimateCrossDayLeg(from, to) : null
+  const leg = stored ?? {
+    id: `leg-${from.id}-${to.id}`,
+    fromItemId: from.id,
+    toItemId: to.id,
+    mode: 'drive',
+    distanceKm: estimate?.distanceKm ?? 0,
+    durationMin: estimate?.durationMin ?? 0,
+    polyline: null,
+    quality: estimate ? 'estimate' as const : 'pending' as const,
+  }
+  return {
+    id: `cross-day-${from.id}-${to.id}`,
+    fromDayId: previousDay.id,
+    toDayId: day.id,
+    fromItemId: from.id,
+    toItemId: to.id,
+    fromTitle: from.title,
+    toTitle: to.title,
+    distanceKm: leg.distanceKm,
+    durationMin: leg.durationMin,
+    estimated: legQuality(leg) !== 'measured',
+    longDrive: leg.mode === 'drive' && leg.durationMin > LONG_DRIVE_LIMIT_MINUTES,
+    leg,
+  }
+}
+
+function estimateCrossDayLeg(from: WorkbenchItem, to: WorkbenchItem): { distanceKm: number; durationMin: number } | null {
+  if (!hasUsablePoi(from) || !hasUsablePoi(to)) return null
+  const distanceKm = Math.round(haversineKm([from.poi.lng, from.poi.lat], [to.poi.lng, to.poi.lat]) * 1.2 * 10) / 10
+  return distanceKm > 0 ? { distanceKm, durationMin: Math.max(1, Math.round(distanceKm)) } : null
+}
+
 /**
  * Find long transfers hidden between day columns. The server intentionally
  * stores legs only within a day, so this projection uses the last POI of one
  * day and the first POI of the next day and labels the result as an estimate.
  */
 export function crossDayDriveWarnings(days: WorkbenchDay[]): CrossDayDriveWarning[] {
+  return crossDayTransfers(days)
+    .filter((transfer) => transfer.longDrive)
+    .map((transfer) => ({
+      id: transfer.id,
+      fromDayId: transfer.fromDayId,
+      toDayId: transfer.toDayId,
+      fromItemId: transfer.fromItemId,
+      toItemId: transfer.toItemId,
+      fromTitle: transfer.fromTitle,
+      toTitle: transfer.toTitle,
+      distanceKm: transfer.distanceKm,
+      durationMin: transfer.durationMin,
+      estimated: true as const,
+    }))
+}
+
+/** All visible incoming bridges, including short cross-day transfers. */
+export function crossDayTransfers(days: WorkbenchDay[], legs: WorkbenchLeg[] = []): CrossDayTransfer[] {
   const orderedDays = (Array.isArray(days) ? days : [])
     .filter((day) => day && typeof day.id === 'string' && day.id !== '' && Number.isInteger(day.index) && day.index >= 0)
     .slice()
     .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id))
-  const warnings: CrossDayDriveWarning[] = []
+  const transfers: CrossDayTransfer[] = []
   for (let index = 0; index + 1 < orderedDays.length; index += 1) {
     const currentDay = orderedDays[index]
     const nextDay = orderedDays[index + 1]
     if (!currentDay || !nextDay || nextDay.index !== currentDay.index + 1) continue
-    const from = lastPoiItem(currentDay)
-    const to = firstPoiItem(nextDay)
-    if (!from || !to) continue
-    const distanceKm = Math.round(haversineKm([from.poi.lng, from.poi.lat], [to.poi.lng, to.poi.lat]) * 1.2 * 10) / 10
-    if (distanceKm <= 0) continue
-    const durationMin = Math.max(1, Math.round(distanceKm))
-    if (durationMin <= LONG_DRIVE_LIMIT_MINUTES) continue
-    warnings.push({
-      id: `cross-day-${from.id}-${to.id}`,
-      fromDayId: currentDay.id,
-      toDayId: nextDay.id,
-      fromItemId: from.id,
-      toItemId: to.id,
-      fromTitle: from.title,
-      toTitle: to.title,
-      distanceKm,
-      durationMin,
-      estimated: true,
-    })
+    const transfer = crossDayTransfer(currentDay, nextDay, legs)
+    if (transfer) transfers.push(transfer)
   }
-  return warnings
+  return transfers
 }
 
 type UsablePoiItem = WorkbenchItem & { poi: NonNullable<WorkbenchItem['poi']> }
 
-function firstPoiItem(day: WorkbenchDay): UsablePoiItem | null {
-  return orderedPoiItems(day)[0] ?? null
-}
-
-function lastPoiItem(day: WorkbenchDay): UsablePoiItem | null {
-  const items = orderedPoiItems(day)
-  return items[items.length - 1] ?? null
-}
-
-function orderedPoiItems(day: WorkbenchDay): UsablePoiItem[] {
-  return day.items
-    .filter(hasUsablePoi)
-    .slice()
-    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
-}
-
 function hasUsablePoi(item: WorkbenchItem): item is UsablePoiItem {
   const poi = item.poi
   return poi !== null && Number.isFinite(poi.lat) && Number.isFinite(poi.lng) && !(poi.lat === 0 && poi.lng === 0)
+}
+
+function orderedItems(day: WorkbenchDay): WorkbenchItem[] {
+  return [...day.items].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
 }
 
 function haversineKm(a: [number, number], b: [number, number]): number {
@@ -705,15 +774,30 @@ function normalizeLeg(value: unknown): WorkbenchLeg | null {
   const fromItemId = typeof record.fromItemId === 'string' ? record.fromItemId : ''
   const toItemId = typeof record.toItemId === 'string' ? record.toItemId : ''
   if (!fromItemId || !toItemId) return null
+  const distanceKm = finiteNumber(record.distanceKm)
+  const durationMin = finiteNumber(record.durationMin)
+  const polyline = normalizePolyline(record.polyline)
   return {
     id: typeof record.id === 'string' ? record.id : '',
     fromItemId,
     toItemId,
     mode: typeof record.mode === 'string' ? record.mode : 'drive',
-    distanceKm: finiteNumber(record.distanceKm),
-    durationMin: finiteNumber(record.durationMin),
-    polyline: normalizePolyline(record.polyline),
+    distanceKm,
+    durationMin,
+    polyline,
+    quality: normalizeWorkbenchLegQuality(record.quality, distanceKm, durationMin, polyline),
   }
+}
+
+function normalizeWorkbenchLegQuality(
+  value: unknown,
+  distanceKm: number,
+  durationMin: number,
+  polyline: [number, number][] | null,
+): LegQuality {
+  if (value === 'reference' || value === 'estimate' || value === 'measured' || value === 'pending') return value
+  if (distanceKm <= 0 && durationMin <= 0) return 'pending'
+  return polyline === null ? 'estimate' : 'measured'
 }
 
 function normalizeRouteRefreshSummary(value: unknown): WorkbenchRouteRefreshSummary | null {

@@ -96,7 +96,7 @@ export async function seedBuiltinTrip(db: SqlDatabase): Promise<SeedResult> {
 
       for (const leg of splitReferenceLegs(dayIndex, day)) {
         await db.run(
-          'INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
           [
             leg.id,
             BUILTIN_TRIP_ID,
@@ -106,6 +106,7 @@ export async function seedBuiltinTrip(db: SqlDatabase): Promise<SeedResult> {
             leg.distanceKm,
             leg.durationMin,
             JSON.stringify(leg.coordinates),
+            'reference',
           ] as SqlValue[],
         )
       }
@@ -132,7 +133,7 @@ async function repairBuiltinTripMetadata(db: SqlDatabase): Promise<void> {
   if (trip.rows.length === 0) return
 
   const legRows = await db.run(
-    'SELECT id, from_item_id, to_item_id, distance_km, duration_min, polyline FROM legs WHERE trip_id = ?',
+    'SELECT id, from_item_id, to_item_id, distance_km, duration_min, polyline, quality FROM legs WHERE trip_id = ?',
     [BUILTIN_TRIP_ID],
   )
   const legsById = new Map(legRows.rows.map((row) => [String(row.id ?? ''), row]))
@@ -173,13 +174,14 @@ async function repairBuiltinTripMetadata(db: SqlDatabase): Promise<void> {
         // The prior seed stored one aggregate polyline on the base row. It is
         // safe to normalize only this untouched canonical representation.
         await db.run(
-          'UPDATE legs SET from_item_id = ?, to_item_id = ?, distance_km = ?, duration_min = ?, polyline = ? WHERE id = ? AND trip_id = ?',
+          'UPDATE legs SET from_item_id = ?, to_item_id = ?, distance_km = ?, duration_min = ?, polyline = ?, quality = ? WHERE id = ? AND trip_id = ?',
           [
             base.fromItemId,
             base.toItemId,
             base.distanceKm,
             base.durationMin,
             JSON.stringify(base.coordinates),
+            'reference',
             base.id,
             BUILTIN_TRIP_ID,
           ] as SqlValue[],
@@ -274,7 +276,7 @@ function samePolyline(value: unknown, expected: readonly (readonly [number, numb
 
 async function insertRouteLegIfMissing(db: SqlDatabase, leg: SeedRouteLeg): Promise<void> {
   await db.run(
-    'INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
+    'INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING',
     [
       leg.id,
       BUILTIN_TRIP_ID,
@@ -284,6 +286,7 @@ async function insertRouteLegIfMissing(db: SqlDatabase, leg: SeedRouteLeg): Prom
       leg.distanceKm,
       leg.durationMin,
       JSON.stringify(leg.coordinates),
+      'reference',
     ] as SqlValue[],
   )
 }

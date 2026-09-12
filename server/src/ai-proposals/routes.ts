@@ -199,13 +199,9 @@ export function registerAiProposalRoutes(app: Hono<AppEnv>, options: AiProposalR
     return c.json({ ok: true })
   }
 
-  // Keep the shorter alias for integrations that do not use the AI namespace.
   app.post('/api/trips/:id/ai/proposals', create)
-  app.post('/api/trips/:id/proposals', create)
   app.post('/api/trips/:id/ai/proposals/:proposalId/apply', apply)
-  app.post('/api/trips/:id/proposals/:proposalId/apply', apply)
   app.delete('/api/trips/:id/ai/proposals/:proposalId', cancel)
-  app.delete('/api/trips/:id/proposals/:proposalId', cancel)
 }
 
 function buildProposalPrompt(tripId: string, input: ProposalRequest): string {

@@ -10,7 +10,7 @@
  * see src/services/workbenchMap.ts for the drawing side.
  */
 
-import { dayAccentColor, dayDateLabel, legsByPair, weekdayLabel, type WorkbenchDay, type WorkbenchLeg } from './workbench'
+import { crossDayTransfer, dayAccentColor, dayDateLabel, legQuality, legsByPair, weekdayLabel, type WorkbenchDay, type WorkbenchLeg } from './workbench'
 
 export type LatLng = [number, number]
 
@@ -42,7 +42,7 @@ export function dayItemsInOrder(day: WorkbenchDay): WorkbenchDay['items'] {
  * to a straight line between the two POIs; a gap without any geometry breaks
  * the chain and starts a new segment.
  */
-export function dayRouteSegments(day: WorkbenchDay, legs: WorkbenchLeg[]): LatLng[][] {
+export function dayRouteSegments(day: WorkbenchDay, legs: WorkbenchLeg[], previousDay?: WorkbenchDay): LatLng[][] {
   const lookup = legsByPair(legs)
   const items = dayItemsInOrder(day)
   const segments: LatLng[][] = []
@@ -57,6 +57,16 @@ export function dayRouteSegments(day: WorkbenchDay, legs: WorkbenchLeg[]): LatLn
       const last = current[current.length - 1]
       if (!last || last[0] !== point[0] || last[1] !== point[1]) current.push(point)
     }
+  }
+  const incoming = previousDay ? crossDayTransfer(previousDay, day, legs) : null
+  if (incoming && items.length > 0) {
+    const geometry = legPolylineLatLng(incoming.leg)
+    const previousItems = previousDay ? dayItemsInOrder(previousDay) : []
+    const from = previousItems[previousItems.length - 1]
+    const fromLL = from ? itemCoords(from) : null
+    const toLL = itemCoords(items[0]!)
+    if (geometry) push(geometry)
+    else if (fromLL && toLL) push([fromLL, toLL])
   }
   for (let i = 1; i < items.length; i++) {
     const from = items[i - 1]
@@ -76,8 +86,8 @@ export function dayRouteSegments(day: WorkbenchDay, legs: WorkbenchLeg[]): LatLn
 }
 
 /** All draw coordinates for a day (segments flattened + POI points) — fit bounds input. */
-export function dayFitCoordinates(day: WorkbenchDay, legs: WorkbenchLeg[]): LatLng[] {
-  const points = dayRouteSegments(day, legs).flat()
+export function dayFitCoordinates(day: WorkbenchDay, legs: WorkbenchLeg[], previousDay?: WorkbenchDay): LatLng[] {
+  const points = dayRouteSegments(day, legs, previousDay).flat()
   for (const item of dayItemsInOrder(day)) {
     const coords = itemCoords(item)
     if (coords) points.push(coords)
@@ -87,14 +97,16 @@ export function dayFitCoordinates(day: WorkbenchDay, legs: WorkbenchLeg[]): LatL
 
 /** Whole-trip fit coordinates (every day). */
 export function tripFitCoordinates(days: WorkbenchDay[], legs: WorkbenchLeg[]): LatLng[] {
-  return days.flatMap((day) => dayFitCoordinates(day, legs))
+  return days.flatMap((day, index) => dayFitCoordinates(day, legs, days[index - 1]))
 }
 
 /** Sum of the leg distances between a day's adjacent items ("日里程"). */
-export function dayMileageKm(day: WorkbenchDay, legs: WorkbenchLeg[]): number {
+export function dayMileageKm(day: WorkbenchDay, legs: WorkbenchLeg[], previousDay?: WorkbenchDay): number {
   const lookup = legsByPair(legs)
   const items = dayItemsInOrder(day)
   let total = 0
+  const incoming = previousDay ? crossDayTransfer(previousDay, day, legs) : null
+  if (incoming) total += incoming.distanceKm
   for (let i = 1; i < items.length; i++) {
     const leg = lookup.get(`${items[i - 1]?.id}|${items[i]?.id}`) ?? null
     if (leg) total += leg.distanceKm
@@ -108,16 +120,24 @@ export type RouteDisplayQuality = 'measured' | 'estimate' | 'pending'
  * Route quality for map labels. A missing/empty leg remains pending; a leg
  * without geometry is an estimate even when it has usable numeric metrics.
  */
-export function dayRouteQuality(day: WorkbenchDay, legs: WorkbenchLeg[]): RouteDisplayQuality {
+export function dayRouteQuality(day: WorkbenchDay, legs: WorkbenchLeg[], previousDay?: WorkbenchDay): RouteDisplayQuality {
   const lookup = legsByPair(legs)
   const items = dayItemsInOrder(day)
   let estimated = false
+  let hasLeg = false
+  const incoming = previousDay ? crossDayTransfer(previousDay, day, legs) : null
+  if (incoming) {
+    if (incoming.distanceKm <= 0 && incoming.durationMin <= 0) return 'pending'
+    hasLeg = true
+    if (legQuality(incoming.leg) !== 'measured') estimated = true
+  }
   for (let i = 1; i < items.length; i += 1) {
     const leg = lookup.get(`${items[i - 1]?.id}|${items[i]?.id}`)
     if (!leg || (leg.distanceKm <= 0 && leg.durationMin <= 0)) return 'pending'
-    if (leg.polyline === null) estimated = true
+    hasLeg = true
+    if (legQuality(leg) !== 'measured') estimated = true
   }
-  return estimated ? 'estimate' : 'measured'
+  return !hasLeg ? 'pending' : estimated ? 'estimate' : 'measured'
 }
 
 /** "10.02 周五 76km" — same date/weekday labels as the canvas day header. */

@@ -11,9 +11,11 @@ import { BedDouble, Car, Trash2, WandSparkles } from 'lucide-react'
 import {
   dayAccentColor,
   dayDateLabel,
-  crossDayDriveWarnings,
+  crossDayTransfers,
+  formatLegDisplayLabel,
   formatLegLabel,
   isLongDriveLeg,
+  legQuality,
   legsByPair,
   longDriveWarningText,
   weekdayLabel,
@@ -21,7 +23,7 @@ import {
   type WorkbenchItem,
   type WorkbenchLeg,
 } from '../../domain/workbench'
-import { CanvasCard } from './CanvasColumn'
+import { CanvasCard, CrossDayLeg } from './CanvasColumn'
 import CrossDayDriveWarning from './CrossDayDriveWarning'
 import EditableTheme from './EditableTheme'
 
@@ -67,8 +69,8 @@ export default function ListViewColumn({
   }, [days, highlightItemId])
 
   const selected = days.find((day) => day.id === selectedId) ?? days[0] ?? null
-  const crossDayWarning = selected
-    ? crossDayDriveWarnings(days).find((warning) => warning.fromDayId === selected.id)
+  const crossDayTransfer = selected
+    ? crossDayTransfers(days, legs).find((transfer) => transfer.toDayId === selected.id)
     : undefined
 
   return (
@@ -143,7 +145,7 @@ export default function ListViewColumn({
           onOptimizeDay={onOptimizeDay}
           onCardClick={onCardClick}
           highlightItemId={highlightItemId}
-          crossDayWarning={crossDayWarning}
+          crossDayTransfer={crossDayTransfer}
         />
       )}
     </div>
@@ -158,7 +160,7 @@ function DayTimeline({
   onOptimizeDay,
   onCardClick,
   highlightItemId,
-  crossDayWarning,
+  crossDayTransfer,
 }: {
   day: WorkbenchDay
   legLookup: Map<string, WorkbenchLeg>
@@ -167,7 +169,7 @@ function DayTimeline({
   onOptimizeDay?: (day: WorkbenchDay) => void
   onCardClick?: (itemId: string) => void
   highlightItemId?: string | null
-  crossDayWarning?: ReturnType<typeof crossDayDriveWarnings>[number]
+  crossDayTransfer?: ReturnType<typeof crossDayTransfers>[number]
 }) {
   const accent = dayAccentColor(day.color, day.index)
   const dateLabel = dayDateLabel(day.date) || `D${day.index + 1}`
@@ -218,9 +220,10 @@ function DayTimeline({
         </div>
         {onThemeSave && <EditableTheme dayId={day.id} theme={day.theme} onSave={onThemeSave} />}
       </header>
-      {crossDayWarning && (
-        <div className="px-[14px] pt-[12px]">
-          <CrossDayDriveWarning warning={crossDayWarning} />
+      {crossDayTransfer && (
+        <div className="flex flex-col gap-[6px] px-[14px] pt-[12px]">
+          <CrossDayLeg transfer={crossDayTransfer} />
+          {crossDayTransfer.longDrive && <CrossDayDriveWarning warning={crossDayTransfer} />}
         </div>
       )}
       <div className="flex flex-col gap-[12px] p-[14px]">
@@ -314,13 +317,14 @@ function LegRow({ leg }: { leg: WorkbenchLeg | null }) {
   if (!leg) return null
   const pending = !label && leg.distanceKm <= 0 && leg.durationMin <= 0
   if (!label && !pending) return null
-  const estimated = !pending && leg.polyline === null
+  const quality = legQuality(leg)
+  const estimated = !pending && (quality === 'reference' || quality === 'estimate')
   const longDrive = !pending && isLongDriveLeg(leg)
-  const displayLabel = pending ? '路线待查询' : estimated ? `约 ${label}` : label
+  const displayLabel = pending ? '路线待查询' : formatLegDisplayLabel(leg)
   return (
     <div
       data-list-leg={leg.id}
-      data-leg-quality={pending ? 'pending' : estimated ? 'estimate' : 'measured'}
+      data-leg-quality={pending ? 'pending' : quality}
       data-leg-warning={longDrive ? leg.id : undefined}
       aria-label={pending ? '路线待查询' : estimated ? `预估路线：${displayLabel}` : `驾车路线：${displayLabel}`}
       title={longDrive ? longDriveWarningText(leg) : pending ? '路线待查询' : estimated ? '直线估算，路线服务返回后会更新' : '高德驾车路线'}

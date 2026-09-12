@@ -37,7 +37,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
 
   async listLegRows(tripId: string): Promise<LegRow[]> {
     const { rows } = await this.db.run(
-      'SELECT id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline FROM legs WHERE trip_id = ?',
+      'SELECT id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality FROM legs WHERE trip_id = ?',
       [tripId],
     )
     return rows as unknown as LegRow[]
@@ -129,11 +129,12 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
     await this.assertNoForeignOwner('items', leg.fromItemId, 'item', tripId)
     await this.assertNoForeignOwner('items', leg.toItemId, 'item', tripId)
     await this.db.run(
-      `INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          from_item_id = excluded.from_item_id, to_item_id = excluded.to_item_id, mode = excluded.mode,
-         distance_km = excluded.distance_km, duration_min = excluded.duration_min, polyline = excluded.polyline
+         distance_km = excluded.distance_km, duration_min = excluded.duration_min, polyline = excluded.polyline,
+         quality = excluded.quality
        WHERE legs.trip_id = excluded.trip_id`,
       [
         leg.id,
@@ -144,6 +145,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
         leg.distanceKm,
         leg.durationMin,
         leg.polyline,
+        legQualityForWrite(leg.quality, leg.distanceKm, leg.durationMin, leg.polyline),
       ] as SqlValue[],
     )
     await this.assertCurrentOwner('legs', leg.id, 'leg', tripId)
@@ -245,6 +247,17 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
       throw new Error(`upserted ${entity} row "${id}" disappeared`)
     }
   }
+}
+
+function legQualityForWrite(
+  quality: TripPatchLegUpsert['quality'],
+  distanceKm: number | null,
+  durationMin: number | null,
+  polyline: string | null,
+): NonNullable<TripPatchLegUpsert['quality']> {
+  if (quality) return quality
+  if ((distanceKm ?? 0) <= 0 && (durationMin ?? 0) <= 0) return 'pending'
+  return polyline === null ? 'estimate' : 'measured'
 }
 
 /** Factory for the production driver over the shared SqlDatabase instance. */

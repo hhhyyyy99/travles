@@ -2,7 +2,7 @@ import type { RoutePoint, RouteLegResult, RouteLegSearch } from './types.js'
 import { mapItemRow, mapLegRow } from '../days/repository.js'
 import type { CanvasItem, CanvasLeg } from '../days/types.js'
 import type { ItemsAdminStoreDriver } from '../items-admin/types.js'
-import { estimateLeg } from '../items-admin/legs.js'
+import { adjacentTripPairs, estimateLeg, type LegDayOrder } from '../items-admin/legs.js'
 import { gcj02ToWgs84LngLat, wgs84ToGcj02LngLat } from './geo.js'
 
 const DEFAULT_LOOKUP_TIMEOUT_MS = 2_500
@@ -211,10 +211,15 @@ export async function refreshTripLegs(
   provider: RouteLegSearch = routeAmapLeg,
   options: RouteRefreshOptions = {},
 ): Promise<{ ok: true; legs: CanvasLeg[]; summary: RouteRefreshSummary } | { ok: false; error: string }> {
+  let dayRows: Awaited<ReturnType<ItemsAdminStoreDriver['listDayRows']>>
   let itemRows: Awaited<ReturnType<ItemsAdminStoreDriver['listItemRows']>>
   let legRows: Awaited<ReturnType<ItemsAdminStoreDriver['listLegRows']>>
   try {
-    ;[itemRows, legRows] = await Promise.all([driver.listItemRows(tripId), driver.listLegRows(tripId)])
+    ;[dayRows, itemRows, legRows] = await Promise.all([
+      driver.listDayRows(tripId),
+      driver.listItemRows(tripId),
+      driver.listLegRows(tripId),
+    ])
   } catch {
     return { ok: false, error: '读取路线数据失败。' }
   }
@@ -226,22 +231,13 @@ export async function refreshTripLegs(
     .map(mapLegRow)
     .filter((leg): leg is CanvasLeg => leg !== null)
   const byPair = new Map(previous.map((leg) => [`${leg.fromItemId}|${leg.toItemId}`, leg]))
-  const byDay = new Map<string, CanvasItem[]>()
-  for (const item of items) {
-    const bucket = byDay.get(item.dayId)
-    if (bucket) bucket.push(item)
-    else byDay.set(item.dayId, [item])
-  }
-
-  const pairs: Array<{ from: CanvasItem; to: CanvasItem; old: CanvasLeg | undefined }> = []
-  for (const bucket of byDay.values()) {
-    bucket.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
-    for (let index = 1; index < bucket.length; index += 1) {
-      const from = bucket[index - 1]!
-      const to = bucket[index]!
-      pairs.push({ from, to, old: byPair.get(`${from.id}|${to.id}`) })
-    }
-  }
+  const dayOrder: LegDayOrder[] = (Array.isArray(dayRows) ? dayRows : [])
+    .map((row) => ({ id: typeof row?.id === 'string' ? row.id : '', index: Number(row?.idx) }))
+    .filter((day): day is LegDayOrder => day.id !== '' && Number.isInteger(day.index) && day.index >= 0)
+  const pairs = adjacentTripPairs(items, dayOrder).map((pair) => ({
+    ...pair,
+    old: byPair.get(`${pair.from.id}|${pair.to.id}`),
+  }))
 
   const now = options.now ?? Date.now
   const cache = options.cache ?? new RouteLookupCache()
@@ -285,6 +281,7 @@ export async function refreshTripLegs(
         distanceKm: route.distanceKm,
         durationMin: route.durationMin,
         polyline: route.polyline,
+        quality: 'measured',
       })
       continue
     }
@@ -293,7 +290,9 @@ export async function refreshTripLegs(
   }
 
   try {
-    await driver.replaceLegs(tripId, next)
+    await driver.withTransaction(async (transactionDriver) => {
+      await transactionDriver.replaceLegs(tripId, next)
+    })
   } catch {
     return { ok: false, error: '保存路线失败。' }
   }
@@ -326,6 +325,7 @@ function fallbackLeg(from: CanvasItem, to: CanvasItem, old: CanvasLeg | undefine
       distanceKm: old.distanceKm,
       durationMin: old.durationMin,
       polyline: old.polyline,
+      quality: old.quality,
     }
   }
   return {
@@ -336,6 +336,7 @@ function fallbackLeg(from: CanvasItem, to: CanvasItem, old: CanvasLeg | undefine
     distanceKm: estimate?.distanceKm ?? 0,
     durationMin: estimate?.durationMin ?? 0,
     polyline: null,
+    quality: estimate ? 'estimate' : 'pending',
   }
 }
 

@@ -5,6 +5,7 @@
  * `nextWriteError` simulates storage failures.
  */
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
+import { normalizeLegQuality } from '../days/repository.js'
 import type { ItemFullUpsert, ItemOrderPatch, ItemsAdminStoreDriver } from './types.js'
 import type { PlannedLeg } from './legs.js'
 
@@ -110,6 +111,7 @@ export class MemoryItemsAdminStoreDriver implements ItemsAdminStoreDriver {
         distance_km: leg.distanceKm,
         duration_min: leg.durationMin,
         polyline: leg.polyline === null ? null : JSON.stringify(leg.polyline),
+        quality: normalizeLegQuality(leg.quality, leg.distanceKm, leg.durationMin, leg.polyline),
       })
     }
   }

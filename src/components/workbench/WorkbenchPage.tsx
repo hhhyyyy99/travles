@@ -342,37 +342,55 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     setActionError(error)
   }
 
+  type ItemMutationResult<T> = { ok: true; data: T } | { ok: false; error: string }
+
+  /** Shared optimistic item-write lifecycle used by layout and field edits. */
+  const runItemMutation = async <T,>(
+    snapshot: TripCanvasData | null,
+    optimistic: () => void,
+    request: () => Promise<ItemMutationResult<T>>,
+    reconcile: (data: T) => void,
+  ): Promise<T | null> => {
+    setActionError('')
+    optimistic()
+    const result = await request()
+    if (!result.ok) {
+      rollback(snapshot, result.error)
+      return null
+    }
+    reconcile(result.data)
+    return result.data
+  }
+
   const findItem = (days: WorkbenchDay[], itemId: string): WorkbenchItem | undefined =>
     days.flatMap((day) => day.items).find((item) => item.id === itemId)
 
-  const handleMoveItem = (itemId: string, toDayId: string, toIndex: number) => withPendingMutation(async () => {
-    const snapshot = dataRef.current
-    setActionError('')
-    patchDays((days) => applyItemMove(days, itemId, toDayId, toIndex))
-    const result = await moveWorkbenchItem(tripId, itemId, { dayId: toDayId, index: toIndex })
-    if (!result.ok) {
-      rollback(snapshot, result.error)
-      return
-    }
-    patchLegs(result.data.legs)
-    requestRouteRefresh()
-  })
+  const handleMoveItem = (itemId: string, toDayId: string, toIndex: number) =>
+    withPendingMutation(() => runItemMutation(
+      dataRef.current,
+      () => patchDays((days) => applyItemMove(days, itemId, toDayId, toIndex)),
+      () => moveWorkbenchItem(tripId, itemId, { dayId: toDayId, index: toIndex }),
+      (data) => {
+        patchLegs(data.legs)
+        requestRouteRefresh()
+      },
+    ))
 
   const handleCopyItem = (itemId: string, toDayId: string, toIndex?: number) => withPendingMutation(async () => {
     const snapshot = dataRef.current
     const source = snapshot ? findItem(snapshot.days, itemId) : undefined
-    if (!source) return
+    if (!source) return null
     const temp: WorkbenchItem = { ...source, id: tempItemId('pending-copy'), dayId: toDayId, pending: true }
-    setActionError('')
-    patchDays((days) => applyItemInsert(days, temp, toDayId, toIndex))
-    const result = await copyWorkbenchItem(tripId, itemId, { dayId: toDayId, index: toIndex })
-    if (!result.ok) {
-      rollback(snapshot, result.error)
-      return
-    }
-    patchDays((days) => applyItemReplace(days, temp.id, result.data.item))
-    patchLegs(result.data.legs)
-    requestRouteRefresh()
+    return runItemMutation(
+      snapshot,
+      () => patchDays((days) => applyItemInsert(days, temp, toDayId, toIndex)),
+      () => copyWorkbenchItem(tripId, itemId, { dayId: toDayId, index: toIndex }),
+      (data) => {
+        patchDays((days) => applyItemReplace(days, temp.id, data.item))
+        patchLegs(data.legs)
+        requestRouteRefresh()
+      },
+    )
   })
 
   const handleCreateCard = (input: WorkbenchItemCreateInput): Promise<WorkbenchItem | null> => withPendingMutation(async () => {
@@ -389,17 +407,17 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
       images: input.images ?? [],
       pending: true,
     }
-    setActionError('')
-    patchDays((days) => applyItemInsert(days, temp, input.dayId, input.index))
-    const result = await createWorkbenchItem(tripId, input)
-    if (!result.ok) {
-      rollback(snapshot, result.error)
-      return null
-    }
-    patchDays((days) => applyItemReplace(days, temp.id, result.data.item))
-    patchLegs(result.data.legs)
-    requestRouteRefresh()
-    return result.data.item
+    const result = await runItemMutation(
+      snapshot,
+      () => patchDays((days) => applyItemInsert(days, temp, input.dayId, input.index)),
+      () => createWorkbenchItem(tripId, input),
+      (data) => {
+        patchDays((days) => applyItemReplace(days, temp.id, data.item))
+        patchLegs(data.legs)
+        requestRouteRefresh()
+      },
+    )
+    return result?.item ?? null
   })
 
   /** Schedule a recommendation/stash item through the same card API as manual adds. */
@@ -430,45 +448,39 @@ export default function WorkbenchPage({ tripId, onBack }: { tripId: string; onBa
     return true
   }
 
-  const handleDeleteItem = (itemId: string) => withPendingMutation(async () => {
-    const snapshot = dataRef.current
-    setActionError('')
-    patchDays((days) => applyItemRemove(days, itemId))
-    const result = await deleteWorkbenchItem(tripId, itemId)
-    if (!result.ok) {
-      rollback(snapshot, result.error)
-      return
-    }
-    patchLegs(result.data.legs)
-    requestRouteRefresh()
-  })
+  const handleDeleteItem = (itemId: string) =>
+    withPendingMutation(() => runItemMutation(
+      dataRef.current,
+      () => patchDays((days) => applyItemRemove(days, itemId)),
+      () => deleteWorkbenchItem(tripId, itemId),
+      (data) => {
+        patchLegs(data.legs)
+        requestRouteRefresh()
+      },
+    ))
 
-  const handleNoteSave = (itemId: string, note: string) => withPendingMutation(async () => {
-    const snapshot = dataRef.current
-    setActionError('')
-    patchDays((days) => applyItemPatch(days, itemId, { note }))
-    const result = await updateWorkbenchItem(tripId, itemId, { note })
-    if (!result.ok) {
-      rollback(snapshot, result.error)
-      return
-    }
-    // Server normalization (e.g. image captions) wins on field edits.
-    patchDays((days) => applyItemPatch(days, itemId, result.data))
-  })
+  const handleNoteSave = (itemId: string, note: string) =>
+    withPendingMutation(() => runItemMutation(
+      dataRef.current,
+      () => patchDays((days) => applyItemPatch(days, itemId, { note })),
+      () => updateWorkbenchItem(tripId, itemId, { note }),
+      (data) => {
+        // Server normalization (e.g. image captions) wins on field edits.
+        patchDays((days) => applyItemPatch(days, itemId, data))
+      },
+    ))
 
   const handleImageAdd = (itemId: string, url: string) => withPendingMutation(async () => {
     const snapshot = dataRef.current
     const current = snapshot ? findItem(snapshot.days, itemId) : undefined
     if (!current) return
     const images = [...current.images, { url, caption: '' }]
-    setActionError('')
-    patchDays((days) => applyItemPatch(days, itemId, { images }))
-    const result = await updateWorkbenchItem(tripId, itemId, { images })
-    if (!result.ok) {
-      rollback(snapshot, result.error)
-      return
-    }
-    patchDays((days) => applyItemPatch(days, itemId, result.data))
+    await runItemMutation(
+      snapshot,
+      () => patchDays((days) => applyItemPatch(days, itemId, { images })),
+      () => updateWorkbenchItem(tripId, itemId, { images }),
+      (data) => patchDays((days) => applyItemPatch(days, itemId, data)),
+    )
   })
 
   const aiVisible = compactViewport ? mobilePane === 'chat' : !layout.aiCollapsed
