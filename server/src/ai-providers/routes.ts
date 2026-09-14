@@ -191,6 +191,10 @@ function parseProviderInput(body: Record<string, unknown>, updating: boolean): {
   if (!updating && (typeof body.apiKey !== 'string' || body.apiKey.trim() === '')) return { ok: false, error: 'API Key 不能为空' }
   if (body.apiKey !== undefined && typeof body.apiKey !== 'string') return { ok: false, error: 'API Key 必须是字符串' }
   if (body.isDefault !== undefined && typeof body.isDefault !== 'boolean') return { ok: false, error: 'isDefault 必须是布尔值' }
+  const thinking = body.thinking
+  if (thinking !== undefined && (typeof thinking !== 'string' || (thinking !== 'off' && thinking !== 'low' && thinking !== 'medium' && thinking !== 'high'))) {
+    return { ok: false, error: '思考档位必须是 off、low、medium 或 high' }
+  }
   return {
     ok: true,
     input: {
@@ -201,6 +205,7 @@ function parseProviderInput(body: Record<string, unknown>, updating: boolean): {
       ...(body.apiKey !== undefined && body.apiKey.trim() !== '' ? { apiKey: body.apiKey } : {}),
       ...(body.headers !== undefined ? { headers: headers.headers } : {}),
       ...(body.isDefault !== undefined ? { isDefault: body.isDefault } : {}),
+      ...(thinking !== undefined ? { thinking: thinking as 'off' | 'low' | 'medium' | 'high' } : {}),
     },
   }
 }
@@ -215,6 +220,7 @@ function candidateProvider(input: AiProviderInput, current?: Pick<AiProvider, 'i
     modelId: input.modelId.trim(),
     headers: input.headers ?? {},
     protocol: input.protocol,
+    thinking: input.thinking ?? 'off',
     isDefault: input.isDefault ?? current?.isDefault ?? false,
     capabilities: null,
     lastTestedAt: null,

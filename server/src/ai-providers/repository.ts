@@ -8,9 +8,15 @@ import type {
   ProviderCapabilities,
   ProviderProtocol,
   PublicAiProvider,
+  ThinkingLevel,
 } from './types.js'
 
 const PROTOCOLS: ProviderProtocol[] = ['chat-completions', 'responses']
+const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high']
+
+function normalizeThinking(value: unknown): ThinkingLevel {
+  return THINKING_LEVELS.includes(value as ThinkingLevel) ? (value as ThinkingLevel) : 'off'
+}
 
 export class AiProviderRepository {
   constructor(private readonly driver: AiProviderStoreDriver) {}
@@ -54,6 +60,7 @@ export class AiProviderRepository {
       model_id: input.modelId.trim(),
       headers: JSON.stringify(headers.headers),
       protocol: input.protocol,
+      thinking: normalizeThinking(input.thinking),
       is_default: input.isDefault || existing.length === 0 ? 1 : 0,
       capabilities: JSON.stringify(capabilities),
       last_tested_at: capabilities.testedAt,
@@ -87,6 +94,7 @@ export class AiProviderRepository {
       model_id: input.modelId.trim(),
       headers: JSON.stringify(headers.headers),
       protocol: input.protocol,
+      ...(input.thinking !== undefined ? { thinking: normalizeThinking(input.thinking) } : {}),
       capabilities: JSON.stringify(capabilities),
       last_tested_at: capabilities.testedAt,
       last_error: capabilities.error ?? null,
@@ -195,6 +203,7 @@ export function validateProviderInput(input: AiProviderInput, creating: boolean)
   if (typeof input.baseUrl !== 'string' || !isHttpUrl(input.baseUrl)) return 'Base URL 必须是 http(s) 地址'
   if (typeof input.modelId !== 'string' || input.modelId.trim() === '') return '模型 ID 不能为空'
   if (!PROTOCOLS.includes(input.protocol)) return '协议格式必须是 chat-completions 或 responses'
+  if (input.thinking !== undefined && !THINKING_LEVELS.includes(input.thinking)) return '思考档位必须是 off、low、medium 或 high'
   if (creating && (typeof input.apiKey !== 'string' || input.apiKey.trim() === '')) return 'API Key 不能为空'
   if (input.apiKey !== undefined && typeof input.apiKey !== 'string') return 'API Key 必须是字符串'
   const headers = parseHeaders(input.headers)
@@ -205,6 +214,7 @@ export function validateProviderInput(input: AiProviderInput, creating: boolean)
 function mapRow(row: AiProviderRow): AiProvider | null {
   if (!row || typeof row.id !== 'string' || row.id === '') return null
   const protocol: ProviderProtocol = row.protocol === 'responses' ? 'responses' : 'chat-completions'
+  const thinking: ThinkingLevel = normalizeThinking(row.thinking)
   let headers: Record<string, string> = {}
   try {
     const parsed = row.headers ? JSON.parse(row.headers) : {}
@@ -236,6 +246,7 @@ function mapRow(row: AiProviderRow): AiProvider | null {
     modelId: typeof row.model_id === 'string' ? row.model_id : '',
     headers,
     protocol,
+    thinking,
     isDefault: row.is_default === 1 || (row.is_default as unknown) === true,
     capabilities,
     lastTestedAt: typeof row.last_tested_at === 'string' ? row.last_tested_at : null,

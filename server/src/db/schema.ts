@@ -123,6 +123,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     model_id TEXT NOT NULL DEFAULT '',
     headers TEXT,
     protocol TEXT NOT NULL DEFAULT 'chat-completions',
+    thinking TEXT NOT NULL DEFAULT 'off',
     is_default INTEGER NOT NULL DEFAULT 0,
     capabilities TEXT,
     last_tested_at TEXT,
@@ -167,7 +168,7 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
   }
   // Ticket 12: provider capability state is persisted so a restart keeps the
   // last successful probe and the explicit JSON-text fallback notice.
-  for (const column of ['capabilities TEXT', 'last_tested_at TEXT', 'last_error TEXT']) {
+  for (const column of ['capabilities TEXT', 'last_tested_at TEXT', 'last_error TEXT', "thinking TEXT NOT NULL DEFAULT 'off'"]) {
     try {
       await db.run(`ALTER TABLE ai_providers ADD COLUMN ${column}`)
     } catch {

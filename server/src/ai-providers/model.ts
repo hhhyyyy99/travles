@@ -68,6 +68,7 @@ export function providerFromEnv(env: NodeJS.ProcessEnv = process.env): AiProvide
     modelId: env.AI_MODEL?.trim() || 'gpt-4o-mini',
     headers,
     protocol: env.AI_PROTOCOL === 'responses' ? 'responses' : 'chat-completions',
+    thinking: 'off',
     isDefault: true,
     capabilities: {
       streaming: true,
@@ -158,6 +159,10 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
   const fallback = !capabilities.functionCalling
   const messages = options.prompt.flatMap((message) => toChatMessage(message, fallback))
   const tools = capabilities.functionCalling ? options.tools?.map((tool) => toTool(tool, provider.protocol)) : undefined
+  // Thinking budget: wire-format-only. `off` (the default for env/legacy
+  // providers) emits no reasoning field at all; `low/medium/high` map to the
+  // provider's native effort control. No vendor-private flags are sent.
+  const effort = provider.thinking === 'low' || provider.thinking === 'medium' || provider.thinking === 'high' ? provider.thinking : 'off'
   if (provider.protocol === 'responses') {
     const system = options.prompt.filter((message) => message.role === 'system').map(contentOf).join('\n\n')
     const input = options.prompt.filter((message) => message.role !== 'system').flatMap((message) => toResponseInput(message, fallback))
@@ -172,6 +177,7 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
         ...(instructions ? { instructions } : {}),
         input,
         stream: capabilities.streaming,
+        ...(effort !== 'off' ? { reasoning: { effort } } : {}),
         ...(tools && tools.length > 0 ? { tools } : {}),
         ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
         ...(options.maxOutputTokens !== undefined ? { max_output_tokens: options.maxOutputTokens } : {}),
@@ -187,6 +193,7 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
       model: provider.modelId,
       messages: prompt,
       stream: capabilities.streaming,
+      ...(effort !== 'off' ? { reasoning_effort: effort } : {}),
       ...(tools && tools.length > 0 ? { tools, tool_choice: options.toolChoice ? toToolChoice(options.toolChoice) : 'auto' } : {}),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.topP !== undefined ? { top_p: options.topP } : {}),

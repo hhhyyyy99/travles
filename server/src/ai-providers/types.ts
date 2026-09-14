@@ -2,6 +2,8 @@ import type { SqlValue } from '../db/driver.js'
 
 export type ProviderProtocol = 'chat-completions' | 'responses'
 
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high'
+
 export type ProviderCapabilities = {
   streaming: boolean
   functionCalling: boolean
@@ -18,6 +20,7 @@ export type AiProviderRow = {
   model_id: string
   headers: string | null
   protocol: string
+  thinking: string
   is_default: number
   capabilities: string | null
   last_tested_at: string | null
@@ -34,6 +37,7 @@ export type AiProvider = {
   modelId: string
   headers: Record<string, string>
   protocol: ProviderProtocol
+  thinking: ThinkingLevel
   isDefault: boolean
   capabilities: ProviderCapabilities | null
   lastTestedAt: string | null
@@ -56,6 +60,7 @@ export type AiProviderInput = {
   modelId: string
   headers?: Record<string, string>
   protocol: ProviderProtocol
+  thinking?: ThinkingLevel
   isDefault?: boolean
 }
 

@@ -7,7 +7,7 @@ export class SqliteAiProviderStoreDriver implements AiProviderStoreDriver {
 
   async listRows(): Promise<AiProviderRow[]> {
     const result = await this.db.run(
-      `SELECT id, name, base_url, api_key, model_id, headers, protocol, is_default,
+      `SELECT id, name, base_url, api_key, model_id, headers, protocol, thinking, is_default,
         capabilities, last_tested_at, last_error, created_at, updated_at
        FROM ai_providers ORDER BY is_default DESC, updated_at DESC, created_at ASC`,
     )
@@ -16,7 +16,7 @@ export class SqliteAiProviderStoreDriver implements AiProviderStoreDriver {
 
   async getRow(id: string): Promise<AiProviderRow | null> {
     const result = await this.db.run(
-      `SELECT id, name, base_url, api_key, model_id, headers, protocol, is_default,
+      `SELECT id, name, base_url, api_key, model_id, headers, protocol, thinking, is_default,
         capabilities, last_tested_at, last_error, created_at, updated_at
        FROM ai_providers WHERE id = ? LIMIT 1`,
       [id],
@@ -27,9 +27,9 @@ export class SqliteAiProviderStoreDriver implements AiProviderStoreDriver {
   async insertRow(row: AiProviderRow): Promise<void> {
     await this.db.run(
       `INSERT INTO ai_providers
-       (id, name, base_url, api_key, model_id, headers, protocol, is_default,
+       (id, name, base_url, api_key, model_id, headers, protocol, thinking, is_default,
         capabilities, last_tested_at, last_error, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id,
         row.name,
@@ -38,6 +38,7 @@ export class SqliteAiProviderStoreDriver implements AiProviderStoreDriver {
         row.model_id,
         row.headers,
         row.protocol,
+        row.thinking,
         row.is_default,
         row.capabilities,
         row.last_tested_at,
