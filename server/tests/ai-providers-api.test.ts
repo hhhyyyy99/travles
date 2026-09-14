@@ -5,8 +5,10 @@ import { createApp } from '../src/app.js'
 import { MemoryTripStoreDriver } from '../src/trips/driver-memory.js'
 import { TripRepository } from '../src/trips/repository.js'
 import { MemoryAiProviderStoreDriver } from '../src/ai-providers/driver-memory.js'
+import { AiProviderRepository, toPublicAiProvider } from '../src/ai-providers/repository.js'
 import { probeAiProvider } from '../src/ai-providers/probe.js'
 import { createProviderModel } from '../src/ai-providers/model.js'
+import type { AiProvider, AiProviderRow } from '../src/ai-providers/types.js'
 import { MockMemory } from '@mastra/core/memory'
 import { InMemoryStore } from '@mastra/core/storage'
 import { MemoryMessageStoreDriver } from '../src/chat/driver-memory.js'
@@ -292,6 +294,7 @@ test('provider model streams the first SSE delta before the upstream response cl
     headers: {},
     protocol: 'chat-completions' as const,
     isDefault: true,
+    thinking: 'off' as const,
     capabilities: null,
     lastTestedAt: null,
     lastError: null,
@@ -371,6 +374,7 @@ test('Responses tool-call events with item and call ids produce one complete cal
     headers: {},
     protocol: 'responses' as const,
     isDefault: true,
+    thinking: 'off' as const,
     capabilities: null,
     lastTestedAt: null,
     lastError: null,
@@ -405,6 +409,7 @@ test('Chat Completions prompt keeps every parallel tool result', async () => {
     headers: {},
     protocol: 'chat-completions' as const,
     isDefault: true,
+    thinking: 'off' as const,
     capabilities: null,
     lastTestedAt: null,
     lastError: null,
@@ -652,3 +657,116 @@ function fallbackResponse(value: unknown): Response {
   const content = typeof value === 'string' ? value : JSON.stringify(value)
   return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }] }), { headers: { 'content-type': 'application/json' } })
 }
+
+test('buildRequest maps the thinking budget per protocol and sends no vendor-private fields', async () => {
+  for (const protocol of ['chat-completions', 'responses'] as const) {
+    for (const level of ['off', 'low', 'medium', 'high'] as const) {
+      let requestBody: Record<string, unknown> | null = null
+      globalThis.fetch = (async (_input: string | URL, init?: RequestInit) => {
+        requestBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+        return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } })
+      }) as typeof fetch
+      const provider = {
+        id: 'think-test',
+        name: 'think-test',
+        baseUrl: 'https://model.example.test/v1',
+        apiKey: 'sk-think-secret',
+        modelId: 'planner-1',
+        headers: {},
+        protocol,
+        isDefault: true,
+        thinking: level,
+        capabilities: null,
+        lastTestedAt: null,
+        lastError: null,
+        createdAt: '',
+        updatedAt: '',
+      }
+      const model = createProviderModel(provider, {
+        streaming: true,
+        functionCalling: true,
+        degraded: false,
+        testedAt: null,
+      }) as unknown as ProviderModel
+      await readProviderParts(model, [{ role: 'user', content: '你好' }])
+      const body = requestBody as Record<string, unknown> | null
+      assert.ok(body, `a request body was sent for ${protocol}/${level}`)
+      if (level === 'off') {
+        assert.equal('reasoning_effort' in body!, false, `off must not send reasoning_effort (${protocol})`)
+        assert.equal('reasoning' in body!, false, `off must not send reasoning (${protocol})`)
+      } else if (protocol === 'chat-completions') {
+        assert.equal(body!.reasoning_effort, level, 'chat-completions maps low/medium/high to reasoning_effort')
+        assert.equal('reasoning' in body!, false, 'chat-completions must not send the responses reasoning object')
+      } else {
+        const reasoning = body!.reasoning as { effort?: unknown } | undefined
+        assert.equal(reasoning?.effort, level, 'responses maps low/medium/high to reasoning.effort')
+        assert.equal('reasoning_effort' in body!, false, 'responses must not send the chat-completions reasoning_effort field')
+      }
+      assert.equal('enable_thinking' in body!, false, 'no vendor-private thinking flag is ever sent')
+    }
+  }
+})
+
+test('AI provider create read round-trips the thinking level and defaults to off', async () => {
+  const { app, store } = await makeSettingsApp()
+  const high = await app.request('/api/settings/ai-providers', jsonRequest('POST', { ...providerInput, name: '高思考', thinking: 'high' }))
+  assert.equal(high.status, 201)
+  const highBody = await high.json() as { provider: Record<string, unknown> }
+  assert.equal(highBody.provider.thinking, 'high')
+  const id = String(highBody.provider.id)
+  assert.equal(store.rows.get(id)?.thinking, 'high')
+
+  const listed = await app.request('/api/settings/ai-providers')
+  const listedBody = await listed.json() as { providers: Record<string, unknown>[] }
+  assert.equal(listedBody.providers.find((provider) => provider.id === id)?.thinking, 'high')
+
+  // Omitting thinking defaults to off on both the public payload and the stored row.
+  const off = await app.request('/api/settings/ai-providers', jsonRequest('POST', { ...providerInput, name: '默认关闭' }))
+  assert.equal(off.status, 201)
+  const offBody = await off.json() as { provider: Record<string, unknown> }
+  assert.equal(offBody.provider.thinking, 'off')
+  assert.equal(store.rows.get(String(offBody.provider.id))?.thinking, 'off')
+})
+
+test('AI provider rejects an illegal thinking level with a readable error', async () => {
+  const { app } = await makeSettingsApp()
+  const response = await app.request('/api/settings/ai-providers', jsonRequest('POST', { ...providerInput, thinking: 'ultra' }))
+  assert.equal(response.status, 400)
+  const body = await response.json() as { error: string }
+  assert.match(body.error, /思考档位/)
+
+  const badEnum = await app.request('/api/settings/ai-providers', jsonRequest('POST', { ...providerInput, thinking: 7 as unknown as string }))
+  assert.equal(badEnum.status, 400)
+  assert.match((await badEnum.json() as { error: string }).error, /思考档位/)
+})
+
+test('legacy provider rows missing the thinking column normalize to off and stay secret-safe', async () => {
+  const store = new MemoryAiProviderStoreDriver()
+  const repo = new AiProviderRepository(store)
+  const id = 'legacy-row'
+  store.rows.set(id, {
+    id,
+    name: 'legacy',
+    base_url: 'https://model.example.test/v1',
+    api_key: 'sk-legacy-secret',
+    model_id: 'planner-1',
+    headers: '{"X-Tenant":"legacy-secret"}',
+    protocol: 'chat-completions',
+    is_default: 1,
+    capabilities: '{"streaming":true,"functionCalling":true,"degraded":false,"testedAt":null,"error":null}',
+    last_tested_at: null,
+    last_error: null,
+    created_at: '2026-09-12T00:00:00.000Z',
+    updated_at: '2026-09-12T00:00:00.000Z',
+  } as unknown as AiProviderRow)
+  const provider = await repo.get(id)
+  assert.ok(provider)
+  assert.equal(provider?.thinking, 'off')
+  const publicProvider = toPublicAiProvider(provider as AiProvider)
+  assert.equal(publicProvider.thinking, 'off')
+  assert.equal('apiKey' in publicProvider, false)
+  assert.deepEqual(publicProvider.headers, { 'X-Tenant': '[hidden]' })
+  const publicText = JSON.stringify(publicProvider)
+  assert.equal(publicText.includes('sk-legacy-secret'), false)
+  assert.equal(publicText.includes('legacy-secret'), false)
+})
