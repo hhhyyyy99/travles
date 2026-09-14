@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { ArrowLeft, Check, CircleAlert, CircleHelp, KeyRound, List, Plus, Save, Server, Trash2, WandSparkles } from 'lucide-react'
 import {
   createAiProvider,
@@ -56,6 +56,7 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
   const [notice, setNotice] = useState<string | null>(null)
   const [probe, setProbe] = useState<ProviderProbe | null>(null)
   const [models, setModels] = useState<ModelOption[]>([])
+  const [modelOpen, setModelOpen] = useState(false)
   const [busy, setBusy] = useState<'save' | 'test' | 'models' | 'default' | 'delete' | null>(null)
 
   const reload = useCallback(async () => {
@@ -74,6 +75,7 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
     setForm({ ...EMPTY_FORM, isDefault: providers.length === 0 })
     setProbe(null)
     setModels([])
+    setModelOpen(false)
     setActionError(null)
     setNotice(null)
   }
@@ -93,6 +95,7 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
     })
     setProbe(provider.capabilities ? { ok: true, capabilities: provider.capabilities } : null)
     setModels([])
+    setModelOpen(false)
     setActionError(null)
     setNotice(`正在编辑「${provider.name}」`)
   }
@@ -197,6 +200,7 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
       return
     }
     setModels(result.data)
+    setModelOpen(result.data.length > 0)
     setNotice(result.data.length > 0 ? `找到 ${result.data.length} 个模型，可直接选择或继续手填。` : '服务没有返回可用模型，请继续手填模型 ID。')
   }
 
@@ -230,6 +234,7 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
       setForm({ ...EMPTY_FORM, isDefault: providers.length === 1 })
       setProbe(null)
       setModels([])
+      setModelOpen(false)
     }
     setNotice('已删除 AI 配置。')
   }
@@ -318,7 +323,16 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
           <form id="ai-provider-form" className="mt-[18px] flex flex-col gap-[14px]" onSubmit={(event) => void handleSave(event)}>
             <div className="grid grid-cols-2 gap-[12px] max-[560px]:grid-cols-1">
               <Field label="配置名称" htmlFor="ai-provider-name"><input id="ai-provider-name" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="例如：公司模型网关" maxLength={100} /></Field>
-              <Field label="模型 ID" htmlFor="ai-provider-model"><input id="ai-provider-model" list="ai-provider-model-options" value={form.modelId} onChange={(event) => setForm((current) => ({ ...current, modelId: event.target.value }))} placeholder="例如：gpt-4o-mini" /><datalist id="ai-provider-model-options">{models.map((model) => <option key={model.id} value={model.id} />)}</datalist></Field>
+              <Field label="模型 ID" htmlFor="ai-provider-model">
+                <ModelCombobox
+                  id="ai-provider-model"
+                  models={models}
+                  open={modelOpen}
+                  setOpen={setModelOpen}
+                  value={form.modelId}
+                  onChange={(modelId) => setForm((current) => ({ ...current, modelId }))}
+                />
+              </Field>
             </div>
             <Field label="Base URL" htmlFor="ai-provider-base-url"><input id="ai-provider-base-url" type="url" value={form.baseUrl} onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" /></Field>
             <fieldset>
@@ -363,6 +377,74 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
 
 function Field({ label, htmlFor, hint, children }: { label: string; htmlFor: string; hint?: string; children: ReactNode }) {
   return <label htmlFor={htmlFor} className="block text-[12px] text-muted">{label}{hint && <span className="ml-[6px] text-[10px] text-muted/80">{hint}</span>}<span className="mt-[6px] block [&_input]:h-[38px] [&_input]:w-full [&_input]:rounded-[5px] [&_input]:border [&_input]:border-line [&_input]:bg-paper [&_input]:px-[10px] [&_input]:text-[13px] [&_input]:text-ink [&_input]:outline-none [&_input]:focus:border-green [&_textarea]:w-full [&_textarea]:resize-y [&_textarea]:rounded-[5px] [&_textarea]:border [&_textarea]:border-line [&_textarea]:bg-paper [&_textarea]:p-[10px] [&_textarea]:font-mono [&_textarea]:text-[12px] [&_textarea]:text-ink [&_textarea]:outline-none [&_textarea]:focus:border-green">{children}</span></label>
+}
+
+function ModelCombobox({ id, models, value, onChange, open, setOpen }: {
+  id: string
+  models: ModelOption[]
+  value: string
+  onChange: (value: string) => void
+  open: boolean
+  setOpen: (open: boolean) => void
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const filtered = useMemo(() => {
+    const query = value.trim().toLowerCase()
+    if (!query) return models
+    return models.filter((model) => model.id.toLowerCase().includes(query))
+  }, [models, value])
+  const visible = open && models.length > 0
+
+  useEffect(() => {
+    if (!open) return
+    function onDocMouseDown(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocMouseDown)
+    return () => document.removeEventListener('mousedown', onDocMouseDown)
+  }, [open, setOpen])
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        id={id}
+        type="text"
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={visible}
+        aria-controls={`${id}-listbox`}
+        value={value}
+        placeholder="例如：gpt-4o-mini"
+        onChange={(event) => { onChange(event.target.value); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+      />
+      {visible && (
+        <ul
+          id={`${id}-listbox`}
+          role="listbox"
+          className="absolute z-20 mt-[4px] max-h-[240px] w-full overflow-auto rounded-[5px] border border-line bg-white py-[4px] shadow-lg"
+        >
+          {filtered.length === 0 ? (
+            <li className="px-[10px] py-[8px] text-[12px] text-muted">无匹配模型，将以上方输入内容保存</li>
+          ) : (
+            filtered.map((model) => (
+              <li
+                key={model.id}
+                role="option"
+                aria-selected={model.id === value}
+                title={model.id}
+                onMouseDown={(event) => { event.preventDefault() }}
+                onClick={() => { onChange(model.id); setOpen(false) }}
+                className={`cursor-pointer truncate px-[10px] py-[8px] text-[13px] text-ink hover:bg-[#e9f0eb] ${model.id === value ? 'bg-[#e9f0eb]' : ''}`}
+              >
+                {model.id}
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 function ProtocolOption({ id, checked, onChange, label }: { id: string; checked: boolean; onChange: () => void; label: string }) {
