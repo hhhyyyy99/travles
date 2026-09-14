@@ -10,13 +10,9 @@ import type {
   PublicAiProvider,
   ThinkingLevel,
 } from './types.js'
+import { THINKING_LEVELS, THINKING_LEVEL_ERROR, normalizeThinking } from './types.js'
 
 const PROTOCOLS: ProviderProtocol[] = ['chat-completions', 'responses']
-const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high']
-
-function normalizeThinking(value: unknown): ThinkingLevel {
-  return THINKING_LEVELS.includes(value as ThinkingLevel) ? (value as ThinkingLevel) : 'off'
-}
 
 export class AiProviderRepository {
   constructor(private readonly driver: AiProviderStoreDriver) {}
@@ -203,7 +199,7 @@ export function validateProviderInput(input: AiProviderInput, creating: boolean)
   if (typeof input.baseUrl !== 'string' || !isHttpUrl(input.baseUrl)) return 'Base URL 必须是 http(s) 地址'
   if (typeof input.modelId !== 'string' || input.modelId.trim() === '') return '模型 ID 不能为空'
   if (!PROTOCOLS.includes(input.protocol)) return '协议格式必须是 chat-completions 或 responses'
-  if (input.thinking !== undefined && !THINKING_LEVELS.includes(input.thinking)) return '思考档位必须是 off、low、medium 或 high'
+  if (input.thinking !== undefined && !THINKING_LEVELS.includes(input.thinking)) return THINKING_LEVEL_ERROR
   if (creating && (typeof input.apiKey !== 'string' || input.apiKey.trim() === '')) return 'API Key 不能为空'
   if (input.apiKey !== undefined && typeof input.apiKey !== 'string') return 'API Key 必须是字符串'
   const headers = parseHeaders(input.headers)

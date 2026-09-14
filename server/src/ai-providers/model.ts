@@ -1,6 +1,7 @@
 import type { MastraLanguageModel } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import type { AiProvider, ProviderCapabilities } from './types.js'
+import { THINKING_LEVELS } from './types.js'
 import { endpointFor } from './probe.js'
 
 type PromptPart = { type?: string; text?: string; delta?: string; toolCallId?: string; toolName?: string; input?: unknown; output?: unknown; value?: unknown }
@@ -162,7 +163,7 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
   // Thinking budget: wire-format-only. `off` (the default for env/legacy
   // providers) emits no reasoning field at all; `low/medium/high` map to the
   // provider's native effort control. No vendor-private flags are sent.
-  const effort = provider.thinking === 'low' || provider.thinking === 'medium' || provider.thinking === 'high' ? provider.thinking : 'off'
+  const effort = THINKING_LEVELS.includes(provider.thinking) ? provider.thinking : 'off'
   if (provider.protocol === 'responses') {
     const system = options.prompt.filter((message) => message.role === 'system').map(contentOf).join('\n\n')
     const input = options.prompt.filter((message) => message.role !== 'system').flatMap((message) => toResponseInput(message, fallback))

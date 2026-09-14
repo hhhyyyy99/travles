@@ -740,6 +740,27 @@ test('AI provider rejects an illegal thinking level with a readable error', asyn
   assert.match((await badEnum.json() as { error: string }).error, /思考档位/)
 })
 
+test('AI provider PATCH updates the thinking level and the change round-trips through GET and the public payload', async () => {
+  const { app, store } = await makeSettingsApp()
+  const created = await app.request('/api/settings/ai-providers', jsonRequest('POST', { ...providerInput, name: '可更新', thinking: 'off' }))
+  assert.equal(created.status, 201)
+  const id = String((await created.json() as { provider: { id: string; thinking: string } }).provider.id)
+
+  const patched = await app.request(`/api/settings/ai-providers/${id}`, jsonRequest('PATCH', { ...providerInput, thinking: 'high' }))
+  assert.equal(patched.status, 200)
+  const patchedBody = await patched.json() as { provider: Record<string, unknown> }
+  assert.equal(patchedBody.provider.thinking, 'high')
+  assert.equal(store.rows.get(id)?.thinking, 'high')
+
+  const listed = await app.request('/api/settings/ai-providers')
+  const listedBody = await listed.json() as { providers: Record<string, unknown>[] }
+  assert.equal(listedBody.providers.find((provider) => provider.id === id)?.thinking, 'high')
+
+  const publicOne = await app.request(`/api/settings/ai-providers/${id}`)
+  const publicBody = await publicOne.json() as { provider: Record<string, unknown> }
+  assert.equal(publicBody.provider.thinking, 'high')
+})
+
 test('legacy provider rows missing the thinking column normalize to off and stay secret-safe', async () => {
   const store = new MemoryAiProviderStoreDriver()
   const repo = new AiProviderRepository(store)

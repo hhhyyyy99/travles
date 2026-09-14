@@ -8,7 +8,9 @@ import type {
   AiProviderInput,
   AiProviderProbeResult,
   ProviderProtocol,
+  ThinkingLevel,
 } from './types.js'
+import { THINKING_LEVELS, THINKING_LEVEL_ERROR } from './types.js'
 
 /** Injectable probe seam keeps API tests independent from external services. */
 export type AiProviderProbe = (provider: Pick<AiProvider, 'baseUrl' | 'apiKey' | 'modelId' | 'headers' | 'protocol'>) => Promise<AiProviderProbeResult>
@@ -192,8 +194,8 @@ function parseProviderInput(body: Record<string, unknown>, updating: boolean): {
   if (body.apiKey !== undefined && typeof body.apiKey !== 'string') return { ok: false, error: 'API Key 必须是字符串' }
   if (body.isDefault !== undefined && typeof body.isDefault !== 'boolean') return { ok: false, error: 'isDefault 必须是布尔值' }
   const thinking = body.thinking
-  if (thinking !== undefined && (typeof thinking !== 'string' || (thinking !== 'off' && thinking !== 'low' && thinking !== 'medium' && thinking !== 'high'))) {
-    return { ok: false, error: '思考档位必须是 off、low、medium 或 high' }
+  if (thinking !== undefined && (typeof thinking !== 'string' || !THINKING_LEVELS.includes(thinking as ThinkingLevel))) {
+    return { ok: false, error: THINKING_LEVEL_ERROR }
   }
   return {
     ok: true,

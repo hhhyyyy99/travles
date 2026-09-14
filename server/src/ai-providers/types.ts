@@ -4,6 +4,16 @@ export type ProviderProtocol = 'chat-completions' | 'responses'
 
 export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high'
 
+/** Single source of truth for the valid thinking levels, shared by the
+ *  repository, the HTTP routes, and the model adapter. */
+export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high']
+
+export const THINKING_LEVEL_ERROR = '思考档位必须是 off、low、medium 或 high'
+
+export function normalizeThinking(value: unknown): ThinkingLevel {
+  return THINKING_LEVELS.includes(value as ThinkingLevel) ? (value as ThinkingLevel) : 'off'
+}
+
 export type ProviderCapabilities = {
   streaming: boolean
   functionCalling: boolean

@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { fetchAiProviders, type FetchLike } from '../src/domain/aiProviders'
+import { fetchAiProviders, fetchProviderModels, fetchSavedProviderModels, type FetchLike, type AiProviderInput } from '../src/domain/aiProviders'
 
 function stubFetch(respond: (url: string, init?: RequestInit) => { status?: number; body: unknown }): FetchLike {
   return async (url, init) => {
@@ -83,4 +83,62 @@ test('normalizeAiProvider drops corrupt entries instead of throwing', async () =
     ['p-valid'],
   )
   assert.equal(result.data.providers[0]?.thinking, 'high')
+})
+
+const modelInput: AiProviderInput = {
+  name: '网关',
+  baseUrl: 'https://model.example.test/v1/',
+  modelId: 'planner-1',
+  protocol: 'chat-completions',
+}
+
+test('fetchProviderModels normalizes string and object model entries and drops invalid ones', async () => {
+  const fetchLike = stubFetch(() => ({
+    body: {
+      models: [
+        'gpt-4o',
+        { id: '  claude-3 ' },
+        { id: 'gemini-1.5' },
+        null,
+        42,
+        '',
+        { name: '没有 id' },
+        { id: '   ' },
+      ],
+    },
+  }))
+  const result = await fetchProviderModels(modelInput, fetchLike)
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.data, [
+    { id: 'gpt-4o' },
+    { id: 'claude-3' },
+    { id: 'gemini-1.5' },
+  ])
+})
+
+test('fetchSavedProviderModels normalizes the GET model-list response', async () => {
+  const fetchLike = stubFetch(() => ({
+    body: { models: [{ id: 'saved-1' }, { id: 'saved-2' }] },
+  }))
+  const result = await fetchSavedProviderModels('saved-id', fetchLike)
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.data, [{ id: 'saved-1' }, { id: 'saved-2' }])
+})
+
+test('fetchProviderModels and fetchSavedProviderModels tolerate empty and malformed model responses', async () => {
+  for (const body of [undefined, null, '', { models: [] }, { models: null }, { models: '不是数组' }, {}]) {
+    const fetchLike = stubFetch(() => ({ body: body as unknown }))
+    const posted = await fetchProviderModels(modelInput, fetchLike)
+    assert.equal(posted.ok, true, `空/畸形响应仍应解析成功: ${JSON.stringify(body)}`)
+    if (posted.ok) assert.deepEqual(posted.data, [])
+    const got = await fetchSavedProviderModels('id', fetchLike)
+    assert.equal(got.ok, true, `GET 空/畸形响应仍应解析成功: ${JSON.stringify(body)}`)
+    if (got.ok) assert.deepEqual(got.data, [])
+  }
+  // A non-ok upstream status surfaces as a failure without throwing.
+  const failing = stubFetch(() => ({ status: 502, body: { error: '模型列表请求失败（HTTP 502）。' } }))
+  const failed = await fetchProviderModels(modelInput, failing)
+  assert.equal(failed.ok, false)
 })
