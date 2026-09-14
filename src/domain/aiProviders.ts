@@ -10,6 +10,8 @@ import { defaultFetch } from './tripList'
 
 export type ProviderProtocol = 'chat-completions' | 'responses'
 
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high'
+
 export type ProviderCapabilities = {
   streaming: boolean
   functionCalling: boolean
@@ -24,6 +26,7 @@ export type AiProvider = {
   baseUrl: string
   modelId: string
   protocol: ProviderProtocol
+  thinking: ThinkingLevel
   isDefault: boolean
   hasApiKey: boolean
   /** Values are always redacted by the server. */
@@ -41,6 +44,7 @@ export type AiProviderInput = {
   baseUrl: string
   modelId: string
   protocol: ProviderProtocol
+  thinking?: ThinkingLevel
   apiKey?: string
   headers?: Record<string, string>
   isDefault?: boolean
@@ -171,12 +175,14 @@ function normalizeAiProvider(raw: unknown): AiProvider | null {
   const headerNames = Array.isArray(record.headerNames)
     ? record.headerNames.filter((value): value is string => typeof value === 'string')
     : Object.keys(headers)
+  const thinking: ThinkingLevel = record.thinking === 'low' || record.thinking === 'medium' || record.thinking === 'high' ? record.thinking : 'off'
   return {
     id: record.id,
     name: typeof record.name === 'string' ? record.name : '',
     baseUrl: typeof record.baseUrl === 'string' ? record.baseUrl : '',
     modelId: typeof record.modelId === 'string' ? record.modelId : '',
     protocol: record.protocol === 'responses' ? 'responses' : 'chat-completions',
+    thinking,
     isDefault: record.isDefault === true,
     hasApiKey: record.hasApiKey === true,
     headers,

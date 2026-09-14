@@ -15,6 +15,7 @@ import {
   type ModelOption,
   type ProviderCapabilities,
   type ProviderProbe,
+  type ThinkingLevel,
 } from '../domain/aiProviders'
 
 type ProviderForm = {
@@ -22,16 +23,25 @@ type ProviderForm = {
   baseUrl: string
   modelId: string
   protocol: 'chat-completions' | 'responses'
+  thinking: ThinkingLevel
   apiKey: string
   headersText: string
   isDefault: boolean
 }
+
+const THINKING_OPTIONS: { value: ThinkingLevel; label: string }[] = [
+  { value: 'off', label: '关闭' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+]
 
 const EMPTY_FORM: ProviderForm = {
   name: '',
   baseUrl: '',
   modelId: '',
   protocol: 'chat-completions',
+  thinking: 'off',
   apiKey: '',
   headersText: '',
   isDefault: false,
@@ -75,6 +85,7 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
       baseUrl: provider.baseUrl,
       modelId: provider.modelId,
       protocol: provider.protocol,
+      thinking: provider.thinking,
       // Secret values never come from the public provider payload.
       apiKey: '',
       headersText: '',
@@ -92,6 +103,7 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
       baseUrl: form.baseUrl,
       modelId: form.modelId,
       protocol: form.protocol,
+      thinking: form.thinking,
       isDefault: form.isDefault,
     }
     if (form.apiKey.trim()) value.apiKey = form.apiKey
@@ -314,6 +326,20 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
               <div className="grid grid-cols-2 gap-[8px]">
                 <ProtocolOption id="ai-provider-protocol-chat-completions" checked={form.protocol === 'chat-completions'} onChange={() => setForm((current) => ({ ...current, protocol: 'chat-completions' }))} label="Chat Completions" />
                 <ProtocolOption id="ai-provider-protocol-responses" checked={form.protocol === 'responses'} onChange={() => setForm((current) => ({ ...current, protocol: 'responses' }))} label="Responses" />
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend className="mb-[6px] text-[12px] text-muted">思考档位</legend>
+              <div className="grid grid-cols-4 gap-[8px]">
+                {THINKING_OPTIONS.map((option) => (
+                  <ProtocolOption
+                    key={option.value}
+                    id={`ai-provider-thinking-${option.value}`}
+                    checked={form.thinking === option.value}
+                    onChange={() => setForm((current) => ({ ...current, thinking: option.value }))}
+                    label={option.label}
+                  />
+                ))}
               </div>
             </fieldset>
             <Field label="API Key" htmlFor="ai-provider-key" hint={editingId ? '留空表示沿用服务端已保存的密钥' : '首次保存必填；密钥不会返回浏览器'}><input id="ai-provider-key" type="password" autoComplete="new-password" value={form.apiKey} onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))} placeholder={editingId ? '已保存，输入新值可替换' : '输入服务商 API Key'} /></Field>
