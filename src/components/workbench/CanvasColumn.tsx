@@ -326,15 +326,16 @@ function DayColumn({
     >
       <header className="shrink-0 border-b border-line px-[14px] py-[12px]">
         <div className="flex items-center gap-[8px]">
+          {/* Day badge: solid accent block with white text (PRD §4.2「天签按日着色」). */}
           <span
-            aria-hidden="true"
-            className="inline-block h-[10px] w-[10px] rounded-full"
+            data-day-badge
+            data-day-id={day.id}
+            className="inline-flex items-center gap-[6px] rounded-[5px] px-[8px] py-[3px] text-[12px] font-[600] leading-none text-white"
             style={{ backgroundColor: accent }}
-          />
-          <span className="text-[14px] font-[600]" style={{ color: accent }}>
+          >
             {dateLabel}
+            <span className="text-[11px] font-[500] opacity-90">{weekdayLabel(day.date)}</span>
           </span>
-          <span className="text-[12px] text-muted">{weekdayLabel(day.date)}</span>
           <span className="ml-auto text-[11px] text-muted">D{day.index + 1}</span>
           {onOptimizeDay && (
             <button

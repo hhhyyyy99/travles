@@ -16,7 +16,7 @@ export interface WorkbenchRouteDay {
   color: string
   /** Contiguous [lat, lng][] segments (leg polylines / straight-line fallbacks). */
   segments: LatLng[][]
-  /** "10.02 周五 76km" hover label text. */
+  /** "10.02 周五 76km" midpoint label text. */
   mileageLabel: string
 }
 
@@ -38,10 +38,12 @@ function chevron(tick: RouteTick): [LatLng, LatLng, LatLng] {
 
 /**
  * Per-day colored driving routes with a white casing and direction chevrons.
- * Hovering a day's route shows its floating mileage label; leaving hides it.
+ * Each day's mileage label is rendered persistently at its route midpoint
+ * (PRD §4.3「每日路线中点悬浮日程标签」), rather than only on hover.
  */
 export function renderWorkbenchRoutes(handle: RouteMapHandle, days: WorkbenchRouteDay[]): void {
   handle.workbenchRouteLayer.clearLayers()
+  handle.workbenchLabelLayer.clearLayers()
   for (const day of days) {
     for (const segment of day.segments) {
       if (segment.length < 2) continue
@@ -51,10 +53,7 @@ export function renderWorkbenchRoutes(handle: RouteMapHandle, days: WorkbenchRou
         weight: 4.5,
         opacity: 0.95,
         className: `wb-route wb-route-${day.dayId}`,
-      })
-        .on('mouseover', () => showMileageLabel(handle, day))
-        .on('mouseout', () => clearMileageLabel(handle))
-        .addTo(handle.workbenchRouteLayer)
+      }).addTo(handle.workbenchRouteLayer)
       for (const tick of routeTicks(segment, 30)) {
         const [wingA, tip, wingB] = chevron(tick)
         L.polyline([wingA, tip, wingB], { color: day.color, weight: 2, opacity: 0.9, interactive: false }).addTo(
@@ -62,12 +61,12 @@ export function renderWorkbenchRoutes(handle: RouteMapHandle, days: WorkbenchRou
         )
       }
     }
+    addMileageLabel(handle, day)
   }
 }
 
-/** Floating per-day mileage label at the route's midpoint (day-color matched). */
-export function showMileageLabel(handle: RouteMapHandle, day: WorkbenchRouteDay): void {
-  clearMileageLabel(handle)
+/** Persistent per-day mileage label at the route's midpoint (day-color matched). */
+function addMileageLabel(handle: RouteMapHandle, day: WorkbenchRouteDay): void {
   const flat = day.segments.flat()
   if (flat.length < 2) return
   L.marker(routeMidpoint(flat), {
@@ -81,10 +80,6 @@ export function showMileageLabel(handle: RouteMapHandle, day: WorkbenchRouteDay)
     interactive: false,
     zIndexOffset: 700,
   }).addTo(handle.workbenchLabelLayer)
-}
-
-export function clearMileageLabel(handle: RouteMapHandle): void {
-  handle.workbenchLabelLayer.clearLayers()
 }
 
 /** One clickable POI marker input (from `poiMarkersForDays` + collision set). */
@@ -113,9 +108,29 @@ export function renderWorkbenchPois(
   }
 }
 
-/** Focus a single POI (canvas card click / marker click detail flow). */
-export function focusWorkbenchPoi(handle: RouteMapHandle, coords: LatLng, zoom = 13): void {
-  handle.map.setView(coords, zoom, { animate: false })
+/** True when the coordinate pair is usable (guards missing / (0,0) placeholders). */
+function hasUsableCoords(coords: LatLng): boolean {
+  const [lat, lng] = coords
+  return Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)
+}
+
+/**
+ * Focus a single POI (canvas card click / marker click detail flow) with a
+ * smooth fly-to, honouring reduced-motion. Returns false when the coordinate is
+ * unusable so callers can fall back to the whole-trip overview instead of
+ * leaving the map on a stale viewport.
+ */
+export function focusWorkbenchPoi(handle: RouteMapHandle, coords: LatLng, zoom = 13): boolean {
+  if (!hasUsableCoords(coords)) return false
+  const map = handle.map
+  const reduceMotion =
+    typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+  if (reduceMotion) {
+    map.setView(coords, zoom, { animate: false })
+    return true
+  }
+  map.flyTo(coords, zoom, { duration: 0.6 })
+  return true
 }
 
 /** Fit bounds around arbitrary coordinates (per-day or whole-trip overview). */

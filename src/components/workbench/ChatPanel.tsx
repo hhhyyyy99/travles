@@ -41,6 +41,17 @@ import type {
   AiProposal,
 } from '../../domain/aiProposals'
 
+/**
+ * First-screen starter questions, shown while the trip has no conversation
+ * history yet (PRD §4.1 F1「下一步建议问题 chips」). Clicking one sends it
+ * exactly like a typed message, so an empty workbench still offers a way in.
+ */
+const CHAT_STARTERS = [
+  '第一次去呼伦贝尔，7 天怎么安排不赶？',
+  '沿路有哪些值得吃的和值得带的？',
+  '帮我把路线顺一顺，少绕路、多玩几个地方',
+] as const
+
 type SendState =
   | { status: 'idle' }
   | { status: 'sending' }
@@ -269,9 +280,25 @@ export default function ChatPanel({
         )}
         {historyLoading && <ChatHistorySkeleton />}
         {loadError === null && !historyLoading && history.length === 0 && streamText === null && (
-          <p className="mx-auto my-[12px] text-center text-[13px] leading-[1.8] text-muted">
-            和圆周说一句话，一起规划这段旅程。
-          </p>
+          <div className="mx-auto my-[6px] flex w-full flex-col gap-[10px]">
+            <p className="text-center text-[13px] leading-[1.8] text-muted">
+              和圆周说一句话，一起规划这段旅程。
+            </p>
+            <div data-chat-starters className="flex flex-col gap-[7px]">
+              {CHAT_STARTERS.map((starter) => (
+                <button
+                  key={starter}
+                  type="button"
+                  data-chat-starter={starter}
+                  disabled={sending}
+                  onClick={() => void handleSend(starter)}
+                  className="rounded-[10px] border border-line bg-white px-[12px] py-[9px] text-left text-[12.5px] leading-[1.6] text-ink transition-colors hover:border-green hover:text-green disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {starter}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
         {history.map((message) => (
           <ChatBubble key={message.id} message={message} sending={sending} onSend={handleSend} onFocusPoi={onFocusPoi} />

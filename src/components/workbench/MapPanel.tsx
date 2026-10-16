@@ -296,9 +296,14 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
   // state, so the map follows the canvas in both directions.
   useEffect(() => {
     const handle = handleRef.current
-    if (!handle || !selected || !poi) return
+    if (!handle || !selected) return
     setCarouselIndex(0)
-    focusWorkbenchPoi(handle, [poi.lat, poi.lng])
+    // A selected card without a usable POI (traffic card / free text) has
+    // nothing to focus on: fall back to the whole-trip overview so the map does
+    // not stay stuck on the previous POI's viewport.
+    if (!poi || !focusWorkbenchPoi(handle, [poi.lat, poi.lng])) {
+      fitWorkbenchCoordinates(handle, tripFitCoordinates(days, legs))
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItemId, mapReadyTick])
 

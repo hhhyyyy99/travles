@@ -152,7 +152,7 @@ async function openWorkbench() {
   return openApp({ entry: `/?view=workbench&trip=${TRIP_ID}`, setup: mockWorkbenchApi })
 }
 
-test('the map panel renders per-day colored routes and shows the day mileage label on route hover', async () => {
+test('the map panel renders per-day colored routes with a persistent mileage label', async () => {
   const { page, close } = await openWorkbench()
   try {
     await page.locator('#workbench-map').waitFor()
@@ -162,22 +162,16 @@ test('the map panel renders per-day colored routes and shows the day mileage lab
     assert.equal(await page.locator('path.wb-route-day-1').count(), 1)
     assert.equal(await page.locator('path.wb-route-day-2').count(), 1)
 
-    // Hover a day-1 route → floating mileage label "10.02 周五 75km" (30.3+45).
-    await page.evaluate(() => {
-      document.querySelector('path.wb-route-day-1')?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
-    })
-    const label = page.locator('.wb-mileage-label')
+    // The mileage label is persistent (PRD §4.3「每日路线中点悬浮日程标签」):
+    // "10.02 周五 75km" (30.3+45) shows without any hover.
+    const label = page.locator('.wb-mileage-label[data-mileage-day="day-1"]')
     await label.waitFor()
     assert.match(await label.textContent(), /10\.02 周五 75km/)
-    assert.equal(await label.getAttribute('data-mileage-day'), 'day-1')
     const color = await label.evaluate((el) => getComputedStyle(el).backgroundColor)
     assert.equal(color, 'rgb(194, 109, 79)', 'label color matches the canvas day accent')
 
-    // Leaving the route hides the label again.
-    await page.evaluate(() => {
-      document.querySelector('path.wb-route-day-1')?.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
-    })
-    await page.locator('.wb-mileage-label').waitFor({ state: 'detached' })
+    // One label per drawn day, all visible at once.
+    assert.equal(await page.locator('.wb-mileage-label').count(), 2)
   } finally {
     await close()
   }
