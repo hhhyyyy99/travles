@@ -34,5 +34,8 @@ out/
 *.tsbuildinfo
 test-results/
 
+# Agent workspace data (memory, tickets, session state)
+.workbuddy/
+
 # Server local SQLite data (ticket 02)
 server/data/
