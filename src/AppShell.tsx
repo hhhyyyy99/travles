@@ -11,6 +11,19 @@ import { AmapLiveProvider } from './hooks/useAmapLive'
 type AppView = 'loading' | 'trips' | 'workbench' | 'settings' | 'guide'
 
 /**
+ * Per-view document title. The static title in index.html only covers the
+ * pre-hydration frame; every view sets its own so the tab never claims to be
+ * a different page (the legacy guide title used to leak onto the planner).
+ */
+const VIEW_TITLES: Record<AppView, string> = {
+  loading: '草原之间 · AI 行程规划',
+  trips: '草原之间 · 行程列表',
+  workbench: '草原之间 · 规划工作台',
+  settings: '草原之间 · AI 接入设置',
+  guide: '呼伦贝尔，慢慢走 · 10.02—10.08 自驾手册',
+}
+
+/**
  * Ticket 02 shell: the trip list is the default view; the existing Hailar
  * guide app stays reachable (header button) and completely unchanged — the
  * back button below is rendered as an overlay sibling, not inside App.
@@ -38,6 +51,10 @@ export default function AppShell() {
   })
   const [activeTripId, setActiveTripId] = useState<string | null>(null)
   const { view } = state
+
+  useEffect(() => {
+    document.title = VIEW_TITLES[view]
+  }, [view])
 
   useEffect(() => {
     if (view !== 'loading') return
