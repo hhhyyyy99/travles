@@ -28,7 +28,7 @@ Status: resolved
 - 测试设施：`tests/helpers/vite-app.cjs`（`startViteApp({mode:'dev'|'preview'})` 在 127.0.0.1 + 空闲端口 + `--strictPort` 起真实 vite/preview 并等 `/app.html` 响应返回 {url,close}；`openApp({mode,init,viewport,entry})` 镜像旧 helper：chromium headless、abort 非 127.0.0.1 请求、8s 默认超时、读取 `APP_MODE`（默认 dev））、`tests/app/01-checklist.app.browser.cjs`（8 个场景：勾选计数、刷新恢复、旧格式 `[0,3,5]` 种子+刷新、损坏 "not-json"、字符串 `["0"]`、setItem 抛错、Tailwind 真实生效（3 列 grid + --paper 主题色）、390×844 移动端 2 列+品牌副标隐藏+计数）。
 - `README.md`：安装、Node 要求、dev 端口 5173、临时 `app.html` 入口（旧 `/` 与 `trip.html` 仍可访问）、typecheck/build/preview/test 各命令含义、APP_MODE 区分、同源 localStorage 隔离警告。`.gitignore` 增加 `dist/`。
 
-### 命令与结果（全部使用 `npm --cache /Users/eamon.j.he/.pi-desktop/scratch/81ea657d-e536-46ef-a1d8-050c52254cba/npm-cache`）
+### 命令与结果（全部使用 `npm --cache <临时目录>/npm-cache`）
 | 命令 | 结果 |
 |---|---|
 | `npm run typecheck` | 通过（tsc --noEmit 0 错误） |
