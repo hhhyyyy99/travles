@@ -1,4 +1,4 @@
-// Shared by index.html and trip.html. Apply for a Web (JS API) key, not a Web Service key.
+// Loaded by index.html. Apply for a Web (JS API) key, not a Web Service key.
 // Local preview: fill key and securityJsCode, then reload the page.
 // Public deployment: use a security proxy; browser configuration is not secret storage.
 window.TIBET_AMAP_CONFIG = {

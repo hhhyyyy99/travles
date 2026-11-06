@@ -21,7 +21,6 @@ pnpm dev          # 终端 2：Vite 默认监听 5173，代理 /api 到后端
 | `/?view=workbench&trip=<id>` | 指定行程的三栏工作台 |
 | `/?view=settings` | 服务端 AI 接入配置 |
 | `/?view=guide` | 原呼伦贝尔指南、住宿管理与打印 |
-| `/trip.html` | 兼容旧入口，重定向并保留查询参数和锚点 |
 
 ## 数据与 AI 接入
 

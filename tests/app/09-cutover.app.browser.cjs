@@ -1,6 +1,5 @@
-// Ticket 09 — cutover acceptance: both legacy entries reach the SAME React
-// app, query/hash survive the trip.html redirect, production assets load,
-// and the accommodation main flow works through the root entry.
+// Ticket 09 — cutover acceptance: the root entry serves the React app,
+// production assets load, and the accommodation main flow works through it.
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { openApp } = require('../helpers/vite-app.cjs')
@@ -18,20 +17,7 @@ test('root entry renders the full React app with both map and detail', async () 
   }
 })
 
-test('trip.html redirect preserves query and hash', async () => {
-  const { page, close } = await openApp()
-  try {
-    await page.goto(`${page.url().replace(/\/$/, '')}/trip.html?utm=1#journey`)
-    await page.waitForURL(/index\.html\?utm=1#journey/)
-    // the app still renders after the redirect + anchor
-    await page.locator('#route-map').waitFor()
-    await page.locator('#journey').waitFor()
-  } finally {
-    await close()
-  }
-})
-
-test('production preview serves both entries with hashed assets and vendor script', async () => {
+test('production preview serves the entry with hashed assets and vendor script', async () => {
   const { page, close } = await openApp({ mode: 'preview' })
   try {
     await page.goto(`${page.url().replace(/\/$/, '')}/`)
@@ -43,9 +29,6 @@ test('production preview serves both entries with hashed assets and vendor scrip
       performance.getEntriesByType('resource').map((r) => r.name).filter((n) => n.includes('/assets/')),
     )
     assert.ok(assets.length >= 2, `expected hashed css+js assets, got ${assets.length}`)
-    await page.goto(`${page.url().replace(/\/$/, '')}/trip.html`)
-    await page.waitForURL(/index\.html$/)
-    await page.locator('#route-map').waitFor()
   } finally {
     await close()
   }
