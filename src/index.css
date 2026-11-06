@@ -1222,11 +1222,9 @@
     text-align: left;
     pointer-events: none;
   }
-  #amap-canvas {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-  }
+  /* #amap-canvas positioning must live outside @layer components — see the
+     unlayered rule after this layer. AMap's own stylesheet is unlayered and
+     would otherwise win over `position: absolute` here. */
   #amap-canvas svg {
     width: initial;
     height: initial;
@@ -1840,6 +1838,20 @@
     }
   }
 }
+
+/*
+ * AMap injects its own stylesheet *unlayered* when the JS API loads
+ * (`.amap-container { position: relative; overflow: hidden; … }`), and
+ * unlayered CSS beats every @layer block regardless of specificity. The mount
+ * therefore has to be pinned outside `@layer components`, otherwise AMap
+ * flattens it into normal flow and the map collapses to 0 height.
+ */
+#amap-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
 /* ------------------------------------------------------------------ *
  * Ticket 05 — accommodation place search (port of accommodation-search.css,
  * vars renamed to the --color-* scale used by the ticket-04 port).
