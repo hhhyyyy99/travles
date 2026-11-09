@@ -9,11 +9,13 @@
     "dev": "vite",
     "dev:server": "pnpm --filter @hailar/server dev",
     "start": "pnpm run build && vite preview --port 4173",
-    "typecheck": "tsc --noEmit && pnpm --filter @hailar/server typecheck",
-    "build": "tsc --noEmit && vite build",
-    "build:server": "pnpm --filter @hailar/server build",
+    "build:domain": "pnpm --filter @hailar/domain build",
+    "prepare": "pnpm run build:domain",
+    "typecheck": "pnpm run build:domain && tsc --noEmit && pnpm --filter @hailar/server typecheck",
+    "build": "pnpm run build:domain && tsc --noEmit && vite build",
+    "build:server": "pnpm run build:domain && pnpm --filter @hailar/server build",
     "preview": "vite preview",
-    "test": "node --import tsx --test tests/*.test.ts && pnpm --filter @hailar/server test",
+    "test": "pnpm run build:domain && node --import tsx --test tests/*.test.ts && pnpm --filter @hailar/server test",
     "test:browser": "node --test --test-concurrency=4 tests/app/*.browser.cjs",
     "test:app": "node --test --test-concurrency=4 tests/app/*.browser.cjs",
     "test:app:prod": "pnpm run build && APP_MODE=preview node --test --test-concurrency=4 tests/app/*.browser.cjs"
@@ -22,7 +24,8 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.525.0",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "@hailar/domain": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",

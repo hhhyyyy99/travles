@@ -21,7 +21,8 @@
     "@mastra/libsql": "^1.22.5",
     "@mastra/memory": "^1.29.0",
     "hono": "^4.12.8",
-    "zod": "^4.6.1"
+    "zod": "^4.6.1",
+    "@hailar/domain": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
