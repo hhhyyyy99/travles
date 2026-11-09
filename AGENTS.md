@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues and specs are local Markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+Issues and specs live in GitHub Issues for `hhhyyyy99/travles` (via `gh` CLI). See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
