@@ -5,9 +5,8 @@
  * and the browser: a trip summary, and the canvas read model (Day / Activity
  * item / Leg) that the workbench renders. These schemas deliberately mirror
  * the *existing* persisted and API shapes so they validate real rows and keep
- * every current consumer working; the server validates against them and the
- * frontend derives its types from them instead of hand-maintaining a parallel
- * copy.
+ * every current consumer working. Both server and frontend derive their types
+ * from them; the existing tolerant storage and HTTP decoders stay in place.
  *
  * Relationship to the field names proposed in issue #4:
  *   - #4 lists activity types as `attraction|transit|dining|accommodation|note`
@@ -38,6 +37,8 @@ export const TripPlanningContextSchema = z.object({
   durationDays: z.number(),
   preferences: z.string(),
   originalSentence: z.string(),
+  dateStatus: TripDateStatusSchema,
+  datePhrase: z.string().optional(),
 })
 export type TripPlanningContext = z.infer<typeof TripPlanningContextSchema>
 
@@ -60,6 +61,10 @@ export const TripSummarySchema = z.object({
   planningContext: TripPlanningContextSchema.optional(),
 })
 export type TripSummary = z.infer<typeof TripSummarySchema>
+
+/** The current Trip wire contract is the summary returned by the trips API. */
+export const TripSchema = TripSummarySchema
+export type Trip = z.infer<typeof TripSchema>
 
 /* -------------------------------------------------------------------------- */
 /* Canvas read model                                                           */
@@ -85,8 +90,9 @@ export type LegQuality = z.infer<typeof LegQualitySchema>
 export const PoiRefSchema = z.object({
   amapId: z.string(),
   name: z.string(),
-  lat: z.number().min(-90).max(90),
-  lng: z.number().min(-180).max(180),
+  // Legacy read decoders accept finite coordinates; tools validate bounds.
+  lat: z.number(),
+  lng: z.number(),
   address: z.string().optional(),
   accommodationBaseId: z.string().optional(),
   accommodationType: z.enum(['area', 'hotel']).optional(),
@@ -125,7 +131,7 @@ export const DaySchema = z.object({
 })
 export type Day = z.infer<typeof DaySchema>
 
-/** Polyline is a list of [lat, lng] pairs, or null when unknown. */
+/** Polyline is a list of [lng, lat] pairs, or null when unknown. */
 export const LegSchema = z.object({
   id: z.string(),
   fromItemId: z.string(),

@@ -75,8 +75,19 @@ export const roundMetaInputSchema = z.object({
 })
 export type RoundMetaInput = z.infer<typeof roundMetaInputSchema>
 
-/** Persisted messages may contain round types introduced by later versions. */
-export const RoundMetaPayloadSchema = roundMetaInputSchema.extend({ round: z.string() })
+/** Canonical round contract; the tool input keeps its existing export name. */
+export const RoundMetaSchema = roundMetaInputSchema
+export type RoundMeta = z.infer<typeof RoundMetaSchema>
+
+/**
+ * Persisted messages may contain later round types and deterministic boundary
+ * warnings/conflicts appended by the server after tool-input validation.
+ */
+export const RoundMetaPayloadSchema = roundMetaInputSchema.extend({
+  round: z.string(),
+  warnings: z.array(RoundWarningSchema).optional(),
+  conflicts: z.array(z.string()).optional(),
+})
 export type RoundMetaPayload = z.infer<typeof RoundMetaPayloadSchema>
 
 export type EmitRoundMetaResult = {

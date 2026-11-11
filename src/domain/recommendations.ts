@@ -8,34 +8,20 @@ import type { ApiResult, FetchLike } from './tripList'
 import { defaultFetch } from './tripList'
 import type { PoiRef, WorkbenchItem, WorkbenchItemCreateInput } from './workbench'
 
-export type RecommendationType = 'attraction' | 'food' | 'stay' | 'other'
-
-export type RecommendationPoi = PoiRef & {
-  id: string
-  type: RecommendationType
-  region: string
-  address: string
-  images: Array<{ url: string; caption: string }>
-}
-
-export type StashItem = {
-  id: string
-  poi: RecommendationPoi
-  origin: 'recommend' | 'favorite'
-  addedAt: string
-}
-
-export type FavoriteItem = {
-  id: string
-  poi: RecommendationPoi
-  createdAt: string
-}
-
-export type RecommendationsSnapshot = {
-  recommendations: RecommendationPoi[]
-  stash: StashItem[]
-  favorites: FavoriteItem[]
-}
+import type {
+  FavoriteItem,
+  RecommendationPoi,
+  RecommendationsApiSnapshot as RecommendationsSnapshot,
+  RecommendationType,
+  StashItem,
+} from '@hailar/domain'
+export type {
+  FavoriteItem,
+  RecommendationPoi,
+  RecommendationsApiSnapshot as RecommendationsSnapshot,
+  RecommendationType,
+  StashItem,
+} from '@hailar/domain'
 
 const REQUEST_ERROR = '无法连接服务器，请确认后端服务已启动。'
 

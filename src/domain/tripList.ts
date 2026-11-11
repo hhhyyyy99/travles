@@ -11,30 +11,8 @@
  * default 4310); in production the deployment is expected to be same-origin.
  */
 
-export type TripSummary = {
-  id: string
-  title: string
-  startDate: string
-  endDate: string
-  days: number
-  nights: number
-  createdAt: string
-  updatedAt: string
-  durationDays?: number
-  dateStatus?: TripDateStatus
-  planningContext?: TripPlanningContext
-}
-
-export type TripDateStatus = 'confirmed' | 'unspecified' | 'tentative'
-
-export type TripPlanningContext = {
-  destination: string
-  durationDays: number
-  preferences: string
-  originalSentence: string
-  dateStatus: TripDateStatus
-  datePhrase?: string
-}
+export type { TripSummary, TripDateStatus, TripPlanningContext } from '@hailar/domain'
+import type { TripSummary, TripPlanningContext } from '@hailar/domain'
 
 export type TripFormInput = { title: string; startDate: string; endDate: string }
 export type TripIntakeInput = { sentence: string }

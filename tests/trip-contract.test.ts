@@ -4,9 +4,14 @@ import {
   ITEM_TYPE_MAP,
   TripCanvasSchema,
   TripSummarySchema,
+  TripSchema,
   DaySchema,
   LegSchema,
 } from '@hailar/domain'
+import { mapRowToSummary } from '../server/src/trips/repository.js'
+import { assembleCanvas } from '../server/src/days/repository.js'
+import { normalizeTrip } from '../src/domain/tripList'
+import { fetchTripCanvas } from '../src/domain/workbench'
 
 /**
  * Contract tests for the shared trip read model. Fixtures mirror the real
@@ -32,9 +37,11 @@ test('trip summary accepts a fully-populated card and the minimal seed shape', (
       durationDays: 5,
       preferences: '美食 慢节奏',
       originalSentence: '成都5天，喜欢美食，节奏轻松',
+      dateStatus: 'confirmed',
+      datePhrase: '2026-10-02 至 2026-10-06',
     },
   }
-  assert.equal(TripSummarySchema.safeParse(full).success, true)
+  assert.deepEqual(TripSchema.parse(full), full, 'intake date status and phrase survive schema parsing')
 
   const minimal = {
     id: 't2',
@@ -126,6 +133,46 @@ test('the read model rejects malformed rows', () => {
     }).success,
     false,
   )
+})
+
+test('legacy storage decodes to shared contracts without changing the browser payload', async () => {
+  const trip = mapRowToSummary({
+    id: 'legacy-trip', title: '旧行程', start_date: '', end_date: '',
+    created_at: null, updated_at: null,
+    planning_context: JSON.stringify({
+      destination: '成都', durationDays: 3, preferences: '慢节奏',
+      originalSentence: '成都3天，慢节奏', dateStatus: 'tentative', datePhrase: '下个月',
+    }),
+  })
+  assert.ok(trip)
+  assert.deepEqual(TripSchema.parse(trip), trip)
+  assert.deepEqual(normalizeTrip(trip), trip)
+
+  const canvas = assembleCanvas(
+    [{ id: 'd1', trip_id: trip.id, idx: 0, date: null, theme: null, color: null }],
+    ['traffic', 'stay', 'food', 'other', 'attraction'].map((type, index) => ({
+      id: `i${index}`, trip_id: trip.id, day_id: 'd1', item_order: index, type,
+      title: type, note: null, images: 'invalid json', pending: index === 0 ? 1 : 0,
+      // Older recommendation cards used nested location coordinates.
+      poi: index === 0 ? JSON.stringify({ name: '成都', location: { lat: 30.67, lng: 104.06 } }) : null,
+    })),
+    [{ id: 'l1', trip_id: trip.id, from_item_id: 'i0', to_item_id: 'i1',
+      mode: 'drive', distance_km: 12.5, duration_min: 20, polyline: null }],
+  )
+  assert.deepEqual(TripCanvasSchema.parse(canvas), canvas)
+  const payload = { trip, ...canvas }
+  const browserResult = await fetchTripCanvas(trip.id, async () => Response.json(payload))
+  assert.deepEqual(browserResult, { ok: true, data: payload })
+  assert.equal(canvas.legs[0]?.quality, 'estimate')
+
+  const legacyPoi = canvas.days[0]?.items[0]?.poi
+  assert.ok(legacyPoi)
+  legacyPoi.lat = 100
+  legacyPoi.lng = 200
+  assert.deepEqual(TripCanvasSchema.parse(canvas), canvas, 'read contracts preserve finite legacy coordinates')
+  assert.deepEqual(await fetchTripCanvas(trip.id, async () => Response.json({ trip, ...canvas })), {
+    ok: true, data: { trip, ...canvas },
+  })
 })
 
 test('ITEM_TYPE_MAP records the issue #4 vocabulary mapping', () => {
