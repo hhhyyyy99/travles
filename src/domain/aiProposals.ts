@@ -1,45 +1,12 @@
 /** Client codec for ticket 13's preview → confirm → TripPatch flow. */
+import type { AiProposal as SharedAiProposal, ProposalItem, ProposalChange, ProposalRequest } from '@hailar/domain'
 import type { ApiResult, FetchLike } from './tripList'
 import { defaultFetch } from './tripList'
 
-export type ProposalKind = 'parse' | 'optimize' | 'day-optimize'
+export type { ProposalKind, ProposalItem, ProposalChange, ProposalRequest } from '@hailar/domain'
 
-export type ProposalItem = {
-  itemId: string
-  dayId: string
-  order?: number
-  type: 'traffic' | 'stay' | 'attraction' | 'food' | 'other'
-  title: string
-  note?: string
-  pending?: boolean
-  poi?: { name: string; lat: number; lng: number; amapId?: string; category?: string; rating?: number } | null
-  legPending?: boolean
-}
-
-export type ProposalChange = {
-  action: 'add' | 'update' | 'move' | 'remove'
-  label: string
-  detail?: string
-  itemId?: string
-  dayId?: string
-  fromDayId?: string
-  toDayId?: string
-}
-
-export type AiProposal = {
-  id: string
-  tripId: string
-  kind: ProposalKind
-  title: string
-  summary: string
-  diff: ProposalChange[]
-  patch: unknown
-  items?: ProposalItem[]
-  targetDayId?: string
-  createdAt: string
-}
-
-export type ProposalRequest = { kind: ProposalKind; text?: string; dayId?: string }
+/** The tolerant preview decoder checks the patch envelope; the server validates its operations. */
+export type AiProposal = Omit<SharedAiProposal, 'patch'> & { patch: unknown }
 
 export type ProposalAppliedPatch = {
   summary: string

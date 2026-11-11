@@ -21,65 +21,16 @@
  * repository can survive corrupt rows (容错读取、永不 throw).
  */
 
-export type ItemType = 'traffic' | 'stay' | 'attraction' | 'food' | 'other'
-
-/** Provenance of the distance/time shown for a leg. */
-export type LegQuality = 'reference' | 'estimate' | 'measured' | 'pending'
-
-export type PoiRef = {
-  amapId: string
-  name: string
-  lat: number
-  lng: number
-  address?: string
-  accommodationBaseId?: string
-  accommodationType?: 'area' | 'hotel'
-  accommodationNotes?: string
-  accommodationMigrationVersion?: number
-  category: string
-  rating: number
-  introSummary: string
-}
-
-export type ItemImage = { url: string; caption: string }
-
-export type CanvasItem = {
-  id: string
-  dayId: string
-  order: number
-  type: ItemType
-  title: string
-  note: string
-  poi: PoiRef | null
-  images: ItemImage[]
-  pending: boolean
-}
-
-export type CanvasDay = {
-  id: string
-  index: number
-  date: string
-  theme: string
-  color: string
-  items: CanvasItem[]
-}
-
-export type CanvasLeg = {
-  id: string
-  fromItemId: string
-  toItemId: string
-  mode: string
-  distanceKm: number
-  durationMin: number
-  polyline: [number, number][] | null
-  /** Optional for old callers; read mappers infer it when storage is blank. */
-  quality?: LegQuality
-}
-
-export type TripCanvas = {
-  days: CanvasDay[]
-  legs: CanvasLeg[]
-}
+export type {
+  ItemType,
+  LegQuality,
+  PoiRef,
+  ItemImage,
+  ActivityItem as CanvasItem,
+  Day as CanvasDay,
+  Leg as CanvasLeg,
+  TripCanvas,
+} from '@hailar/domain'
 
 /** Raw driver rows (values unknown so corrupt storage can be represented). */
 export interface DayRow {

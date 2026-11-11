@@ -17,60 +17,24 @@
 import type { ApiResult, FetchLike, TripSummary } from './tripList'
 import { defaultFetch, normalizeTrip } from './tripList'
 
-export type ItemType = 'traffic' | 'stay' | 'attraction' | 'food' | 'other'
-
-export type PoiRef = {
-  amapId: string
-  name: string
-  lat: number
-  lng: number
-  address?: string
-  accommodationBaseId?: string
-  accommodationType?: 'area' | 'hotel'
-  accommodationNotes?: string
-  accommodationMigrationVersion?: number
-  category: string
-  rating: number
-  introSummary: string
-}
-
-export type ItemImage = { url: string; caption: string }
-
-export type WorkbenchItem = {
-  id: string
-  dayId: string
-  order: number
-  type: ItemType
-  title: string
-  note: string
-  poi: PoiRef | null
-  images: ItemImage[]
-  pending: boolean
-}
-
-export type LegQuality = 'reference' | 'estimate' | 'measured' | 'pending'
-
-export type WorkbenchDay = {
-  id: string
-  index: number
-  date: string
-  theme: string
-  color: string
-  items: WorkbenchItem[]
-}
-
-export type WorkbenchLeg = {
-  id: string
-  fromItemId: string
-  toItemId: string
-  mode: string
-  distanceKm: number
-  durationMin: number
-  /** WGS-84 [lng, lat][] driving geometry from the server; null → straight-line fallback. */
-  polyline: [number, number][] | null
-  /** Provenance of the leg metrics; omitted by older API fixtures. */
-  quality?: LegQuality
-}
+export type {
+  ItemType,
+  LegQuality,
+  PoiRef,
+  ItemImage,
+  ActivityItem as WorkbenchItem,
+  Day as WorkbenchDay,
+  Leg as WorkbenchLeg,
+} from '@hailar/domain'
+import type {
+  ItemType,
+  LegQuality,
+  PoiRef,
+  ItemImage,
+  ActivityItem as WorkbenchItem,
+  Day as WorkbenchDay,
+  Leg as WorkbenchLeg,
+} from '@hailar/domain'
 
 export type TripCanvasData = {
   trip: TripSummary

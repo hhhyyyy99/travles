@@ -33,21 +33,8 @@
 import type { DayRow, ItemRow, LegQuality, LegRow } from '../days/types.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
-/** One POI reference on a card (subset of the canvas PoiRef the AI supplies). */
-export type PatchPoiRef = {
-  name: string
-  lat: number
-  lng: number
-  amapId?: string
-  address?: string
-  category?: string
-  rating?: number
-  introSummary?: string
-  accommodationBaseId?: string
-  accommodationType?: 'area' | 'hotel'
-  accommodationNotes?: string
-  accommodationMigrationVersion?: number
-}
+/** One POI reference on a card, derived from the shared patch validator. */
+export type { PatchPoiRef } from '@hailar/domain'
 
 export type TripPatchStats = {
   daysAdded: number

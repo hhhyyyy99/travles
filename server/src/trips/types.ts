@@ -11,33 +11,8 @@
  * - `TripRepository` — validation, day/night computation and tolerant
  *   mapping, written once against any driver.
  */
-export type TripSummary = {
-  id: string
-  title: string
-  startDate: string
-  endDate: string
-  /** Inclusive day count, auto-computed from the date range. */
-  days: number
-  /** Nights = days - 1 (0 for a same-day trip or unusable dates). */
-  nights: number
-  createdAt: string
-  updatedAt: string
-  /** Present for quick-intake drafts whose dates are not confirmed yet. */
-  durationDays?: number
-  dateStatus?: TripDateStatus
-  planningContext?: TripPlanningContext
-}
-
-export type TripDateStatus = 'confirmed' | 'unspecified' | 'tentative'
-
-export type TripPlanningContext = {
-  destination: string
-  durationDays: number
-  preferences: string
-  originalSentence: string
-  dateStatus: TripDateStatus
-  datePhrase?: string
-}
+export type { TripSummary, TripDateStatus, TripPlanningContext } from '@hailar/domain'
+import type { TripSummary } from '@hailar/domain'
 
 /** Raw driver row; values unknown so corrupt storage can be represented. */
 export interface TripRow {

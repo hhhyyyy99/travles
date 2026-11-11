@@ -1,4 +1,5 @@
 packages:
+  - packages/*
   - server
 
 # pnpm 11 settings (see https://pnpm.io/settings)

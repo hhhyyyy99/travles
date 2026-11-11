@@ -6,51 +6,9 @@
  * Keeping the proposal in a small process-local store also gives the UI a
  * stable id for confirm / cancel / retry interactions.
  */
-import type { TripPatchInput } from '../trip-patch/schema.js'
+import type { AiProposal } from '@hailar/domain'
 
-export type ProposalKind = 'parse' | 'optimize' | 'day-optimize'
-
-export type ProposalItem = {
-  itemId: string
-  dayId: string
-  order?: number
-  type: 'traffic' | 'stay' | 'attraction' | 'food' | 'other'
-  title: string
-  note?: string
-  pending?: boolean
-  poi?: {
-    name: string
-    lat: number
-    lng: number
-    amapId?: string
-    category?: string
-    rating?: number
-  } | null
-  legPending?: boolean
-}
-
-export type ProposalChange = {
-  action: 'add' | 'update' | 'move' | 'remove'
-  label: string
-  detail?: string
-  itemId?: string
-  dayId?: string
-  fromDayId?: string
-  toDayId?: string
-}
-
-export type AiProposal = {
-  id: string
-  tripId: string
-  kind: ProposalKind
-  title: string
-  summary: string
-  diff: ProposalChange[]
-  patch: TripPatchInput
-  items?: ProposalItem[]
-  targetDayId?: string
-  createdAt: string
-}
+export type { ProposalKind, ProposalItem, ProposalChange, AiProposal } from '@hailar/domain'
 
 export type ProposalToolResult =
   | { ok: true; proposal: Omit<AiProposal, 'id' | 'tripId' | 'createdAt'> }
