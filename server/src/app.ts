@@ -51,6 +51,7 @@ import { synchronizeTripSchedule } from './trip-events/schedule.js'
 import { RouteLookupCache, routeAmapLeg } from './recommendations/route.js'
 import { registerGuideParsingRoutes } from './guide-parsing/routes.js'
 import type { GuideSourceDependencies } from './guide-parsing/source.js'
+import { registerGuideImportRoutes } from './guide-import/routes.js'
 
 export type AppEnv = {
   Bindings: HonoBindings
@@ -67,6 +68,8 @@ export type CreateAppOptions = {
   contentRepository?: TripContentRepository
   /** SQLite file URL for the default repository (env: TRIPS_DB_PATH). */
   databaseUrl?: string
+  /** Explicit transactional database for guide imports with injected repositories. */
+  guideImportDatabase?: SqlDatabase
   /**
    * Seed the built-in example trip (ticket 03) on startup. Defaults to true
    * only on the default production startup path (no injected repository, no
@@ -301,6 +304,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
       await seedBuiltinTrip(sqlite.db)
     }
   }
+
+  registerGuideImportRoutes(app, () => options.guideImportDatabase ?? sharedDb)
 
   mountAiProviderRoutes(app, {
     repository: await resolveAiProviderRepository(),

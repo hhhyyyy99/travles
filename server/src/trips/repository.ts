@@ -209,7 +209,8 @@ function mapPlanningContext(value: unknown): TripPlanningContext | null {
     if (!destination || !originalSentence || !preferences || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 60) return null
     if (dateStatus !== 'confirmed' && dateStatus !== 'unspecified' && dateStatus !== 'tentative') return null
     const datePhrase = typeof record.datePhrase === 'string' && record.datePhrase.trim() ? record.datePhrase.trim() : undefined
-    return { destination, durationDays, preferences, originalSentence, dateStatus, ...(datePhrase ? { datePhrase } : {}) }
+    return { destination, durationDays, preferences, originalSentence, dateStatus, ...(datePhrase ? { datePhrase } : {}),
+      ...(record.source === 'guide' || record.source === 'intake' ? { source: record.source } : {}) }
   } catch {
     return null
   }

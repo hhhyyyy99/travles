@@ -512,7 +512,8 @@ export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripI
     if (refresh) void refresh.then(() => print())
     else print()
   }
-  const plannerInitialPrompt = initialPrompt ?? (state.status === 'ready' ? state.data.trip.planningContext?.originalSentence : undefined)
+  const plannerInitialPrompt = initialPrompt ?? (state.status === 'ready' && state.data.trip.planningContext?.source !== 'guide'
+    ? state.data.trip.planningContext?.originalSentence : undefined)
 
   return (
     <>

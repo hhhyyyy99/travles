@@ -31,6 +31,12 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
+  // Keep the import receipt after a trip is deleted so a stale retry cannot recreate it.
+  `CREATE TABLE IF NOT EXISTS guide_imports (
+    import_id TEXT PRIMARY KEY,
+    payload_hash TEXT NOT NULL,
+    trip_id TEXT NOT NULL UNIQUE
+  )`,
   `CREATE TABLE IF NOT EXISTS days (
     id TEXT PRIMARY KEY,
     trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,

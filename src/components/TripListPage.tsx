@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BookOpen, CalendarDays, MapPin, Pencil, Plus, Settings, Trash2, X } from 'lucide-react'
 import {
   createTrip,
@@ -15,6 +15,8 @@ import {
   type TripSummary,
 } from '../domain/tripList'
 import { migrateLegacyDataToServer } from '../domain/migration'
+import GuideImportPanel from './GuideImportPanel'
+import type { TripCreationSession } from '../domain/guideParsing'
 
 /**
  * 行程列表页 (ticket 02) — default view of the app shell. Create / rename /
@@ -27,13 +29,17 @@ export default function TripListPage({
   onOpenGuide,
   onOpenSettings,
   onOpenTrip,
+  creationSession,
 }: {
   onOpenGuide: () => void
   /** Deployment-only AI provider settings entry. */
   onOpenSettings?: () => void
   /** Optional so the component stays usable without a workbench (tests). */
   onOpenTrip?: (tripId: string, initialPrompt?: string) => void
+  creationSession?: { current: TripCreationSession }
 }) {
+  const localSession = useRef<TripCreationSession>({ mode: 'ai', guide: null })
+  const savedCreation = creationSession ?? localSession
   const [trips, setTrips] = useState<TripSummary[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [form, setForm] = useState<TripFormInput>({ title: '', startDate: '', endDate: '' })
@@ -48,6 +54,8 @@ export default function TripListPage({
   const [intake, setIntake] = useState<TripIntakeInput>({ sentence: '' })
   const [intakeError, setIntakeError] = useState<string | null>(null)
   const [intakeSubmitting, setIntakeSubmitting] = useState(false)
+  const [creationMode, setCreationMode] = useState<'ai' | 'guide'>(savedCreation.current.mode)
+  const [guideBusy, setGuideBusy] = useState(false)
 
   const reload = useCallback(async () => {
     setLoadError(null)
@@ -185,35 +193,52 @@ export default function TripListPage({
           )}
         </section>
 
-        <form
-          id="trip-intake-form"
-          onSubmit={handleIntake}
-          className="border border-green/35 rounded-[8px] bg-[#f8fbf7] p-[18px] mb-[18px] max-sm:p-[14px]"
-        >
-          <label className="block text-[12px] text-muted">
-            一句话开始规划
-            <textarea
-              id="trip-intake-input"
-              value={intake.sentence}
-              maxLength={500}
-              placeholder="例：我想去呼伦贝尔 7 天，慢节奏，自驾"
-              onChange={(event) => setIntake({ sentence: event.target.value })}
-              rows={2}
-              className="mt-[6px] min-h-[42px] w-full resize-y rounded-[5px] border border-line bg-white px-[12px] py-[9px] text-[14px] text-ink focus:outline-none focus:border-green"
-            />
-          </label>
-          <div className="mt-[9px] flex items-center gap-[10px]">
-            <button
-              id="trip-intake-submit"
-              type="submit"
-              disabled={intakeSubmitting}
-              className="h-[36px] rounded-[5px] bg-green px-[15px] text-[12px] font-[550] text-white disabled:opacity-50"
-            >
-              {intakeSubmitting ? '准备中…' : '开始规划'}
-            </button>
-            {intakeError && <span id="trip-intake-error" className="text-[12px] text-red">{intakeError}</span>}
+        <section className="mb-[18px] overflow-hidden rounded-[8px] border border-green/35 bg-paper" aria-label="创建行程的方式">
+          <div className="flex border-b border-line bg-white p-[6px]" role="group" aria-label="选择创建方式">
+            {(['ai', 'guide'] as const).map((mode) => <button
+              key={mode} id={'trip-mode-' + mode} type="button" aria-pressed={creationMode === mode}
+              disabled={intakeSubmitting || guideBusy} onClick={() => { savedCreation.current.mode = mode; setCreationMode(mode) }}
+              className={'min-h-[44px] rounded-[5px] px-[18px] text-[14px] font-[550] ' + (creationMode === mode ? 'bg-green text-white' : 'text-muted hover:text-green')}
+            >{mode === 'ai' ? 'AI 创建计划' : '解析攻略'}</button>)}
           </div>
-        </form>
+          <div hidden={creationMode !== 'ai'}>
+            <form
+              id="trip-intake-form"
+              onSubmit={handleIntake}
+              className="p-[20px] max-sm:p-[14px]"
+            >
+              <label className="block text-[12px] text-muted">
+                一句话开始规划
+                <textarea
+                  id="trip-intake-input"
+                  value={intake.sentence}
+                  maxLength={500}
+                  placeholder="例：我想去呼伦贝尔 7 天，慢节奏，自驾"
+                  onChange={(event) => setIntake({ sentence: event.target.value })}
+                  rows={2}
+                  className="mt-[6px] min-h-[42px] w-full resize-y rounded-[5px] border border-line bg-white px-[12px] py-[9px] text-[14px] text-ink focus:outline-none focus:border-green"
+                />
+              </label>
+              <div className="mt-[9px] flex items-center gap-[10px]">
+                <button
+                  id="trip-intake-submit"
+                  type="submit"
+                  disabled={intakeSubmitting}
+                  className="h-[36px] rounded-[5px] bg-green px-[15px] text-[12px] font-[550] text-white disabled:opacity-50"
+                >
+                  {intakeSubmitting ? '准备中…' : '开始规划'}
+                </button>
+                {intakeError && <span id="trip-intake-error" className="text-[12px] text-red">{intakeError}</span>}
+              </div>
+            </form>
+          </div>
+          <div hidden={creationMode !== 'guide'}>
+            <GuideImportPanel session={savedCreation.current.guide} onSessionChange={(session) => { savedCreation.current.guide = session }} onBusyChange={setGuideBusy} onOpenSettings={onOpenSettings} onCreated={(trip) => {
+              setTrips((prev) => [...(prev ?? []).filter((item) => item.id !== trip.id), trip])
+              onOpenTrip?.(trip.id)
+            }} />
+          </div>
+        </section>
 
         {/* 创建行程 */}
         <form
