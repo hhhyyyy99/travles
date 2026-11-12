@@ -18,6 +18,8 @@ import {
 } from './ai-proposals/tool.js'
 import type { TripPatchStoreDriver } from './trip-patch/types.js'
 import { createSearchPoiTool } from './recommendations/tool.js'
+import { createParseLinkWorkflow } from './guide-parsing/workflow.js'
+import type { GuideSourceDependencies } from './guide-parsing/source.js'
 import { createRouteLegsTool, createSearchStayReferenceTool } from './recommendations/tool.js'
 import type { PoiSearch, RouteLegSearch } from './recommendations/types.js'
 
@@ -133,6 +135,8 @@ export type CreateMastraOptions = {
   resolveTripPatchStore?: () => Promise<TripPatchStoreDriver>
   /** Shared `search_poi` provider used by both HTTP and Mastra tool paths. */
   searchPoi?: PoiSearch
+  /** Guide URL transport seam; all destination checks remain enabled. */
+  guideSourceDependencies?: GuideSourceDependencies
   /** Shared driving-route provider used by the `route_legs` tool. */
   routeLegs?: RouteLegSearch
 }
@@ -187,8 +191,14 @@ export function createMastra(options: CreateMastraOptions = {}): Mastra {
     },
   })
 
+  const parse_link_workflow = createParseLinkWorkflow({
+    resolveModel: options.resolveModel ?? (() => options.model ?? modelConfigFromEnv()),
+    searchPoi: options.searchPoi ?? (async () => []),
+    sourceDependencies: options.guideSourceDependencies,
+  })
   return new Mastra({
     agents: { planner },
+    workflows: { parse_link_workflow },
     logger: false,
   })
 }

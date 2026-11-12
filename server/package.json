@@ -14,6 +14,7 @@
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "@hailar/domain": "workspace:*",
     "@hono/node-server": "^1.19.0",
     "@libsql/client": "^0.18.0",
     "@mastra/core": "^1.66.0",
@@ -21,8 +22,9 @@
     "@mastra/libsql": "^1.22.5",
     "@mastra/memory": "^1.29.0",
     "hono": "^4.12.8",
-    "zod": "^4.6.1",
-    "@hailar/domain": "workspace:*"
+    "ipaddr.js": "^2.5.0",
+    "linkedom": "^0.18.15",
+    "zod": "^4.6.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

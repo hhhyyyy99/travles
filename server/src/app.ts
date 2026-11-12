@@ -49,6 +49,8 @@ import { TripEventHub } from './trip-events/hub.js'
 import { registerTripEventRoutes } from './trip-events/routes.js'
 import { synchronizeTripSchedule } from './trip-events/schedule.js'
 import { RouteLookupCache, routeAmapLeg } from './recommendations/route.js'
+import { registerGuideParsingRoutes } from './guide-parsing/routes.js'
+import type { GuideSourceDependencies } from './guide-parsing/source.js'
 
 export type AppEnv = {
   Bindings: HonoBindings
@@ -130,6 +132,8 @@ export type CreateAppOptions = {
   aiProviderStore?: AiProviderStoreDriver
   /** Injected provider probe (ticket 12; API tests avoid external services). */
   aiProviderProbe?: AiProviderProbe
+  /** Injected URL transport for guide parsing tests (destination checks still apply). */
+  guideSourceDependencies?: GuideSourceDependencies
   /** Injected route lookup; production uses the AMap driving API. */
   routeLegs?: import('./recommendations/types.js').RouteLegSearch
   /** Process-local fan-out bus for workbench near-real-time updates. */
@@ -202,11 +206,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     resolveTripPatchStore: resolveTripPatchStore,
     searchPoi: options.searchPoi ?? searchAmapPoi,
     routeLegs: options.routeLegs ?? routeAmapLeg,
+    guideSourceDependencies: options.guideSourceDependencies,
   })
   const memoryConfigured = options.plannerMemory !== undefined || !options.tripRepository
 
   const server = new MastraServer({ app, mastra })
   await server.init()
+  registerGuideParsingRoutes(app, mastra)
 
   // ---- Workbench canvas read (ticket 04, additive) --------------------------
   // Read-only day/item/leg reads for the three-column workbench. Resolved

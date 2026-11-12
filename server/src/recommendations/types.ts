@@ -62,6 +62,8 @@ export type PoiSearchInput = {
   query: string
   region?: string
   type?: RecommendationPoi['type'] | null
+  /** Optional caller deadline for bounded background matching. */
+  signal?: AbortSignal
 }
 
 export type PoiSearch = (input: PoiSearchInput) => Promise<RecommendationPoi[]>

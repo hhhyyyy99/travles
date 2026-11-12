@@ -187,6 +187,12 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
   }
   const prompt = messages
   if (!capabilities.functionCalling) appendFallbackInstruction(prompt, '', options.tools)
+  // OpenAI reasoning models reject the older max_tokens field; most other
+  // compatible providers (including DeepSeek/Qwen) use that legacy spelling.
+  const modelName = provider.modelId.split('/').at(-1) ?? provider.modelId
+  const tokenLimitField = /^(?:o[1-9](?:[.-]|$)|gpt-5(?:[.-]|$))/.test(modelName)
+    ? 'max_completion_tokens'
+    : 'max_tokens'
   return {
     url: endpointFor(provider.baseUrl, provider.protocol),
     headers,
@@ -198,6 +204,7 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
       ...(tools && tools.length > 0 ? { tools, tool_choice: options.toolChoice ? toToolChoice(options.toolChoice) : 'auto' } : {}),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.topP !== undefined ? { top_p: options.topP } : {}),
+      ...(options.maxOutputTokens !== undefined ? { [tokenLimitField]: options.maxOutputTokens } : {}),
       ...(options.stopSequences ? { stop: options.stopSequences } : {}),
     },
   }

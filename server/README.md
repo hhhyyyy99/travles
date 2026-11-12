@@ -27,6 +27,42 @@ never included in settings responses.
 Without a saved provider or `AI_BASE_URL`/`AI_API_KEY`, the server starts fine,
 but chat requests answer `503` with guidance instead of opening a stream.
 
+## Guide parsing workflow (part of #5)
+
+`POST /api/ai/parse-guide` runs the registered Mastra `parse_link_workflow`:
+source loading → schema-validated extraction → POI matching. Send either
+`{"text":"第一天成都人民公园喝茶，第二天返回市区。"}` or
+`{"url":"https://example.com/travel-guide"}`. A supplied nonblank `text` takes
+precedence, so the same request can be retried with pasted content after a
+blocked URL. Text is limited to 20,000 characters.
+
+A successful response is `{status:"ready", source, draft}`. The draft retains
+source ordering with ordinal day numbers and `dateStatus:"unspecified"`;
+parsing does not create/edit trips, write chat history or confirm travel dates.
+The tool-free extraction agent uses the currently selected saved provider (or
+the existing environment fallback), independently of planner conversation
+memory. Its JSON output must pass the shared `@hailar/domain` schemas.
+
+Unavailable, blocked, oversized or unreadable articles return HTTP 200 with
+`{status:"text_required", code:"source_unavailable", guidance}` so clients can
+offer a paste-text retry. Public HTTP/HTTPS URLs only are accepted; redirects
+are checked again and DNS resolution is pinned to prevent requests to local
+or private services. Article loading is bounded to 10 seconds and 1 MiB.
+
+Only unambiguous, exact local POI matches receive provider coordinates. No map
+key, lookup errors or unmatched places leave cards intact with `poi:null` and
+`pending:true`. Lookups use four workers, at most 30 distinct queries, a
+2-second per-query deadline and an 8-second stage deadline. Coordinates keep
+the existing WGS-84 contract; the workflow does not invent or double-convert
+them. Extraction has a 60-second model deadline. Invalid requests return 400
+(or 413 for oversized HTTP bodies); model configuration, extraction and
+availability errors use 503, 422 and 502 respectively.
+
+This backend preview endpoint is separate from the existing trip proposal
+confirmation APIs. The home-page parsing UI and committing a preview to a trip
+remain subsequent work; existing `/api/trips/:id/ai/proposals` behavior is
+preserved.
+
 ## Recommendation and route services (ticket 15)
 
 `AMAP_WEB_KEY` (or the legacy alias `AMAP_KEY`) enables the server-side
