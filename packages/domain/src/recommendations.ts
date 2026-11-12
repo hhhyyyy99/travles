@@ -23,6 +23,9 @@ export const RecommendationPoiSchema = PoiRefSchema.extend({
   id: z.string(),
   type: RecommendationTypeSchema,
   region: z.string(),
+  /** Optional provider hierarchy; region remains the existing district label. */
+  city: z.string().optional(),
+  province: z.string().optional(),
   address: z.string(),
   images: z.array(ItemImageSchema),
 })
