@@ -32,6 +32,7 @@
  * the canvas chip hides. Patch-applied days therefore always carry usable
  * estimated legs — never placeholder NULL rows.
  */
+import type { Day } from '@hailar/domain'
 import { isValidDateString } from '../trips/dates.js'
 import { mapLegRow, mapPoiRef } from '../days/repository.js'
 import type { CanvasItem, CanvasLeg, ItemType, PoiRef } from '../days/types.js'
@@ -58,7 +59,7 @@ type ProjectedItem = {
   fromPatch: boolean
 }
 
-type ProjectedDay = {
+type ProjectedDay = Pick<Day, 'title' | 'note'> & {
   id: string
   idx: number
   date: string
@@ -95,6 +96,8 @@ async function loadProjection(store: TripPatchStoreDriver, tripId: string): Prom
       idx: Number.isInteger(idx) && idx >= 0 ? idx : 0,
       date: typeof row?.date === 'string' && isValidDateString(row.date) ? row.date : '',
       theme: typeof row?.theme === 'string' ? row.theme : '',
+      ...(typeof row?.title === 'string' ? { title: row.title } : {}),
+      ...(typeof row?.note === 'string' ? { note: row.note } : {}),
       items: [],
     }
     days.set(id, day)
@@ -168,6 +171,8 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
           idx: ++projection.maxIdx,
           date: date ?? '',
           theme: (op.theme as string | undefined) ?? '',
+          ...(op.title !== undefined ? { title: op.title as string } : {}),
+          ...(op.note !== undefined ? { note: op.note as string } : {}),
           items: [],
         })
         break
@@ -181,6 +186,8 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
           day.date = date
         }
         if (op.theme !== undefined) day.theme = op.theme as string
+        if (op.title !== undefined) day.title = op.title as string
+        if (op.note !== undefined) day.note = op.note as string
         break
       }
       case 'remove_day': {
@@ -661,6 +668,8 @@ export async function applyTripPatch(
               idx: day.idx,
               date: day.date || nextDateAfter(reference.days.values()),
               theme: day.theme,
+              ...(op.title !== undefined ? { title: op.title } : {}),
+              ...(op.note !== undefined ? { note: op.note } : {}),
             })
             stats.daysAdded += 1
             break
@@ -668,7 +677,13 @@ export async function applyTripPatch(
           case 'update_day': {
             const day = reference.days.get(op.dayId)
             if (!day) throw new Error('patch projection drifted')
-            await transactionStore.upsertDayRow(tripId, { id: day.id, idx: day.idx, date: day.date, theme: day.theme })
+            await transactionStore.upsertDayRow(tripId, {
+              id: day.id, idx: day.idx, date: day.date, theme: day.theme,
+              // Never replay metadata from the loaded projection: another
+              // writer may have changed an omitted field before this transaction.
+              ...(op.title !== undefined ? { title: op.title } : {}),
+              ...(op.note !== undefined ? { note: op.note } : {}),
+            })
             stats.daysUpdated += 1
             break
           }

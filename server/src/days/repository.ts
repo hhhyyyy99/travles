@@ -6,6 +6,7 @@
  */
 import { asText } from '../trips/dates.js'
 import { projectDayIdentity } from './projections.js'
+import { readDayMetadata } from './metadata.js'
 import type {
   CanvasDay,
   CanvasItem,
@@ -80,6 +81,7 @@ export function mapDayRow(row: DayRow, items: CanvasItem[], tripId?: string): Ca
   return {
     id,
     ...projectDayIdentity(row?.trip_id, row?.idx, tripId),
+    ...readDayMetadata(row),
     index: asNonNegativeNumber(row?.idx),
     date: asDateString(row?.date),
     theme: asText(row?.theme),

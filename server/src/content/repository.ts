@@ -14,6 +14,7 @@
  * ID scheme.
  */
 import { projectDayIdentity } from '../days/projections.js'
+import { readDayMetadata } from '../days/metadata.js'
 import type {
   ChecklistEntry,
   ChecklistRow,
@@ -128,6 +129,7 @@ function mapDayRow(row: DayRow, itemsByDay: Map<string, ItemContent[]>, tripId: 
   return {
     id,
     ...projectDayIdentity(row?.trip_id, row?.idx, tripId),
+    ...readDayMetadata(row),
     idx: Number.isInteger(idxNumber) ? idxNumber : 0,
     date: asText(row?.date),
     theme: asText(row?.theme),

@@ -13,9 +13,11 @@
 import { randomUUID } from 'node:crypto'
 import { isValidDateString } from '../trips/dates.js'
 import { projectDayIdentity } from '../days/projections.js'
+import { DayMetadataSchema, readDayMetadata } from '../days/metadata.js'
 import type { DayRow } from '../days/types.js'
 import type {
   AdminDay,
+  DayCreateInput,
   DayDeleteResult,
   DayInsert,
   DaysAdminErrorCode,
@@ -53,7 +55,7 @@ export class DaysAdminRepository {
    */
   async createDay(
     tripId: string,
-    input: { date?: unknown; theme?: unknown; color?: unknown } = {},
+    input: DayCreateInput = {},
   ): Promise<DayWriteResult> {
     let rows: DayRow[]
     try {
@@ -77,7 +79,11 @@ export class DaysAdminRepository {
     const colorResult = readTextField(input.color, MAX_COLOR_LENGTH, '颜色')
     if (!colorResult.ok) return colorResult
 
+    const metadata = DayMetadataSchema.safeParse(input)
+    if (!metadata.success) return { ok: false, error: '日程标题和备注必须是字符串', code: 'invalid' }
+
     const row: DayInsert = {
+      ...readDayMetadata(metadata.data),
       id: randomUUID(),
       tripId,
       idx: nextIndexAfter(rows),
@@ -93,7 +99,7 @@ export class DaysAdminRepository {
     return { ok: true, day: mapAdminDay(row, tripId) }
   }
 
-  /** Update a day's theme and/or color. Unknown day / foreign trip → not_found. */
+  /** Update a day's metadata, theme, or color. Unknown/foreign day → not_found. */
   async updateDay(tripId: string, dayId: string, patch: DayThemeInput): Promise<DayWriteResult> {
     let row: DayRow | null
     try {
@@ -105,7 +111,9 @@ export class DaysAdminRepository {
       return { ok: false, error: '日程不存在', code: 'not_found' }
     }
 
-    const nextPatch: DayThemePatch = {}
+    const metadata = DayMetadataSchema.safeParse(patch)
+    if (!metadata.success) return { ok: false, error: '日程标题和备注必须是字符串', code: 'invalid' }
+    const nextPatch: DayThemePatch = readDayMetadata(metadata.data)
     if (patch.theme !== undefined) {
       const themeResult = readTextField(patch.theme, MAX_THEME_LENGTH, '主题')
       if (!themeResult.ok) return themeResult
@@ -116,7 +124,7 @@ export class DaysAdminRepository {
       if (!colorResult.ok) return colorResult
       nextPatch.color = colorResult.value
     }
-    if (nextPatch.theme === undefined && nextPatch.color === undefined) {
+    if (Object.keys(nextPatch).length === 0) {
       return { ok: false, error: '没有可更新的字段', code: 'invalid' }
     }
 
@@ -129,8 +137,7 @@ export class DaysAdminRepository {
       ok: true,
       day: mapAdminDay({
         ...row,
-        theme: nextPatch.theme ?? row.theme,
-        color: nextPatch.color ?? row.color,
+        ...nextPatch,
       }, tripId),
     }
   }
@@ -174,6 +181,7 @@ function mapAdminDay(row: DayInsert | DayRow, tripId: string): AdminDay {
   return {
     id: typeof source.id === 'string' ? source.id : '',
     ...projectDayIdentity('tripId' in source ? source.tripId : source.trip_id, source.idx, tripId),
+    ...readDayMetadata(source),
     index: nextIndexFrom(source.idx),
     date: typeof source.date === 'string' ? source.date : '',
     theme: typeof source.theme === 'string' ? source.theme : '',

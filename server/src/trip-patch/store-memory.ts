@@ -102,9 +102,15 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       existing.idx = day.idx
       existing.date = day.date
       existing.theme = day.theme
+      if (day.title !== undefined) existing.title = day.title
+      if (day.note !== undefined) existing.note = day.note
       return
     }
-    this.dayRows.push({ id: day.id, trip_id: tripId, idx: day.idx, date: day.date, theme: day.theme, color: '' })
+    this.dayRows.push({
+      id: day.id, trip_id: tripId, idx: day.idx, date: day.date, theme: day.theme, color: '',
+      ...(day.title !== undefined ? { title: day.title } : {}),
+      ...(day.note !== undefined ? { note: day.note } : {}),
+    })
   }
 
   async deleteDayRow(tripId: string, dayId: string): Promise<void> {

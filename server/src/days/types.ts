@@ -32,8 +32,10 @@ export type {
   TripCanvas,
 } from '@hailar/domain'
 
+import type { DayMetadataInput } from './metadata.js'
+
 /** Raw driver rows (values unknown so corrupt storage can be represented). */
-export interface DayRow {
+export interface DayRow extends DayMetadataInput {
   id: unknown
   trip_id: unknown
   idx: unknown

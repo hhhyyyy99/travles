@@ -23,6 +23,7 @@
  * Extracted without changing the current API/storage vocabulary or limits.
  */
 import { z } from 'zod'
+import { DaySchema } from './trip.js'
 
 const idField = z
   .string()
@@ -55,6 +56,8 @@ const addDayOp = z.object({
   op: z.literal('add_day'),
   dayId: idField.describe('新一天的 id'),
   date: dateField.optional().describe('日期；省略则排在最后一天的次日'),
+  title: DaySchema.shape.title.describe('当天标题；省略则不设置，空字符串保留为空'),
+  note: DaySchema.shape.note.describe('当天备注；省略则不设置，空字符串保留为空'),
   theme: z.string().max(200).optional().describe('当天主题，如「草原穿越日」'),
 })
 
@@ -62,6 +65,8 @@ const updateDayOp = z.object({
   op: z.literal('update_day'),
   dayId: idField.describe('已存在的一天'),
   date: dateField.optional().describe('新的日期'),
+  title: DaySchema.shape.title.describe('新的当天标题；省略保留原值，空字符串清空；不接受 null'),
+  note: DaySchema.shape.note.describe('新的当天备注；省略保留原值，空字符串清空；不接受 null'),
   theme: z.string().max(200).optional().describe('新的主题'),
 })
 

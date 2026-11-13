@@ -136,6 +136,9 @@ export const DaySchema = z.object({
   dayNumber: z.number().int().positive().optional(),
   index: z.number(),
   date: z.string(),
+  // Day metadata is independent of theme and item notes; preserve raw strings.
+  title: z.string().optional(),
+  note: z.string().optional(),
   theme: z.string(),
   color: z.string(),
   items: z.array(ActivityItemSchema),
