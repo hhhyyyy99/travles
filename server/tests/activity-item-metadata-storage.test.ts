@@ -288,6 +288,25 @@ test('item title-only and single-metadata updates preserve a sibling changed aft
   }
 })
 
+test('move responses include metadata added after loading the old layout', async () => {
+  const db = await database()
+  const driver = new SqliteItemsAdminStoreDriver(db)
+  try {
+    await driver.upsertItemFull('trip', UPSERT)
+    const originalTransaction = driver.withTransaction.bind(driver)
+    driver.withTransaction = async (fn) => {
+      await db.run("UPDATE items SET cost = 'Concurrent cost' WHERE id = 'item'")
+      return originalTransaction(fn)
+    }
+    const result = await new ItemsAdminRepository(driver).moveItem('trip', 'item', { dayId: 'second', index: 0 })
+    assert.ok(result.ok)
+    assert.equal((await driver.getItemRow('item'))?.cost, 'Concurrent cost')
+    assert.equal(result.item.cost, 'Concurrent cost', 'the move response must use the persisted metadata')
+  } finally {
+    await db.close()
+  }
+})
+
 for (const kind of ['sqlite', 'memory'] as const) {
   test(`${kind} update fails atomically when the post-write metadata row cannot be read safely`, async () => {
     const db = kind === 'sqlite' ? await database() : undefined
@@ -314,6 +333,52 @@ for (const kind of ['sqlite', 'memory'] as const) {
         assert.equal(readValue, 'New time', 'the authoritative read occurs after the upsert')
         assert.deepEqual(result, { ok: false, error: '保存失败', code: 'storage' }, failure)
         assert.deepEqual(await driver.listItemRows('trip'), before, 'a failed authoritative read rolls back instead of returning old metadata')
+      }
+    } finally {
+      await db?.close()
+    }
+  })
+
+  test(`${kind} layout mutations roll back positions, legs and new rows when the metadata read fails`, async () => {
+    const db = kind === 'sqlite' ? await database() : undefined
+    const driver = db ? new SqliteItemsAdminStoreDriver(db) : new MemoryItemsAdminStoreDriver()
+    if (driver instanceof MemoryItemsAdminStoreDriver) {
+      driver.dayRows.set('day', DAY)
+      driver.dayRows.set('second', SECOND_DAY)
+    }
+    try {
+      await driver.upsertItemFull('trip', { ...UPSERT, timeRange: 'Time', cost: 'Cost' })
+      await driver.upsertItemFull('trip', { ...UPSERT, id: 'neighbor', itemOrder: 1 })
+      const repository = new ItemsAdminRepository(driver)
+      assert.ok((await repository.moveItem('trip', 'item', { index: 0 })).ok)
+      const snapshot = async () => structuredClone({ items: await driver.listItemRows('trip'), legs: await driver.listLegRows('trip') })
+      const before = await snapshot()
+      const originalTransaction = driver.withTransaction.bind(driver)
+      for (const operation of ['move', 'copy', 'create']) {
+        for (const failure of ['read error', 'missing', 'wrong id', 'wrong trip']) {
+          const readRows: Array<ItemRow | null> = []
+          driver.withTransaction = (fn) => originalTransaction(async (transaction) => {
+            const originalRead = transaction.getItemRow
+            transaction.getItemRow = async (id) => {
+              const saved = await originalRead.call(transaction, id)
+              readRows.push(saved)
+              if (failure === 'read error') throw new Error('Read failed')
+              if (failure === 'missing' || !saved) return null
+              return { ...saved, ...(failure === 'wrong id' ? { id: 'other-item' } : { trip_id: 'other-trip' }) }
+            }
+            try { return await fn(transaction) } finally { transaction.getItemRow = originalRead }
+          })
+          const target = { dayId: 'second', index: 0 }
+          const result = operation === 'move'
+            ? await repository.moveItem('trip', 'item', target)
+            : operation === 'copy'
+              ? await repository.copyItem('trip', 'item', target)
+              : await repository.createItem('trip', { ...target, title: 'Created', timeRange: '', cost: 'New cost' })
+          assert.equal(readRows.length, 1)
+          assert.equal(readRows[0]?.day_id, 'second', 'the authoritative read sees the completed layout write')
+          assert.deepEqual(result, { ok: false, error: '保存失败', code: 'storage' }, `${operation}: ${failure}`)
+          assert.deepEqual(await snapshot(), before, 'read failure rolls back row/position and leg writes together')
+        }
       }
     } finally {
       await db?.close()

@@ -222,19 +222,11 @@ export class ItemsAdminRepository {
 
     const updated: CanvasItem = { ...current, title, note, images, poi, ...metadata }
     try {
-      const savedMetadata = await this.driver.withTransaction(async (transactionDriver) => {
+      const responseItem = await this.driver.withTransaction(async (transactionDriver) => {
         await transactionDriver.upsertItemFull(tripId, itemToUpsert(updated, metadata))
-        const saved = await transactionDriver.getItemRow(itemId)
-        if (!saved || asText(saved.id) !== itemId || asText(saved.trip_id) !== tripId) {
-          throw new Error('Updated item cannot be read in its trip')
-        }
-        return readActivityItemMetadata({ timeRange: saved.time_range, cost: saved.cost })
+        return withPersistedItemMetadata(transactionDriver, tripId, updated)
       })
-      // Untouched metadata may have changed after the initial read. The response
-      // must use the same post-write values as a canvas refresh, including omissions.
-      delete updated.timeRange
-      delete updated.cost
-      return { ok: true, item: { ...updated, ...savedMetadata } }
+      return { ok: true, item: responseItem }
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
     }
@@ -325,16 +317,35 @@ export class ItemsAdminRepository {
     const nextLegs = recomputeTripLegs(normalizedItems, previousLegs, dayOrder)
     const orders = affectedDayIds.flatMap((dayId) => orderPatchesForDay(normalizedItems, dayId))
     try {
-      await this.driver.withTransaction(async (transactionDriver) => {
+      const responseItem = await this.driver.withTransaction(async (transactionDriver) => {
         if (upsertAffectedItem) await transactionDriver.upsertItemFull(tripId, itemToUpsert(finalItem))
         await transactionDriver.updateItemOrders(tripId, orders)
         await transactionDriver.replaceLegs(tripId, nextLegs)
+        return withPersistedItemMetadata(transactionDriver, tripId, finalItem)
       })
+      return { ok: true, item: responseItem, legs: nextLegs }
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
     }
-    return { ok: true, item: finalItem, legs: nextLegs }
   }
+}
+
+/** Read metadata after every item mutation inside its transaction, or roll it back. */
+async function withPersistedItemMetadata(
+  driver: ItemsAdminStoreDriver,
+  tripId: string,
+  item: CanvasItem,
+): Promise<CanvasItem> {
+  const saved = await driver.getItemRow(item.id)
+  if (!saved || asText(saved.id) !== item.id || asText(saved.trip_id) !== tripId) {
+    throw new Error('Saved item cannot be read in its trip')
+  }
+  // Drop both loaded values: a bad/NULL stored field must remain absent even
+  // when the layout or edit projection still carries an old valid string.
+  const responseItem = { ...item }
+  delete responseItem.timeRange
+  delete responseItem.cost
+  return { ...responseItem, ...readActivityItemMetadata({ timeRange: saved.time_range, cost: saved.cost }) }
 }
 
 // ---------------------------------------------------------------------------
