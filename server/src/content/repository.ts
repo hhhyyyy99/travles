@@ -13,6 +13,7 @@
  * of duplicating it. See server/src/seed/builtin-trip-data.ts for the fixed
  * ID scheme.
  */
+import { projectDayIdentity } from '../days/projections.js'
 import type {
   ChecklistEntry,
   ChecklistRow,
@@ -61,7 +62,7 @@ export class TripContentRepository {
     }
 
     return dayRows
-      .map((row) => mapDayRow(row, itemsByDay))
+      .map((row) => mapDayRow(row, itemsByDay, tripId))
       .filter((day): day is DayContent => day !== null)
       .sort((a, b) => a.idx - b.idx || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   }
@@ -120,12 +121,13 @@ export class TripContentRepository {
 // Tolerant mapping helpers (corrupt values degrade, never throw)
 // ---------------------------------------------------------------------------
 
-function mapDayRow(row: DayRow, itemsByDay: Map<string, ItemContent[]>): DayContent | null {
+function mapDayRow(row: DayRow, itemsByDay: Map<string, ItemContent[]>, tripId: string): DayContent | null {
   const id = asText(row?.id)
   if (!id) return null
   const idxNumber = Number(row?.idx)
   return {
     id,
+    ...projectDayIdentity(row?.trip_id, row?.idx, tripId),
     idx: Number.isInteger(idxNumber) ? idxNumber : 0,
     date: asText(row?.date),
     theme: asText(row?.theme),

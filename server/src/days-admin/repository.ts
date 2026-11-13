@@ -12,6 +12,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { isValidDateString } from '../trips/dates.js'
+import { projectDayIdentity } from '../days/projections.js'
 import type { DayRow } from '../days/types.js'
 import type {
   AdminDay,
@@ -30,6 +31,20 @@ const MAX_COLOR_LENGTH = 32
 
 export class DaysAdminRepository {
   constructor(private readonly driver: DaysAdminStoreDriver) {}
+
+  /** Re-read the authoritative day after schedule synchronization changes idx/date. */
+  async getDay(tripId: string, dayId: string): Promise<DayWriteResult> {
+    let row: DayRow | null
+    try {
+      row = await this.driver.getDayRow(dayId)
+    } catch {
+      return { ok: false, error: '读取日程失败', code: 'storage' }
+    }
+    if (!row || asText(row.id) !== dayId || asText(row.trip_id) !== tripId) {
+      return { ok: false, error: '日程不存在', code: 'not_found' }
+    }
+    return { ok: true, day: mapAdminDay(row, tripId) }
+  }
 
   /**
    * Append a day to the trip. With no payload the new day lands after the
@@ -75,7 +90,7 @@ export class DaysAdminRepository {
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
     }
-    return { ok: true, day: mapAdminDay(row) }
+    return { ok: true, day: mapAdminDay(row, tripId) }
   }
 
   /** Update a day's theme and/or color. Unknown day / foreign trip → not_found. */
@@ -116,7 +131,7 @@ export class DaysAdminRepository {
         ...row,
         theme: nextPatch.theme ?? row.theme,
         color: nextPatch.color ?? row.color,
-      }),
+      }, tripId),
     }
   }
 
@@ -154,10 +169,11 @@ export class DaysAdminRepository {
 // ---------------------------------------------------------------------------
 
 /** 容错 row → AdminDay (canvas-day shape with an empty items list). */
-function mapAdminDay(row: DayInsert | DayRow): AdminDay {
+function mapAdminDay(row: DayInsert | DayRow, tripId: string): AdminDay {
   const source = row as unknown as Record<string, unknown>
   return {
     id: typeof source.id === 'string' ? source.id : '',
+    ...projectDayIdentity('tripId' in source ? source.tripId : source.trip_id, source.idx, tripId),
     index: nextIndexFrom(source.idx),
     date: typeof source.date === 'string' ? source.date : '',
     theme: typeof source.theme === 'string' ? source.theme : '',

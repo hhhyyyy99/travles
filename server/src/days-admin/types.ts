@@ -16,7 +16,7 @@
    * those items are removed too (the legs table has no FK on items, so the
    * driver performs the cleanup explicitly).
  */
-import type { DayRow } from '../days/types.js'
+import type { DayRow, CanvasDay } from '../days/types.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
 /** Validated insert payload (every field a server-checked value). */
@@ -66,14 +66,7 @@ export interface DaysAdminStoreDriver {
 export type DaysAdminErrorCode = 'invalid' | 'not_found' | 'storage'
 
 /** The day shape the HTTP layer returns (canvas-day parity, items omitted). */
-export interface AdminDay {
-  id: string
-  index: number
-  date: string
-  theme: string
-  color: string
-  items: []
-}
+export type AdminDay = Omit<CanvasDay, 'items'> & { items: [] }
 
 export type DayWriteResult =
   | { ok: true; day: AdminDay }

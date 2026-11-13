@@ -10,6 +10,8 @@
  * lives behind its own interface so the two evolve independently.
  */
 
+import type { Day } from '@hailar/domain'
+
 /** Raw days-table row; values unknown so corrupt storage can be represented. */
 export interface DayRow {
   id: unknown
@@ -92,7 +94,7 @@ export interface ItemContent {
   poi?: unknown
 }
 
-export interface DayContent {
+export interface DayContent extends Pick<Day, 'tripId' | 'dayNumber'> {
   id: string
   idx: number
   date: string
