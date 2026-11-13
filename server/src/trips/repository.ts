@@ -193,6 +193,9 @@ export function mapRowToSummary(row: TripRow): TripSummary | null {
     ...computeDaysNights(startDate, endDate),
     createdAt: asTimestamp(row?.created_at),
     updatedAt: asTimestamp(row?.updated_at),
+    ...(typeof row.cover_image === 'string' ? { coverImage: row.cover_image } : {}),
+    ...(row.is_pinned === 0 || row.is_pinned === 1 ? { isPinned: row.is_pinned === 1 } : {}),
+    ...(typeof row.status === 'string' ? { status: row.status } : {}),
     ...(context ? { durationDays: context.durationDays, dateStatus: context.dateStatus, planningContext: context } : {}),
   }
 }

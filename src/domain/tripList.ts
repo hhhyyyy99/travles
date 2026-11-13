@@ -218,6 +218,9 @@ export function normalizeTrip(value: unknown): TripSummary | null {
     nights,
     createdAt: typeof record.createdAt === 'string' ? record.createdAt : '',
     updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : '',
+    ...(typeof record.coverImage === 'string' ? { coverImage: record.coverImage } : {}),
+    ...(typeof record.isPinned === 'boolean' ? { isPinned: record.isPinned } : {}),
+    ...(typeof record.status === 'string' ? { status: record.status } : {}),
     ...(planningContext
       ? {
           durationDays: planningContext.durationDays,

@@ -61,6 +61,10 @@ export const TripSummarySchema = z.object({
   durationDays: z.number().optional(),
   dateStatus: TripDateStatusSchema.optional(),
   planningContext: TripPlanningContextSchema.optional(),
+  coverImage: z.string().optional(),
+  isPinned: z.boolean().optional(),
+  // Read existing labels without defining a lifecycle or inferring it from dates.
+  status: z.string().optional(),
 })
 export type TripSummary = z.infer<typeof TripSummarySchema>
 

@@ -23,6 +23,9 @@ export interface TripRow {
   created_at: unknown
   updated_at: unknown
   planning_context?: unknown
+  cover_image?: unknown
+  is_pinned?: unknown
+  status?: unknown
 }
 
 export type TripInsertRow = {
