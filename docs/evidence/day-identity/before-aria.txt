@@ -1,0 +1,53 @@
+- banner:
+  - button "返回行程列表"
+  - heading "日程序号兼容验证" [level=1]
+  - button "生成路线优化建议": 路线优化
+  - button "打印当前行程"
+  - button "编辑当前行程住宿"
+- text: 圆周 AI
+- button "收起 AI 栏"
+- paragraph: 和圆周说一句话，一起规划这段旅程。
+- button "第一次去呼伦贝尔，7 天怎么安排不赶？"
+- button "沿路有哪些值得吃的和值得带的？"
+- button "帮我把路线顺一顺，少绕路、多玩几个地方"
+- textbox "输入消息":
+  - /placeholder: 询问行程、路况、住宿，或粘贴攻略…
+- button "智能解析" [disabled]
+- button "发送消息" [disabled]
+- separator "拖拽调整 AI 栏宽度"
+- text: 行程画布
+- button "画布"
+- button "列表" [pressed]
+- button "收起画布栏"
+- toolbar "行程工具":
+  - button "展开便签面板"
+  - button "展开清单面板"
+  - button "展开图库面板"
+  - text: 工具
+- tablist "按天切换列表":
+  - tab "D1 D1"
+  - tab "D8 D8"
+  - tab "D9 D9" [selected]
+  - button "添加一天": +
+- text: D9 D9 0 项
+- button "优化 D9"
+- button "删除天 D9"
+- text: 暂无主题
+- button "编辑天主题"
+- paragraph: 这一天还没有安排。
+- text: 路线地图
+- button "收起地图栏"
+- link "Leaflet":
+  - /url: https://leafletjs.com
+- text: ©
+- link "OpenStreetMap":
+  - /url: https://www.openstreetmap.org/copyright
+- text: "contributors · Routing: OSRM 底图暂不可用，地点与路线示意仍可查看。"
+- button "总览 ▾"
+- button "全图总览"
+- button "放大": +
+- button "缩小": −
+- button "我的位置"
+- button "推荐"
+- button "待计划 0"
+- button "收藏 0"
