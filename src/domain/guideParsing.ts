@@ -1,4 +1,4 @@
-import { GuideImportRequestSchema, GuideImportResultSchema, GuideParseRequestSchema, GuideParseResultSchema, type GuideImportRequest, type GuideParseRequest, type GuideParseResult, type TripSummary } from '@hailar/domain'
+import { GuideImportRequestSchema, GuideImportResultSchema, GuideParseRequestSchema, GuideParseResultSchema, readActivityItemMetadata, type GuideImportRequest, type GuideParseRequest, type GuideParseResult, type TripSummary } from '@hailar/domain'
 import { defaultFetch, TRIPS_NETWORK_ERROR, type FetchLike } from './tripList'
 
 export type GuideApiResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string }
@@ -27,10 +27,40 @@ export async function parseGuide(
   const checked = GuideParseRequestSchema.safeParse(input)
   if (!checked.success) return { ok: false, code: 'invalid_request', error: '请提供有效的攻略链接或正文（最多 20000 字）。' }
   return post('/api/ai/parse-guide', checked.data, 90_000, signal, fetchLike, (payload) => {
-    const result = GuideParseResultSchema.safeParse(payload)
+    const result = GuideParseResultSchema.safeParse(normalizePreviewMetadata(payload))
     if (!result.success) return null
     return result.data
   })
+}
+
+/** Tolerate only optional item metadata on reads; all other preview fields still validate strictly. */
+function normalizePreviewMetadata(payload: unknown): unknown {
+  if (!isRecord(payload) || payload.status !== 'ready') return payload
+  const draft = payload.draft
+  if (!isRecord(draft) || !Array.isArray(draft.days)) return payload
+  return {
+    ...payload,
+    draft: {
+      ...draft,
+      days: draft.days.map((day: unknown) => {
+        if (!isRecord(day) || !Array.isArray(day.items)) return day
+        return {
+          ...day,
+          items: day.items.map((item: unknown) => {
+            if (!isRecord(item)) return item
+            const normalized = { ...item }
+            delete normalized.timeRange
+            delete normalized.cost
+            return { ...normalized, ...readActivityItemMetadata(item) }
+          }),
+        }
+      }),
+    },
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 /** Keep importId and the payload unchanged when retrying an uncertain save. */

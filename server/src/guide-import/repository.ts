@@ -49,9 +49,9 @@ export async function importGuide(db: SqlDatabase, request: GuideImportRequest):
       for (const [order, item] of day.items.entries()) {
         const poi = item.poi ? { ...item.poi, category: '', rating: 0, introSummary: '' } : null
         await transaction.run(
-          'INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, poi, images, pending) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, poi, images, pending, time_range, cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           [randomUUID(), row.id, dayId, order, item.type, item.title, item.note,
-            poi ? JSON.stringify(poi) : null, '[]', item.pending ? 1 : 0],
+            poi ? JSON.stringify(poi) : null, '[]', item.pending ? 1 : 0, item.timeRange ?? null, item.cost ?? null],
         )
       }
     }

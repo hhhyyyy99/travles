@@ -16,6 +16,7 @@
  *   clamped to [0, count]. Cross-day drops renumber both days 0..n-1.
  */
 import { randomUUID } from 'node:crypto'
+import { ActivityItemMetadataSchema, readActivityItemMetadata, type ActivityItemMetadata } from '@hailar/domain'
 import {
   mapItemRow,
   mapLegRow,
@@ -39,8 +40,10 @@ const MAX_NOTE_LENGTH = 2000
 const MAX_IMAGES = 20
 const MAX_ADDRESS_LENGTH = 500
 
+type ItemMetadataInput = { [K in keyof ActivityItemMetadata]?: unknown }
+
 /** Raw create payload (values unvalidated); the repository coerces/rejects. */
-export interface ItemCreateInput {
+export interface ItemCreateInput extends ItemMetadataInput {
   dayId?: unknown
   title?: unknown
   type?: unknown
@@ -51,7 +54,7 @@ export interface ItemCreateInput {
 }
 
 /** Raw field-edit payload; only the sent fields change. */
-export interface ItemPatchInput {
+export interface ItemPatchInput extends ItemMetadataInput {
   title?: unknown
   note?: unknown
   images?: unknown
@@ -123,6 +126,12 @@ export class ItemsAdminRepository {
    * `index` (default: end of the day) with a server-generated id.
    */
   async createItem(tripId: string, input: ItemCreateInput): Promise<ItemMutationResult> {
+    let metadata: ActivityItemMetadata
+    try {
+      metadata = readActivityItemMetadata(ActivityItemMetadataSchema.parse(input))
+    } catch {
+      return { ok: false, error: '时间或费用说明无效', code: 'invalid' }
+    }
     const loaded = await this.loadItems(tripId)
     if (!loaded.ok) return loaded
     const { items, legs: previousLegs, dayOrder } = loaded
@@ -150,6 +159,7 @@ export class ItemsAdminRepository {
       type,
       title,
       note,
+      ...metadata,
       poi,
       images,
       pending: false,
@@ -166,6 +176,12 @@ export class ItemsAdminRepository {
    * legs are unaffected — no reorder, no leg recompute.
    */
   async updateItem(tripId: string, itemId: string, patch: ItemPatchInput): Promise<ItemUpdateResult> {
+    let metadata: ActivityItemMetadata
+    try {
+      metadata = readActivityItemMetadata(ActivityItemMetadataSchema.parse(patch))
+    } catch {
+      return { ok: false, error: '时间或费用说明无效', code: 'invalid' }
+    }
     let row: ItemRow | null
     try {
       row = await this.driver.getItemRow(itemId)
@@ -204,10 +220,10 @@ export class ItemsAdminRepository {
       poi = next === null ? null : preserveAccommodationMetadata(current.poi, next)
     }
 
-    const updated: CanvasItem = { ...current, title, note, images, poi }
+    const updated: CanvasItem = { ...current, title, note, images, poi, ...metadata }
     try {
       await this.driver.withTransaction(async (transactionDriver) => {
-        await transactionDriver.upsertItemFull(tripId, itemToUpsert(updated))
+        await transactionDriver.upsertItemFull(tripId, itemToUpsert(updated, metadata))
       })
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
@@ -360,8 +376,8 @@ function clampIndex(value: unknown, listLength: number): number {
   return Math.min(num, listLength)
 }
 
-/** Tolerant CanvasItem → full upsert row (poi/images serialized to JSON text). */
-function itemToUpsert(item: CanvasItem): ItemFullUpsert {
+/** Only supplied metadata is touched; copies/creates carry their item's metadata. */
+function itemToUpsert(item: CanvasItem, metadata = readActivityItemMetadata(item)): ItemFullUpsert {
   return {
     id: item.id,
     dayId: item.dayId,
@@ -369,6 +385,7 @@ function itemToUpsert(item: CanvasItem): ItemFullUpsert {
     type: item.type,
     title: item.title,
     note: item.note,
+    ...metadata,
     poiJson: item.poi === null ? null : JSON.stringify(item.poi),
     imagesJson: item.images.length === 0 ? null : JSON.stringify(item.images),
   }

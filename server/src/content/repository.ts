@@ -13,6 +13,7 @@
  * of duplicating it. See server/src/seed/builtin-trip-data.ts for the fixed
  * ID scheme.
  */
+import { ActivityItemMetadataSchema, readActivityItemMetadata, type ActivityItemMetadata } from '@hailar/domain'
 import { projectDayIdentity } from '../days/projections.js'
 import { readDayMetadata } from '../days/metadata.js'
 import type {
@@ -150,6 +151,7 @@ function mapItemRow(row: ItemRow): ItemContent | null {
     type: asText(row?.type) || 'other',
     title: asText(row?.title),
     note: asText(row?.note),
+    ...readActivityItemMetadata({ timeRange: row?.time_range, cost: row?.cost }),
     pending: row?.pending === 1 || row?.pending === true,
     ...(typeof row?.poi === 'string' && row.poi.trim() ? { poi: row.poi } : {}),
   }
@@ -179,6 +181,12 @@ function readId(value: unknown): string | null {
 
 /** Tolerant write-side coercion of an item payload; null = reject. */
 function readItemUpsert(input: Record<string, unknown>): ItemUpsert | null {
+  let metadata: ActivityItemMetadata
+  try {
+    metadata = ActivityItemMetadataSchema.parse(input)
+  } catch {
+    return null
+  }
   const id = readId(input.id)
   const dayId = readId(input.dayId)
   if (!id || !dayId) return null
@@ -199,6 +207,7 @@ function readItemUpsert(input: Record<string, unknown>): ItemUpsert | null {
     type: typeof input.type === 'string' && input.type.trim() ? input.type.trim() : 'other',
     title: typeof input.title === 'string' ? input.title : '',
     note: typeof input.note === 'string' ? input.note : '',
+    ...metadata,
     poiJson,
     pending: input.pending === true || input.pending === 1,
   }

@@ -32,19 +32,20 @@
  * the canvas chip hides. Patch-applied days therefore always carry usable
  * estimated legs — never placeholder NULL rows.
  */
-import type { Day } from '@hailar/domain'
+import { readActivityItemMetadata } from '@hailar/domain'
+import type { ActivityItemMetadata, Day } from '@hailar/domain'
 import { isValidDateString } from '../trips/dates.js'
 import { mapLegRow, mapPoiRef } from '../days/repository.js'
 import type { CanvasItem, CanvasLeg, ItemType, PoiRef } from '../days/types.js'
 import { adjacentTripPairs, recomputeTripLegs } from '../items-admin/legs.js'
 import { TripPatchIdConflictError } from './types.js'
-import type { PatchPoiRef, TripPatchApplyResult, TripPatchStats, TripPatchStoreDriver } from './types.js'
+import type { PatchPoiRef, TripPatchApplyResult, TripPatchItemUpsert, TripPatchStats, TripPatchStoreDriver } from './types.js'
 import type { TripPatchInput } from './schema.js'
 import { parseTripPatchInput } from './schema.js'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-type ProjectedItem = {
+type ProjectedItem = ActivityItemMetadata & {
   id: string
   dayId: string
   order: number
@@ -75,6 +76,8 @@ type Projection = {
   touchedDays: Set<string>
   /** Item ids whose POI changed; stored legs touching them cannot be reused. */
   invalidatedLegItems: Set<string>
+  /** Explicit metadata supplied by item ops; loaded values never become write touches. */
+  itemMetadataTouches: Map<string, ActivityItemMetadata>
   maxIdx: number
   seqCounter: number
 }
@@ -120,13 +123,17 @@ async function loadProjection(store: TripPatchStoreDriver, tripId: string): Prom
       type,
       title: typeof row?.title === 'string' ? row.title : '',
       note: typeof row?.note === 'string' ? row.note : '',
+      ...readActivityItemMetadata({ timeRange: row.time_range, cost: row.cost }),
       poi: mapPoiRef(row?.poi),
       pending: row?.pending === 1 || row?.pending === true,
       legPending: false,
       fromPatch: false,
     })
   }
-  return { days, touchedDays: new Set(), invalidatedLegItems: new Set(), maxIdx, seqCounter: seq }
+  return {
+    days, touchedDays: new Set(), invalidatedLegItems: new Set(), itemMetadataTouches: new Map(),
+    maxIdx, seqCounter: seq,
+  }
 }
 
 function sortedItems(day: ProjectedDay): ProjectedItem[] {
@@ -212,11 +219,13 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
           type: op.type as ItemType,
           title: op.title as string,
           note: (op.note as string | undefined) ?? '',
+          ...readActivityItemMetadata(op),
           poi: (op.poi as PatchPoiRef | null | undefined) ?? null,
           pending: (op.pending as boolean | undefined) ?? false,
           legPending: (op.legPending as boolean | undefined) ?? false,
           fromPatch: true,
         }
+        projection.itemMetadataTouches.set(item.id, readActivityItemMetadata(op))
         const items = reindexItems(day)
         const requested = (op.order as number | undefined) ?? items.length
         const index = Math.max(0, Math.min(items.length, requested))
@@ -233,6 +242,9 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
         const found = findItem(projection, op.itemId as string)
         if (!found) return fail(i, `卡片「${op.itemId}」不存在`)
         const item = found.item
+        const metadata = readActivityItemMetadata(op)
+        Object.assign(item, metadata)
+        projection.itemMetadataTouches.set(item.id, { ...projection.itemMetadataTouches.get(item.id), ...metadata })
         if (op.title !== undefined) item.title = op.title as string
         if (op.note !== undefined) item.note = (op.note as string | null) ?? ''
         if (op.type !== undefined) item.type = op.type as ItemType
@@ -427,20 +439,14 @@ function neighboringDays(projection: Projection, dayId: string): ProjectedDay[] 
 // Apply: replay the validated ops as store writes, rebuild adjacency legs
 // ---------------------------------------------------------------------------
 
-function itemUpsert(item: ProjectedItem): {
-  id: string
-  dayId: string
-  itemOrder: number
-  type: string
-  title: string
-  note: string
-  poi: string | null
-  pending: boolean
-} {
+function itemUpsert(item: ProjectedItem, metadata: ActivityItemMetadata | undefined): TripPatchItemUpsert {
   return {
     id: item.id,
     dayId: item.dayId,
     itemOrder: item.order,
+    // Position/POI rebuilds also upsert siblings. Only operation-supplied
+    // metadata may overwrite their current stored values.
+    ...metadata,
     type: item.type,
     title: item.title,
     note: item.note,
@@ -476,6 +482,7 @@ function toCanvasItem(item: ProjectedItem): CanvasItem {
     type: item.type,
     title: item.title,
     note: item.note,
+    ...readActivityItemMetadata(item),
     poi: item.poi === null ? null : toPoiRef(item.poi),
     images: [],
     pending: item.pending,
@@ -700,21 +707,21 @@ export async function applyTripPatch(
           case 'add_item': {
             const found = findItem(reference, op.itemId)
             if (!found) throw new Error('patch projection drifted')
-            await transactionStore.upsertItemRow(tripId, itemUpsert(found.item))
+            await transactionStore.upsertItemRow(tripId, itemUpsert(found.item, reference.itemMetadataTouches.get(found.item.id)))
             stats.itemsAdded += 1
             break
           }
           case 'update_item': {
             const found = findItem(reference, op.itemId)
             if (!found) throw new Error('patch projection drifted')
-            await transactionStore.upsertItemRow(tripId, itemUpsert(found.item))
+            await transactionStore.upsertItemRow(tripId, itemUpsert(found.item, reference.itemMetadataTouches.get(found.item.id)))
             stats.itemsUpdated += 1
             break
           }
           case 'move_item': {
             const found = findItem(reference, op.itemId)
             if (!found) throw new Error('patch projection drifted')
-            await transactionStore.upsertItemRow(tripId, itemUpsert(found.item))
+            await transactionStore.upsertItemRow(tripId, itemUpsert(found.item, reference.itemMetadataTouches.get(found.item.id)))
             break
           }
           case 'remove_item': {
@@ -733,7 +740,7 @@ export async function applyTripPatch(
         const day = reference.days.get(dayId)
         if (!day) continue
         for (const item of sortedItems(day)) {
-          await transactionStore.upsertItemRow(tripId, itemUpsert(item))
+          await transactionStore.upsertItemRow(tripId, itemUpsert(item, reference.itemMetadataTouches.get(item.id)))
         }
       }
       // Rebuild all adjacency legs whenever a card/day layout changed. A

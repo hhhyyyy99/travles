@@ -4,6 +4,7 @@
  */
 import { z } from 'zod'
 import { tripPatchInputSchema } from './trip-patch.js'
+import { ActivityItemMetadataSchema } from './trip.js'
 
 const poiSchema = z
   .object({
@@ -24,6 +25,7 @@ const poiSchema = z
   .optional()
 
 export const proposalItemSchema = z.object({
+  ...ActivityItemMetadataSchema.shape,
   itemId: z.string().trim().min(1).max(64),
   dayId: z.string().trim().min(1).max(64),
   order: z.number().int().min(0).optional(),

@@ -14,7 +14,7 @@
  *   Leg  { id, fromItemId, toItemId, mode, distanceKm, durationMin, polyline }
  */
 
-import { LegSchema } from '@hailar/domain'
+import { LegSchema, readActivityItemMetadata } from '@hailar/domain'
 import type { ApiResult, FetchLike, TripSummary } from './tripList'
 import { defaultFetch, normalizeTrip } from './tripList'
 
@@ -452,10 +452,10 @@ export type WorkbenchItemCreateInput = {
   poi?: PoiRef | null
   images?: ItemImage[]
   index?: number
-}
+} & Pick<WorkbenchItem, 'timeRange' | 'cost'>
 
 /** Field-edit patch for an existing card. */
-export type WorkbenchItemPatch = { title?: string; note?: string; images?: ItemImage[]; poi?: PoiRef | null }
+export type WorkbenchItemPatch = Partial<Pick<WorkbenchItem, 'title' | 'note' | 'images' | 'poi' | 'timeRange' | 'cost'>>
 
 /** Move/copy target: dayId omitted keeps the day; index omitted appends. */
 export type WorkbenchItemTarget = { dayId?: string; index?: number }
@@ -635,17 +635,30 @@ export function applyItemPatch(days: WorkbenchDay[], itemId: string, patch: Part
   }))
 }
 
-/** Pure: replace the temp optimistic item with its persisted server version. */
+/** Pure: reconcile an optimistic item with server fields, keeping its local layout. */
 export function applyItemReplace(days: WorkbenchDay[], tempId: string, serverItem: WorkbenchItem): WorkbenchDay[] {
-  return applyItemPatch(days, tempId, {
-    id: serverItem.id,
-    title: serverItem.title,
-    note: serverItem.note,
-    poi: serverItem.poi,
-    images: serverItem.images,
-    type: serverItem.type,
-    pending: serverItem.pending,
-  })
+  if (!days.some((day) => day.items.some((item) => item.id === tempId))) return days
+  return days.map((day) => ({
+    ...day,
+    items: day.items.map((item) => {
+      if (item.id !== tempId) return item
+      const replacement: WorkbenchItem = {
+        ...item,
+        id: serverItem.id,
+        title: serverItem.title,
+        note: serverItem.note,
+        poi: serverItem.poi,
+        images: serverItem.images,
+        type: serverItem.type,
+        pending: serverItem.pending,
+      }
+      // The response is authoritative: an old/malformed response must not
+      // inherit metadata from a copied card or the optimistic request.
+      delete replacement.timeRange
+      delete replacement.cost
+      return { ...replacement, ...readActivityItemMetadata(serverItem) }
+    }),
+  }))
 }
 
 /**
@@ -723,6 +736,7 @@ function normalizeItem(value: unknown): WorkbenchItem | null {
     order: finiteNumber(record.order),
     type: ITEM_TYPES.includes(type) ? type : 'other',
     title: typeof record.title === 'string' ? record.title : '',
+    ...readActivityItemMetadata(record),
     note: typeof record.note === 'string' ? record.note : '',
     poi: normalizePoi(record.poi),
     images: Array.isArray(record.images) ? record.images : [],

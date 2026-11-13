@@ -4,6 +4,7 @@
  * Rows are plain objects shaped like the SQLite rows (snake_case, tolerant
  * `unknown` field values) so read mapping behaves identically.
  */
+import { ActivityItemMetadataSchema } from '@hailar/domain'
 import type {
   DayRow,
   ItemRow,
@@ -134,6 +135,7 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
   }
 
   async upsertItemRow(tripId: string, item: TripPatchItemUpsert): Promise<void> {
+    const metadata = ActivityItemMetadataSchema.parse(item)
     const owner = await this.getItemTripId(item.id)
     if (owner !== null && owner !== tripId) throw new TripPatchIdConflictError('item', item.id, owner)
     const dayOwner = await this.getDayTripId(item.dayId)
@@ -147,6 +149,8 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       existing.note = item.note
       existing.poi = item.poi
       existing.pending = item.pending ? 1 : 0
+      if (metadata.timeRange !== undefined) existing.time_range = metadata.timeRange
+      if (metadata.cost !== undefined) existing.cost = metadata.cost
       return
     }
     this.itemRows.push({
@@ -160,6 +164,8 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       poi: item.poi,
       images: null,
       pending: item.pending ? 1 : 0,
+      time_range: metadata.timeRange ?? null,
+      cost: metadata.cost ?? null,
     })
   }
 

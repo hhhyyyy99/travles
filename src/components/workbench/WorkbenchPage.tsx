@@ -14,6 +14,7 @@
  * snapshot and surfaces the error (spec user stories 40/41).
  */
 import { useEffect, useRef, useState } from 'react'
+import { readActivityItemMetadata } from '@hailar/domain'
 import { LayoutGrid, List, MessageCircle, Map as MapIcon, PanelLeftClose, Sparkles } from 'lucide-react'
 import {
   applyItemInsert,
@@ -378,6 +379,7 @@ export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripI
       () => patchDays((days) => applyItemMove(days, itemId, toDayId, toIndex)),
       () => moveWorkbenchItem(tripId, itemId, { dayId: toDayId, index: toIndex }),
       (data) => {
+        patchDays((days) => applyItemReplace(days, itemId, data.item))
         patchLegs(data.legs)
         requestRouteRefresh()
       },
@@ -409,6 +411,7 @@ export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripI
       order: 0,
       type: input.type ?? 'other',
       title: input.title,
+      ...readActivityItemMetadata(input),
       note: input.note ?? '',
       poi: input.poi ?? null,
       images: input.images ?? [],
@@ -473,7 +476,7 @@ export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripI
       () => updateWorkbenchItem(tripId, itemId, { note }),
       (data) => {
         // Server normalization (e.g. image captions) wins on field edits.
-        patchDays((days) => applyItemPatch(days, itemId, data))
+        patchDays((days) => applyItemReplace(days, itemId, data))
       },
     ))
 
@@ -486,7 +489,7 @@ export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripI
       snapshot,
       () => patchDays((days) => applyItemPatch(days, itemId, { images })),
       () => updateWorkbenchItem(tripId, itemId, { images }),
-      (data) => patchDays((days) => applyItemPatch(days, itemId, data)),
+      (data) => patchDays((days) => applyItemReplace(days, itemId, data)),
     )
   })
 
@@ -497,7 +500,7 @@ export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripI
         () => patchDays((days) => applyItemPatch(days, itemId, patch)),
         () => updateWorkbenchItem(tripId, itemId, patch),
         (data) => {
-          patchDays((days) => applyItemPatch(days, itemId, data))
+          patchDays((days) => applyItemReplace(days, itemId, data))
           requestRouteRefresh()
         },
       )

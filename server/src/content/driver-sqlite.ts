@@ -3,6 +3,7 @@
  * access over the same `SqlDatabase` seam as the trips driver. Upserts are
  * keyed by row id (the idempotency mechanism for the seed + migration).
  */
+import { ActivityItemMetadataSchema } from '@hailar/domain'
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { ChecklistRow, ChecklistUpsert, ContentStoreDriver, DayRow, ItemRow, ItemUpsert } from './types.js'
 
@@ -16,7 +17,7 @@ export class SqliteContentStoreDriver implements ContentStoreDriver {
 
   async listItemRows(tripId: string): Promise<ItemRow[]> {
     const { rows } = await this.db.run(
-      'SELECT id, trip_id, day_id, item_order, type, title, note, poi, images, pending FROM items WHERE trip_id = ? ORDER BY day_id ASC, item_order ASC, id ASC',
+      'SELECT id, trip_id, day_id, item_order, type, title, note, time_range, cost, poi, images, pending FROM items WHERE trip_id = ? ORDER BY day_id ASC, item_order ASC, id ASC',
       [tripId],
     )
     return rows as unknown as ItemRow[]
@@ -33,13 +34,16 @@ export class SqliteContentStoreDriver implements ContentStoreDriver {
   }
 
   async upsertItemRow(tripId: string, item: ItemUpsert): Promise<void> {
+    const metadata = ActivityItemMetadataSchema.parse(item)
     await this.db.run(
-      `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, poi, pending)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, time_range, cost, poi, pending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          trip_id = excluded.trip_id, day_id = excluded.day_id, item_order = excluded.item_order,
-         type = excluded.type, title = excluded.title, note = excluded.note, poi = excluded.poi, pending = excluded.pending`,
-      [item.id, tripId, item.dayId, item.itemOrder, item.type, item.title, item.note, item.poiJson ?? null, item.pending ? 1 : 0] as SqlValue[],
+         type = excluded.type, title = excluded.title, note = excluded.note, poi = excluded.poi, pending = excluded.pending
+         ${metadata.timeRange !== undefined ? ', time_range = excluded.time_range' : ''}
+         ${metadata.cost !== undefined ? ', cost = excluded.cost' : ''}`,
+      [item.id, tripId, item.dayId, item.itemOrder, item.type, item.title, item.note, metadata.timeRange ?? null, metadata.cost ?? null, item.poiJson ?? null, item.pending ? 1 : 0] as SqlValue[],
     )
   }
 

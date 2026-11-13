@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { ItemTypeSchema, TripSummarySchema } from './trip.js'
+import { ActivityItemMetadataSchema, ItemTypeSchema, TripSummarySchema } from './trip.js'
 
 /** A pasted guide takes precedence over its URL, including after a blocked fetch. */
 export const GuideParseRequestSchema = z.object({
@@ -44,6 +44,7 @@ export const GuideDraftSchema = z.object({
     dayNumber: z.number().int().min(1).max(31),
     title: z.string().min(1).max(120),
     items: z.array(extractionItemSchema.extend({
+      ...ActivityItemMetadataSchema.shape,
       poi: GuidePoiSchema.nullable(),
       pending: z.boolean(),
     })).min(1).max(20),

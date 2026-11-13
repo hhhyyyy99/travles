@@ -19,8 +19,8 @@
  *   add_day     { dayId, date?, theme?, title?, note? }
  *   update_day  { dayId, date?, theme?, title?, note? }
  *   remove_day  { dayId }
- *   add_item    { itemId, dayId, order?, type, title, note?, pending?, poi?, legPending? }
- *   update_item { itemId, title?, note?, type?, pending?, poi?, legPending? }
+ *   add_item    { itemId, dayId, order?, type, title, timeRange?, cost?, note?, pending?, poi?, legPending? }
+ *   update_item { itemId, title?, timeRange?, cost?, note?, type?, pending?, poi?, legPending? }
  *   move_item   { itemId, dayId, order? }   (cross-day move + reorder)
  *   remove_item { itemId }
  *
@@ -30,7 +30,7 @@
  * distances; this ticket writes placeholder rows with null distance so the
  * canvas stays structure-true without inventing numbers).
  */
-import type { Day } from '@hailar/domain'
+import type { ActivityItemMetadata, Day } from '@hailar/domain'
 import type { DayRow, ItemRow, LegQuality, LegRow } from '../days/types.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
@@ -77,8 +77,8 @@ export interface TripPatchDayUpsert extends Pick<Day, 'title' | 'note'> {
   theme: string
 }
 
-/** Upsert payload for one item row (incl. the fields the content repo cannot write yet). */
-export interface TripPatchItemUpsert {
+/** Item upsert: only explicitly supplied metadata is written, preserving omitted stored values. */
+export interface TripPatchItemUpsert extends ActivityItemMetadata {
   id: string
   dayId: string
   itemOrder: number

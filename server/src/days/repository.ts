@@ -4,6 +4,7 @@
  * convention: reads NEVER throw; corrupt rows degrade and get dropped, the
  * same codec convention as src/domain/storage.ts and the trips repository).
  */
+import { readActivityItemMetadata } from '@hailar/domain'
 import { asText } from '../trips/dates.js'
 import { projectDayIdentity } from './projections.js'
 import { readDayMetadata } from './metadata.js'
@@ -104,6 +105,7 @@ export function mapItemRow(row: ItemRow): CanvasItem | null {
     type: ITEM_TYPES.includes(type) ? type : 'other',
     title: asText(row?.title),
     note: asText(row?.note),
+    ...readActivityItemMetadata({ timeRange: row?.time_range, cost: row?.cost }),
     poi: mapPoiRef(row?.poi),
     images: mapImages(row?.images),
     pending: row?.pending === true || row?.pending === 1,

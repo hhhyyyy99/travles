@@ -10,6 +10,7 @@ import { TripRepository } from '../src/trips/repository.js'
 import { SqliteTripStoreDriver } from '../src/trips/driver-sqlite.js'
 import { createSqliteTripPatchStore } from '../src/trip-patch/store-sqlite.js'
 import { createSqliteDaysAdminStore } from '../src/days-admin/driver-sqlite.js'
+import { createSqliteItemsAdminStore } from '../src/items-admin/driver-sqlite.js'
 import { MemoryMessageStoreDriver } from '../src/chat/driver-memory.js'
 
 const choice = '确认方案：调整整日安排'
@@ -83,6 +84,57 @@ for (const field of ['title', 'note'] as const) {
       assert.equal((await stale.json() as { code: string }).code, 'confirmation_stale')
       assert.equal(scripted.calls(), modelCalls, 'stale confirmation is rejected before any model/tool execution')
       assert.deepEqual((await db.run('SELECT * FROM days')).rows, [after], 'old proposal cannot overwrite current metadata')
+    })
+  }
+}
+
+for (const [field, column] of [['timeRange', 'time_range'], ['cost', 'cost']] as const) {
+  for (const through of ['HTTP', 'SQL', 'BLOB bytes'] as const) {
+    test(`explain then change only ActivityItem.${field} through ${through} rejects stale confirmation before model execution`, async (t) => {
+      const db = createSqliteDatabase(':memory:')
+      t.after(() => db.close())
+      await ensureSchema(db)
+      const repository = new TripRepository(new SqliteTripStoreDriver(db))
+      const patchStore = createSqliteTripPatchStore(db)
+      const scripted = explainingModel()
+      const app = await createApp({
+        tripRepository: repository, daysAdminStore: createSqliteDaysAdminStore(db),
+        itemsAdminStore: createSqliteItemsAdminStore(db), tripPatchStore: patchStore,
+        messageStore: new MemoryMessageStoreDriver(), plannerModel: scripted.model,
+        plannerMemory: new MockMemory({ storage: new InMemoryStore(), enableMessageHistory: true }),
+      })
+      const created = await repository.create({ title: '活动说明确认', startDate: '2026-10-02', endDate: '2026-10-02' })
+      assert.ok(created.ok)
+      const tripId = created.trip.id
+      await db.run('INSERT INTO days (id, trip_id, idx, date, theme, color) VALUES (?, ?, ?, ?, ?, ?)', ['day', tripId, 0, '2026-10-02', '原主题', '原颜色'])
+      await db.run('INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, pending, time_range, cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', ['item', tripId, 'day', 0, 'other', '原活动', '原备注', 0, '原时段', '原费用'])
+      if (through === 'BLOB bytes') await db.run(`UPDATE items SET ${column} = x'01' WHERE id = ?`, ['item'])
+      const response = await app.request(`/api/trips/${tripId}/messages`, json({ content: '帮我重新安排这一天的活动' }))
+      assert.equal(response.status, 200)
+      assert.match(await response.text(), /patch-explain/)
+      const pending = await patchStore.getPatchConfirmation(tripId)
+      assert.ok(pending?.choices.includes(choice))
+      const modelCalls = scripted.calls()
+      const before = (await db.run('SELECT * FROM items')).rows[0]!
+      const tripBefore = (await db.run('SELECT * FROM trips')).rows
+      if (through === 'HTTP') {
+        const changed = await app.request(`/api/trips/${tripId}/items/item`, json({ [field]: '  新内容\n' }, 'PATCH'))
+        assert.equal(changed.status, 200)
+        assert.equal((await changed.json() as { item: Record<string, unknown> }).item[field], '  新内容\n')
+      } else if (through === 'SQL') {
+        await db.run(`UPDATE items SET ${column} = ? WHERE id = ?`, ['  新内容\n', 'item'])
+      } else {
+        await db.run(`UPDATE items SET ${column} = x'03' WHERE id = ?`, ['item'])
+      }
+      if (through !== 'HTTP') assert.deepEqual((await db.run('SELECT * FROM trips')).rows, tripBefore, 'only the raw item metadata changed')
+      const after = (await db.run('SELECT * FROM items')).rows[0]!
+      const expected = through === 'BLOB bytes' ? Uint8Array.from([3]).buffer : '  新内容\n'
+      assert.deepEqual(after, { ...before, [column]: expected })
+      const stale = await app.request(`/api/trips/${tripId}/messages`, json({ content: choice }))
+      assert.equal(stale.status, 409)
+      assert.equal((await stale.json() as { code: string }).code, 'confirmation_stale')
+      assert.equal(scripted.calls(), modelCalls, 'stale metadata is rejected before any model/tool execution')
+      assert.deepEqual((await db.run('SELECT * FROM items')).rows, [after])
     })
   }
 }

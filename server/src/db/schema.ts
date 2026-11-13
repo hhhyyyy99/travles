@@ -58,6 +58,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     type TEXT NOT NULL DEFAULT 'other',
     title TEXT NOT NULL DEFAULT '',
     note TEXT,
+    time_range TEXT,
+    cost TEXT,
     poi TEXT,
     images TEXT,
     pending INTEGER NOT NULL DEFAULT 0
@@ -198,6 +200,9 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
   }
   for (const name of ['title', 'note']) {
     await ensureColumn(db, 'days', name, 'TEXT')
+  }
+  for (const name of ['time_range', 'cost']) {
+    await ensureColumn(db, 'items', name, 'TEXT')
   }
   try {
     await db.run('ALTER TABLE legs ADD COLUMN quality TEXT')

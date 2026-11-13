@@ -17,11 +17,12 @@
  *   the response carries the new leg list so clients update the map without
  *   a second read.
  */
+import type { ActivityItemMetadata } from '@hailar/domain'
 import type { CanvasItem, CanvasLeg, DayRow, ItemRow, LegRow } from '../days/types.js'
 import type { PlannedLeg } from './legs.js'
 
 /** Full item row the driver upserts (poi/images as serialized JSON text). */
-export interface ItemFullUpsert {
+export interface ItemFullUpsert extends ActivityItemMetadata {
   id: string
   dayId: string
   itemOrder: number
