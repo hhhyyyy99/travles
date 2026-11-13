@@ -52,9 +52,11 @@ export type TripPlanningContext = z.infer<typeof TripPlanningContextSchema>
 export const TripSummarySchema = z.object({
   id: z.string(),
   title: z.string(),
+  destination: z.string().optional(),
   startDate: z.string(),
   endDate: z.string(),
   days: z.number(),
+  daysCount: z.number().int().positive().optional(),
   nights: z.number(),
   createdAt: z.string(),
   updatedAt: z.string(),

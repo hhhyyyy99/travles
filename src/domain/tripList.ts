@@ -221,6 +221,11 @@ export function normalizeTrip(value: unknown): TripSummary | null {
     ...(typeof record.coverImage === 'string' ? { coverImage: record.coverImage } : {}),
     ...(typeof record.isPinned === 'boolean' ? { isPinned: record.isPinned } : {}),
     ...(typeof record.status === 'string' ? { status: record.status } : {}),
+    // Read only explicit projections from the server; older responses stay as-is.
+    ...(typeof record.destination === 'string' ? { destination: record.destination } : {}),
+    ...(typeof record.daysCount === 'number' && Number.isSafeInteger(record.daysCount) && record.daysCount > 0
+      ? { daysCount: record.daysCount }
+      : {}),
     ...(planningContext
       ? {
           durationDays: planningContext.durationDays,
