@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readStashFields } from '@hailar/domain'
 import type {
   FavoriteItem,
   FavoriteRow,
@@ -23,7 +24,7 @@ export class RecommendationsRepository {
       this.safeRows(() => this.driver.listFavoriteRows(tripId)),
     ])
     return {
-      stash: stashRows.map(mapStashRow).filter((item): item is StashItem => item !== null),
+      stash: stashRows.map((row) => mapStashRow(row, tripId)).filter((item): item is StashItem => item !== null),
       favorites: favoriteRows.map(mapFavoriteRow).filter((item): item is FavoriteItem => item !== null),
     }
   }
@@ -55,7 +56,15 @@ export class RecommendationsRepository {
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
     }
-    return { ok: true, value: item }
+    return {
+      ok: true,
+      value: {
+        ...item,
+        // These are the normalized strings and identity just persisted above,
+        // not the pre-write input or a new read-time timestamp.
+        ...readStashFields({ tripId, title: poi.name, category: poi.category, createdAt: item.addedAt }, tripId),
+      },
+    }
   }
 
   async removeStash(tripId: string, stashId: string): Promise<RecommendationWriteResult<null>> {
@@ -192,15 +201,17 @@ export function normalizePoi(value: unknown): RecommendationPoi | null {
   }
 }
 
-function mapStashRow(row: StashRow): StashItem | null {
+function mapStashRow(row: StashRow, tripId: string): StashItem | null {
   const id = text(row?.id, 160)
-  const poi = parsePoi(row?.poi)
-  if (!id || !poi) return null
+  const decoded = parsePoiWithSource(row?.poi)
+  if (!id || !decoded) return null
+  const { poi, source } = decoded
   return {
     id,
     poi,
     origin: row?.origin === 'favorite' ? 'favorite' : 'recommend',
     addedAt: text(row?.added_at, 80),
+    ...readStashFields({ tripId: row?.trip_id, title: source.name, category: source.category, createdAt: row?.added_at }, tripId),
   }
 }
 
@@ -212,9 +223,15 @@ function mapFavoriteRow(row: FavoriteRow): FavoriteItem | null {
 }
 
 function parsePoi(value: unknown): RecommendationPoi | null {
+  return parsePoiWithSource(value)?.poi ?? null
+}
+
+function parsePoiWithSource(value: unknown): { poi: RecommendationPoi; source: Record<string, unknown> } | null {
   if (typeof value !== 'string' || value.trim() === '') return null
   try {
-    return normalizePoi(JSON.parse(value))
+    const source: unknown = JSON.parse(value)
+    const poi = normalizePoi(source)
+    return poi ? { poi, source: source as Record<string, unknown> } : null
   } catch {
     return null
   }

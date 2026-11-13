@@ -31,13 +31,35 @@ export const RecommendationPoiSchema = PoiRefSchema.extend({
 })
 export type RecommendationPoi = z.infer<typeof RecommendationPoiSchema>
 
+// Check presence without changing the saved text (including surrounding space).
+const StashTextSchema = z.string().refine((value) => value.trim().length > 0)
+
 export const StashItemSchema = z.object({
   id: z.string(),
   poi: RecommendationPoiSchema,
   origin: RecommendationOriginSchema,
   addedAt: z.string(),
+  tripId: StashTextSchema.optional(),
+  title: StashTextSchema.optional(),
+  category: StashTextSchema.optional(),
+  createdAt: StashTextSchema.optional(),
 })
 export type StashItem = z.infer<typeof StashItemSchema>
+
+/** Retain independently valid, explicitly sourced aliases; never infer defaults. */
+export function readStashFields(
+  value: { tripId?: unknown; title?: unknown; category?: unknown; createdAt?: unknown },
+  expectedTripId?: string,
+): Pick<StashItem, 'tripId' | 'title' | 'category' | 'createdAt'> {
+  const fields: Pick<StashItem, 'tripId' | 'title' | 'category' | 'createdAt'> = {}
+  for (const key of ['tripId', 'title', 'category', 'createdAt'] as const) {
+    const parsed = StashItemSchema.shape[key].safeParse(value[key])
+    if (!parsed.success || parsed.data === undefined) continue
+    if (key === 'tripId' && expectedTripId !== undefined && parsed.data !== expectedTripId) continue
+    fields[key] = parsed.data
+  }
+  return fields
+}
 
 export const FavoriteItemSchema = z.object({
   id: z.string(),
