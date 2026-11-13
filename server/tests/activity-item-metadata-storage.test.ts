@@ -280,9 +280,43 @@ test('item title-only and single-metadata updates preserve a sibling changed aft
       const result = await new ItemsAdminRepository(driver).updateItem('trip', 'item', patch)
       assert.ok(result.ok)
       assert.equal((await backing.getItemRow('item'))?.cost, 'Concurrent cost')
+      assert.equal(result.item.cost, 'Concurrent cost', 'the successful response must use the persisted sibling metadata')
       await db.run("UPDATE items SET cost = 'Old cost' WHERE id = 'item'")
     }
   } finally {
     await db.close()
   }
 })
+
+for (const kind of ['sqlite', 'memory'] as const) {
+  test(`${kind} update fails atomically when the post-write metadata row cannot be read safely`, async () => {
+    const db = kind === 'sqlite' ? await database() : undefined
+    const driver = db ? new SqliteItemsAdminStoreDriver(db) : new MemoryItemsAdminStoreDriver()
+    if (driver instanceof MemoryItemsAdminStoreDriver) driver.dayRows.set('day', DAY)
+    try {
+      await driver.upsertItemFull('trip', { ...UPSERT, timeRange: 'Old time', cost: 'Old cost' })
+      const before = structuredClone(await driver.listItemRows('trip'))
+      const originalTransaction = driver.withTransaction.bind(driver)
+      for (const failure of ['read error', 'missing', 'wrong id', 'wrong trip']) {
+        let readValue: unknown
+        driver.withTransaction = (fn) => originalTransaction(async (transaction) => {
+          const originalRead = transaction.getItemRow
+          transaction.getItemRow = async (id) => {
+            const saved = await originalRead.call(transaction, id)
+            readValue = saved?.time_range
+            if (failure === 'read error') throw new Error('Read failed')
+            if (failure === 'missing' || !saved) return null
+            return { ...saved, ...(failure === 'wrong id' ? { id: 'other-item' } : { trip_id: 'other-trip' }) }
+          }
+          try { return await fn(transaction) } finally { transaction.getItemRow = originalRead }
+        })
+        const result = await new ItemsAdminRepository(driver).updateItem('trip', 'item', { timeRange: 'New time' })
+        assert.equal(readValue, 'New time', 'the authoritative read occurs after the upsert')
+        assert.deepEqual(result, { ok: false, error: '保存失败', code: 'storage' }, failure)
+        assert.deepEqual(await driver.listItemRows('trip'), before, 'a failed authoritative read rolls back instead of returning old metadata')
+      }
+    } finally {
+      await db?.close()
+    }
+  })
+}

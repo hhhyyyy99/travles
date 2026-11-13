@@ -222,13 +222,22 @@ export class ItemsAdminRepository {
 
     const updated: CanvasItem = { ...current, title, note, images, poi, ...metadata }
     try {
-      await this.driver.withTransaction(async (transactionDriver) => {
+      const savedMetadata = await this.driver.withTransaction(async (transactionDriver) => {
         await transactionDriver.upsertItemFull(tripId, itemToUpsert(updated, metadata))
+        const saved = await transactionDriver.getItemRow(itemId)
+        if (!saved || asText(saved.id) !== itemId || asText(saved.trip_id) !== tripId) {
+          throw new Error('Updated item cannot be read in its trip')
+        }
+        return readActivityItemMetadata({ timeRange: saved.time_range, cost: saved.cost })
       })
+      // Untouched metadata may have changed after the initial read. The response
+      // must use the same post-write values as a canvas refresh, including omissions.
+      delete updated.timeRange
+      delete updated.cost
+      return { ok: true, item: { ...updated, ...savedMetadata } }
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
     }
-    return { ok: true, item: updated }
   }
 
   /** Remove a card; its day's remaining cards close the gap and legs recompute. */
