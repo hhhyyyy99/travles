@@ -23,7 +23,7 @@
  * Extracted without changing the current API/storage vocabulary or limits.
  */
 import { z } from 'zod'
-import { DaySchema } from './trip.js'
+import { ActivityItemMetadataSchema, DaySchema } from './trip.js'
 
 const idField = z
   .string()
@@ -76,6 +76,7 @@ const removeDayOp = z.object({
 })
 
 const addItemOp = z.object({
+  ...ActivityItemMetadataSchema.shape,
   op: z.literal('add_item'),
   itemId: idField.describe('新卡片的 id'),
   dayId: idField.describe('放入哪一天（已存在或本 patch 前面刚创建）'),
@@ -94,6 +95,7 @@ const addItemOp = z.object({
 })
 
 const updateItemOp = z.object({
+  ...ActivityItemMetadataSchema.shape,
   op: z.literal('update_item'),
   itemId: idField.describe('要修改的卡片'),
   title: z.string().min(1).max(80).optional(),

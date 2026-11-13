@@ -5,6 +5,7 @@
  * date validator. `withTransaction` uses the libSQL transaction connection
  * when available, so a failed patch apply leaves no partial writes behind.
  */
+import { ActivityItemMetadataSchema } from '@hailar/domain'
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
 import { TripPatchIdConflictError } from './types.js'
@@ -29,7 +30,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
 
   async listItemRows(tripId: string): Promise<ItemRow[]> {
     const { rows } = await this.db.run(
-      'SELECT id, trip_id, day_id, item_order, type, title, note, poi, images, pending FROM items WHERE trip_id = ?',
+      'SELECT id, trip_id, day_id, item_order, type, title, note, poi, images, pending, time_range, cost FROM items WHERE trip_id = ?',
       [tripId],
     )
     return rows as unknown as ItemRow[]
@@ -105,14 +106,21 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
   }
 
   async upsertItemRow(tripId: string, item: TripPatchItemUpsert): Promise<void> {
+    // Direct trusted callers share the strict write boundary with patch ops.
+    const metadata = ActivityItemMetadataSchema.parse(item)
+    const fields = (['timeRange', 'cost'] as const).filter((key) => metadata[key] !== undefined)
+    const metadataColumns = fields.map((key) => key === 'timeRange' ? 'time_range' : 'cost')
     await this.assertNoForeignOwner('items', item.id, 'item', tripId)
     await this.assertNoForeignOwner('days', item.dayId, 'day', tripId)
+    const columns = ['id', 'trip_id', 'day_id', 'item_order', 'type', 'title', 'note', 'poi', 'images', 'pending', ...metadataColumns]
+    const updates = [
+      'day_id = excluded.day_id', 'item_order = excluded.item_order', 'type = excluded.type',
+      'title = excluded.title', 'note = excluded.note', 'poi = excluded.poi', 'pending = excluded.pending',
+      ...metadataColumns.map((column) => `${column} = excluded.${column}`),
+    ]
     await this.db.run(
-      `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, poi, images, pending)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         day_id = excluded.day_id, item_order = excluded.item_order, type = excluded.type,
-         title = excluded.title, note = excluded.note, poi = excluded.poi, pending = excluded.pending
+      `INSERT INTO items (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})
+       ON CONFLICT(id) DO UPDATE SET ${updates.join(', ')}
        WHERE items.trip_id = excluded.trip_id`,
       [
         item.id,
@@ -125,6 +133,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
         item.poi,
         null,
         item.pending ? 1 : 0,
+        ...fields.map((key) => metadata[key]!),
       ] as SqlValue[],
     )
     await this.assertCurrentOwner('items', item.id, 'item', tripId)

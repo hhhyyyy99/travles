@@ -10,8 +10,9 @@
  * lives behind its own interface so the two evolve independently.
  */
 
-import type { Day } from '@hailar/domain'
+import type { ActivityItemMetadata, Day } from '@hailar/domain'
 import type { DayMetadataInput } from '../days/metadata.js'
+import type { ActivityItemMetadataRow } from '../days/types.js'
 
 /** Raw days-table row; values unknown so corrupt storage can be represented. */
 export interface DayRow extends DayMetadataInput {
@@ -24,7 +25,7 @@ export interface DayRow extends DayMetadataInput {
 }
 
 /** Raw items-table row. `poi` / `images` stay opaque JSON-text columns. */
-export interface ItemRow {
+export interface ItemRow extends ActivityItemMetadataRow {
   id: unknown
   trip_id: unknown
   day_id: unknown
@@ -47,7 +48,7 @@ export interface ChecklistRow {
 }
 
 /** Upsert payload; every field is a server-validated value (not unknown). */
-export interface ItemUpsert {
+export interface ItemUpsert extends ActivityItemMetadata {
   id: string
   dayId: string
   itemOrder: number
@@ -84,7 +85,7 @@ export type ContentErrorCode = 'invalid' | 'not_found' | 'storage'
 export type ContentWriteResult = { ok: true } | { ok: false; error: string; code: ContentErrorCode }
 
 /** Tolerant mapped shapes served over HTTP. */
-export interface ItemContent {
+export interface ItemContent extends ActivityItemMetadata {
   id: string
   dayId: string
   itemOrder: number

@@ -5,13 +5,14 @@
  * touch the poi/images columns (position-only updates), and the leg
  * replacement is one DELETE + INSERT batch over the trip's rows.
  */
+import { ActivityItemMetadataSchema } from '@hailar/domain'
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
 import { normalizeLegQuality } from '../days/repository.js'
 import type { PlannedLeg } from './legs.js'
 import type { ItemFullUpsert, ItemOrderPatch, ItemsAdminStoreDriver } from './types.js'
 
-const ITEM_COLUMNS = 'id, trip_id, day_id, item_order, type, title, note, poi, images, pending'
+const ITEM_COLUMNS = 'id, trip_id, day_id, item_order, type, title, note, time_range, cost, poi, images, pending'
 
 export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
@@ -67,9 +68,10 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
   }
 
   async upsertItemFull(tripId: string, item: ItemFullUpsert): Promise<void> {
+    const metadata = ActivityItemMetadataSchema.parse(item)
     await this.db.run(
-      `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, poi, images, pending)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, time_range, cost, poi, images, pending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
        ON CONFLICT(id) DO UPDATE SET
          day_id = excluded.day_id,
          item_order = excluded.item_order,
@@ -77,7 +79,9 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
          title = excluded.title,
          note = excluded.note,
          poi = excluded.poi,
-         images = excluded.images`,
+         images = excluded.images
+         ${metadata.timeRange !== undefined ? ', time_range = excluded.time_range' : ''}
+         ${metadata.cost !== undefined ? ', cost = excluded.cost' : ''}`,
       [
         item.id,
         tripId,
@@ -86,6 +90,8 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
         item.type,
         item.title,
         item.note,
+        metadata.timeRange ?? null,
+        metadata.cost ?? null,
         item.poiJson,
         item.imagesJson,
       ] as SqlValue[],

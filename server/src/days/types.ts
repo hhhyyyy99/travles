@@ -44,7 +44,12 @@ export interface DayRow extends DayMetadataInput {
   color: unknown
 }
 
-export interface ItemRow {
+export interface ActivityItemMetadataRow {
+  time_range?: unknown
+  cost?: unknown
+}
+
+export interface ItemRow extends ActivityItemMetadataRow {
   id: unknown
   trip_id: unknown
   day_id: unknown

@@ -1,5 +1,5 @@
 /** Client codec for ticket 13's preview → confirm → TripPatch flow. */
-import type { AiProposal as SharedAiProposal, ProposalItem, ProposalChange, ProposalRequest } from '@hailar/domain'
+import { readActivityItemMetadata, type AiProposal as SharedAiProposal, type ProposalItem, type ProposalChange, type ProposalRequest } from '@hailar/domain'
 import type { ApiResult, FetchLike } from './tripList'
 import { defaultFetch } from './tripList'
 
@@ -170,6 +170,7 @@ function normalizeProposalItem(raw: unknown): ProposalItem | null {
     ...(typeof item.order === 'number' && Number.isInteger(item.order) && item.order >= 0 ? { order: item.order } : {}),
     type: item.type as ProposalItem['type'],
     title: item.title.trim(),
+    ...readActivityItemMetadata(item),
     ...(typeof item.note === 'string' ? { note: item.note.trim() } : {}),
     ...(typeof item.pending === 'boolean' ? { pending: item.pending } : {}),
     ...(poi !== undefined ? { poi } : {}),

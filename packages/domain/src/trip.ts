@@ -124,12 +124,30 @@ export const ActivityItemSchema = z.object({
   order: z.number(),
   type: ItemTypeSchema,
   title: z.string(),
+  // Independent author text, never parsed as an interval or normalized money.
+  timeRange: z.string().optional(),
+  cost: z.string().optional(),
   note: z.string(),
   poi: PoiRefSchema.nullable(),
   images: z.array(ItemImageSchema),
   pending: z.boolean(),
 })
 export type ActivityItem = z.infer<typeof ActivityItemSchema>
+
+/** Shared write contract; omission/undefined leaves an existing value untouched. */
+export const ActivityItemMetadataSchema = ActivityItemSchema.pick({ timeRange: true, cost: true })
+export type ActivityItemMetadata = z.infer<typeof ActivityItemMetadataSchema>
+
+/** Tolerant reads preserve each explicitly supplied string independently. */
+export function readActivityItemMetadata(value: unknown): ActivityItemMetadata {
+  if (!value || typeof value !== 'object') return {}
+  const record = value as Record<string, unknown>
+  const result: ActivityItemMetadata = {}
+  for (const key of ['timeRange', 'cost'] as const) {
+    if (typeof record[key] === 'string') result[key] = record[key]
+  }
+  return result
+}
 
 export const DaySchema = z.object({
   id: z.string(),
