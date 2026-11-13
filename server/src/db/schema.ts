@@ -28,6 +28,9 @@ export const SCHEMA_STATEMENTS: string[] = [
     owner TEXT,
     share_token TEXT,
     planning_context TEXT,
+    cover_image TEXT,
+    is_pinned INTEGER,
+    status TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
@@ -185,6 +188,20 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
     await db.run('ALTER TABLE trips ADD COLUMN planning_context TEXT')
   } catch {
     // The column already exists on fresh databases or after a prior run.
+  }
+  // Optional trip presentation data: preserve old rows as NULL, with no backfill.
+  // Inspect columns so migration failures cannot silently disable trip reads.
+  const { rows: tripColumns } = await db.run('PRAGMA table_info(trips)')
+  for (const [name, type] of [['cover_image', 'TEXT'], ['is_pinned', 'INTEGER'], ['status', 'TEXT']]) {
+    if (!tripColumns.some((column) => column.name === name)) {
+      try {
+        await db.run(`ALTER TABLE trips ADD COLUMN ${name} ${type}`)
+      } catch (error) {
+        // Another connection may have added it after our initial inspection.
+        const { rows } = await db.run('PRAGMA table_info(trips)')
+        if (!rows.some((column) => column.name === name)) throw error
+      }
+    }
   }
   try {
     await db.run('ALTER TABLE legs ADD COLUMN quality TEXT')

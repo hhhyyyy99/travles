@@ -30,6 +30,9 @@ test('trip summary accepts a fully-populated card and the minimal seed shape', (
     nights: 4,
     createdAt: '2026-09-01T00:00:00.000Z',
     updatedAt: '2026-09-02T00:00:00.000Z',
+    coverImage: 'https://example.com/chengdu.jpg',
+    isPinned: false,
+    status: 'source-defined-label',
     durationDays: 5,
     dateStatus: 'confirmed',
     planningContext: {
@@ -53,7 +56,11 @@ test('trip summary accepts a fully-populated card and the minimal seed shape', (
     createdAt: '2026-09-01T00:00:00.000Z',
     updatedAt: '2026-09-01T00:00:00.000Z',
   }
-  assert.equal(TripSummarySchema.safeParse(minimal).success, true)
+  assert.deepEqual(TripSummarySchema.parse(minimal), minimal, 'no presentation defaults are added to legacy trips')
+  assert.deepEqual(normalizeTrip(full), full)
+  for (const invalid of [{ coverImage: 42 }, { isPinned: 1 }, { status: { label: 'x' } }]) {
+    assert.equal(TripSchema.safeParse({ ...minimal, ...invalid }).success, false)
+  }
 })
 
 test('a canvas with a plain-text card and a measured leg validates', () => {
