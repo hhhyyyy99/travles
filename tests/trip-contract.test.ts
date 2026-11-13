@@ -24,6 +24,8 @@ test('trip summary accepts a fully-populated card and the minimal seed shape', (
   const full = {
     id: 't1',
     title: '成都 5 日',
+    destination: '成都',
+    daysCount: 5,
     startDate: '2026-10-02',
     endDate: '2026-10-06',
     days: 5,
@@ -58,7 +60,14 @@ test('trip summary accepts a fully-populated card and the minimal seed shape', (
   }
   assert.deepEqual(TripSummarySchema.parse(minimal), minimal, 'no presentation defaults are added to legacy trips')
   assert.deepEqual(normalizeTrip(full), full)
-  for (const invalid of [{ coverImage: 42 }, { isPinned: 1 }, { status: { label: 'x' } }]) {
+  for (const daysCount of [1, 61, 365]) {
+    assert.deepEqual(TripSchema.parse({ ...minimal, destination: '', daysCount }), { ...minimal, destination: '', daysCount })
+  }
+  for (const invalid of [
+    { coverImage: 42 }, { isPinned: 1 }, { status: { label: 'x' } },
+    ...[42, null, {}].map((destination) => ({ destination })),
+    ...[null, '7', 0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1].map((daysCount) => ({ daysCount })),
+  ]) {
     assert.equal(TripSchema.safeParse({ ...minimal, ...invalid }).success, false)
   }
 })
