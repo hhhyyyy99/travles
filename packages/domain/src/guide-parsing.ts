@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { ItemTypeSchema } from './trip.js'
+import { ItemTypeSchema, TripSummarySchema } from './trip.js'
 
 /** A pasted guide takes precedence over its URL, including after a blocked fetch. */
 export const GuideParseRequestSchema = z.object({
@@ -49,8 +49,28 @@ export const GuideDraftSchema = z.object({
     })).min(1).max(20),
   })).min(1).max(31),
   warnings: z.array(z.string().max(300)).max(5),
+}).superRefine((draft, ctx) => {
+  if (draft.days.reduce((count, day) => count + day.items.length, 0) > 100) {
+    ctx.addIssue({ code: 'custom', path: ['days'], message: '攻略草稿最多包含 100 个活动。' })
+  }
+  draft.days.forEach((day, index) => {
+    if (day.dayNumber !== index + 1) {
+      ctx.addIssue({ code: 'custom', path: ['days', index, 'dayNumber'], message: '天数必须从 1 开始连续排列。' })
+    }
+  })
 })
 export type GuideDraft = z.infer<typeof GuideDraftSchema>
+
+/** A preview keeps this UUID and payload unchanged when retrying confirmation. */
+export const GuideImportRequestSchema = z.object({
+  draft: GuideDraftSchema,
+  title: z.string().trim().min(1).max(100).optional(),
+  importId: z.uuid().transform((value) => value.toLowerCase()),
+}).strict()
+export type GuideImportRequest = z.infer<typeof GuideImportRequestSchema>
+
+export const GuideImportResultSchema = z.object({ trip: TripSummarySchema })
+export type GuideImportResult = z.infer<typeof GuideImportResultSchema>
 
 export const GuideSourceSchema = z.object({
   kind: z.enum(['text', 'url']),

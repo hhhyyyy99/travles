@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import App from './App'
 import TripListPage from './components/TripListPage'
 import WorkbenchPage from './components/workbench/WorkbenchPage'
 import AiSettingsPage from './components/AiSettingsPage'
 import { probeTripsApi } from './domain/tripList'
+import type { TripCreationSession } from './domain/guideParsing'
 import { AccommodationProvider } from './hooks/useAccommodation'
 import { RouteStatesProvider } from './hooks/useRouteStates'
 import { AmapLiveProvider } from './hooks/useAmapLive'
@@ -45,6 +46,7 @@ function viewFromUrl(): { view: AppView; tripId: string | null } | null {
 }
 
 export default function AppShell() {
+  const creationSession = useRef<TripCreationSession>({ mode: 'ai', guide: null })
   const [state, setState] = useState<{ view: AppView; tripId: string | null; initialPrompt?: string }>(() => viewFromUrl() ?? {
     view: 'loading',
     tripId: null,
@@ -88,7 +90,7 @@ export default function AppShell() {
       return <WorkbenchPage tripId={tripId} onBack={backToTrips} initialPrompt={state.initialPrompt} />
     }
     // ?view=workbench without a trip id falls back to the list.
-    return <TripListPage onOpenGuide={() => setState({ view: 'guide', tripId: null })} onOpenSettings={() => setState({ view: 'settings', tripId: null })} onOpenTrip={openTrip} />
+    return <TripListPage creationSession={creationSession} onOpenGuide={() => setState({ view: 'guide', tripId: null })} onOpenSettings={() => setState({ view: 'settings', tripId: null })} onOpenTrip={openTrip} />
   }
 
   if (view === 'settings') {
@@ -98,6 +100,7 @@ export default function AppShell() {
   if (view === 'trips') {
     return (
       <TripListPage
+        creationSession={creationSession}
         onOpenGuide={() => setState({ view: 'guide', tripId: null })}
         onOpenSettings={() => setState({ view: 'settings', tripId: null })}
         onOpenTrip={openTrip}

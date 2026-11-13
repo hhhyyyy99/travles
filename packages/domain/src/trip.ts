@@ -39,6 +39,8 @@ export const TripPlanningContextSchema = z.object({
   originalSentence: z.string(),
   dateStatus: TripDateStatusSchema,
   datePhrase: z.string().optional(),
+  // Guide imports retain context without starting an intake conversation.
+  source: z.enum(['intake', 'guide']).optional(),
 })
 export type TripPlanningContext = z.infer<typeof TripPlanningContextSchema>
 
