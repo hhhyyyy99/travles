@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { GuideImportRequestSchema, type GuideImportRequest, type TripSummary } from '@hailar/domain'
+import { GuideImportRequestSchema, type GuideImportRequestInput, type TripSummary } from '@hailar/domain'
 import type { SqlDatabase } from '../db/driver.js'
 import { SqliteTripStoreDriver } from '../trips/driver-sqlite.js'
 import { mapRowToSummary } from '../trips/repository.js'
@@ -8,7 +8,7 @@ import type { TripInsertRow } from '../trips/types.js'
 export class GuideImportConflict extends Error {}
 
 /** Trip, ordered days/items, and the idempotency receipt commit together. */
-export async function importGuide(db: SqlDatabase, request: GuideImportRequest): Promise<TripSummary> {
+export async function importGuide(db: SqlDatabase, request: GuideImportRequestInput): Promise<TripSummary> {
   // Validate here too: callers outside HTTP must never bypass the draft limits.
   const input = GuideImportRequestSchema.parse(request)
   if (!db.withTransaction) throw new Error('Guide import requires a transaction')

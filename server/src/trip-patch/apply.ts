@@ -32,7 +32,7 @@
  * the canvas chip hides. Patch-applied days therefore always carry usable
  * estimated legs — never placeholder NULL rows.
  */
-import { readActivityItemMetadata } from '@hailar/domain'
+import { normalizeItemType, readActivityItemMetadata } from '@hailar/domain'
 import type { ActivityItemMetadata, Day } from '@hailar/domain'
 import { isValidDateString } from '../trips/dates.js'
 import { mapLegRow, mapPoiRef } from '../days/repository.js'
@@ -41,7 +41,7 @@ import { adjacentTripPairs, recomputeTripLegs } from '../items-admin/legs.js'
 import { TripPatchIdConflictError } from './types.js'
 import type { PatchPoiRef, TripPatchApplyResult, TripPatchItemUpsert, TripPatchStats, TripPatchStoreDriver } from './types.js'
 import type { TripPatchInput } from './schema.js'
-import { parseTripPatchInput } from './schema.js'
+import { normalizeTripPatchTypes, parseTripPatchInput } from './schema.js'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -114,7 +114,7 @@ async function loadProjection(store: TripPatchStoreDriver, tripId: string): Prom
     const day = days.get(dayId)
     if (!day) continue // orphan row — out of scope for patch validation
     const order = Number(row?.item_order)
-    const type = typeof row?.type === 'string' ? (row.type as ItemType) : 'other'
+    const type = normalizeItemType(row?.type) ?? (typeof row?.type === 'string' ? (row.type as ItemType) : 'other')
     day.items.push({
       id,
       dayId,
@@ -216,7 +216,7 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
           dayId: day.id,
           order: 0,
           seq: projection.seqCounter++,
-          type: op.type as ItemType,
+          type: normalizeItemType(op.type) ?? 'other',
           title: op.title as string,
           note: (op.note as string | undefined) ?? '',
           ...readActivityItemMetadata(op),
@@ -247,7 +247,7 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
         projection.itemMetadataTouches.set(item.id, { ...projection.itemMetadataTouches.get(item.id), ...metadata })
         if (op.title !== undefined) item.title = op.title as string
         if (op.note !== undefined) item.note = (op.note as string | null) ?? ''
-        if (op.type !== undefined) item.type = op.type as ItemType
+        if (op.type !== undefined) item.type = normalizeItemType(op.type) ?? item.type
         if (op.pending !== undefined) item.pending = op.pending as boolean
         if (op.poi !== undefined) {
           const nextPoi = (op.poi as PatchPoiRef | null) ?? null
@@ -765,7 +765,8 @@ export async function applyTripPatch(
   }
 
   const summary = buildSummary(stats)
-  return { ok: true, summary, stats, patch: rawPatch }
+  // Keep the submitted record's existing shape while exposing legacy type names.
+  return { ok: true, summary, stats, patch: normalizeTripPatchTypes(rawPatch as TripPatchInput) }
 }
 
 /** Chinese one-liner for the chat summary card / SSE payload. */

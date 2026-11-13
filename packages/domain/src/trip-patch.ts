@@ -23,7 +23,7 @@
  * Extracted without changing the current API/storage vocabulary or limits.
  */
 import { z } from 'zod'
-import { ActivityItemMetadataSchema, DaySchema } from './trip.js'
+import { ActivityItemMetadataSchema, DaySchema, ItemTypeInputSchema } from './trip.js'
 
 const idField = z
   .string()
@@ -81,9 +81,8 @@ const addItemOp = z.object({
   itemId: idField.describe('新卡片的 id'),
   dayId: idField.describe('放入哪一天（已存在或本 patch 前面刚创建）'),
   order: z.number().int().min(0).optional().describe('当天内的顺序（0 起）；省略则排在末尾'),
-  type: z
-    .enum(['traffic', 'stay', 'attraction', 'food', 'other'])
-    .describe('卡片类型：交通/住宿/游玩/餐饮/其他'),
+  type: ItemTypeInputSchema
+    .describe('卡片类型：traffic/transit 交通、stay/accommodation 住宿、attraction 游玩、food/dining 餐饮、other/note 其他；写入后保持旧词汇'),
   title: z.string().min(1).max(80).describe('卡片标题'),
   note: z.string().max(500).optional().describe('备注（时间安排、提示等）'),
   pending: z.boolean().optional().describe('未确认槽位（如未定酒店）必须为 true，并在正文中标注「待定」'),
@@ -100,7 +99,7 @@ const updateItemOp = z.object({
   itemId: idField.describe('要修改的卡片'),
   title: z.string().min(1).max(80).optional(),
   note: z.string().max(500).nullable().optional().describe('备注；null 表示清空'),
-  type: z.enum(['traffic', 'stay', 'attraction', 'food', 'other']).optional(),
+  type: ItemTypeInputSchema.optional(),
   pending: z.boolean().optional(),
   poi: patchPoiSchema.nullable().optional().describe('新的 POI；null 表示清除坐标'),
   legPending: z.boolean().optional(),

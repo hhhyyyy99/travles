@@ -3,7 +3,8 @@
  * access over the same `SqlDatabase` seam as the trips driver. Upserts are
  * keyed by row id (the idempotency mechanism for the seed + migration).
  */
-import { ActivityItemMetadataSchema } from '@hailar/domain'
+import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
+import { ContentItemIdConflictError } from './types.js'
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { ChecklistRow, ChecklistUpsert, ContentStoreDriver, DayRow, ItemRow, ItemUpsert } from './types.js'
 
@@ -35,16 +36,21 @@ export class SqliteContentStoreDriver implements ContentStoreDriver {
 
   async upsertItemRow(tripId: string, item: ItemUpsert): Promise<void> {
     const metadata = ActivityItemMetadataSchema.parse(item)
-    await this.db.run(
+    if (!(await this.dayExists(tripId, item.dayId))) {
+      throw new Error(`day ${item.dayId} does not belong to trip ${tripId}`)
+    }
+    const result = await this.db.run(
       `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, time_range, cost, poi, pending)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
-         trip_id = excluded.trip_id, day_id = excluded.day_id, item_order = excluded.item_order,
+         day_id = excluded.day_id, item_order = excluded.item_order,
          type = excluded.type, title = excluded.title, note = excluded.note, poi = excluded.poi, pending = excluded.pending
          ${metadata.timeRange !== undefined ? ', time_range = excluded.time_range' : ''}
-         ${metadata.cost !== undefined ? ', cost = excluded.cost' : ''}`,
-      [item.id, tripId, item.dayId, item.itemOrder, item.type, item.title, item.note, metadata.timeRange ?? null, metadata.cost ?? null, item.poiJson ?? null, item.pending ? 1 : 0] as SqlValue[],
+         ${metadata.cost !== undefined ? ', cost = excluded.cost' : ''}
+       WHERE items.trip_id = excluded.trip_id`,
+      [item.id, tripId, item.dayId, item.itemOrder, normalizeItemType(item.type) ?? item.type, item.title, item.note, metadata.timeRange ?? null, metadata.cost ?? null, item.poiJson ?? null, item.pending ? 1 : 0] as SqlValue[],
     )
+    if (result.rowsAffected === 0) throw new ContentItemIdConflictError(item.id)
   }
 
   async upsertChecklistRow(tripId: string, entry: ChecklistUpsert): Promise<void> {

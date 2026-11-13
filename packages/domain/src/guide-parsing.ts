@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { ActivityItemMetadataSchema, ItemTypeSchema, TripSummarySchema } from './trip.js'
+import { ActivityItemMetadataSchema, ItemTypeInputSchema, ItemTypeSchema, normalizeItemType, TripSummarySchema } from './trip.js'
 
 /** A pasted guide takes precedence over its URL, including after a blocked fetch. */
 export const GuideParseRequestSchema = z.object({
@@ -45,6 +45,9 @@ export const GuideDraftSchema = z.object({
     title: z.string().min(1).max(120),
     items: z.array(extractionItemSchema.extend({
       ...ActivityItemMetadataSchema.shape,
+      // Structured previews/imports adapt to the existing renderer and storage.
+      // External extraction above keeps its established model-facing schema.
+      type: ItemTypeInputSchema.transform((value) => normalizeItemType(value)!),
       poi: GuidePoiSchema.nullable(),
       pending: z.boolean(),
     })).min(1).max(20),
@@ -61,6 +64,7 @@ export const GuideDraftSchema = z.object({
   })
 })
 export type GuideDraft = z.infer<typeof GuideDraftSchema>
+export type GuideDraftInput = z.input<typeof GuideDraftSchema>
 
 /** A preview keeps this UUID and payload unchanged when retrying confirmation. */
 export const GuideImportRequestSchema = z.object({
@@ -69,6 +73,7 @@ export const GuideImportRequestSchema = z.object({
   importId: z.uuid().transform((value) => value.toLowerCase()),
 }).strict()
 export type GuideImportRequest = z.infer<typeof GuideImportRequestSchema>
+export type GuideImportRequestInput = z.input<typeof GuideImportRequestSchema>
 
 export const GuideImportResultSchema = z.object({ trip: TripSummarySchema })
 export type GuideImportResult = z.infer<typeof GuideImportResultSchema>

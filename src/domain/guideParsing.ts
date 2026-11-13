@@ -1,8 +1,8 @@
-import { GuideImportRequestSchema, GuideImportResultSchema, GuideParseRequestSchema, GuideParseResultSchema, readActivityItemMetadata, type GuideImportRequest, type GuideParseRequest, type GuideParseResult, type TripSummary } from '@hailar/domain'
+import { GuideImportRequestSchema, GuideImportResultSchema, GuideParseRequestSchema, GuideParseResultSchema, readActivityItemMetadata, type GuideImportRequest, type GuideImportRequestInput, type GuideParseRequest, type GuideParseResult, type TripSummary } from '@hailar/domain'
 import { defaultFetch, TRIPS_NETWORK_ERROR, type FetchLike } from './tripList'
 
 export type GuideApiResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: string }
-export type GuideImportInput = GuideImportRequest
+export type GuideImportInput = GuideImportRequestInput
 export type GuideImportSession = {
   url: string; text: string; draft: GuideImportRequest['draft'] | null; title: string; importId: string
   confirmation: GuideImportInput | null

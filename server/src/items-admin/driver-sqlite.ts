@@ -5,7 +5,7 @@
  * touch the poi/images columns (position-only updates), and the leg
  * replacement is one DELETE + INSERT batch over the trip's rows.
  */
-import { ActivityItemMetadataSchema } from '@hailar/domain'
+import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
 import { normalizeLegQuality } from '../days/repository.js'
@@ -69,7 +69,10 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
 
   async upsertItemFull(tripId: string, item: ItemFullUpsert): Promise<void> {
     const metadata = ActivityItemMetadataSchema.parse(item)
-    await this.db.run(
+    if (!(await this.dayExists(tripId, item.dayId))) {
+      throw new Error(`day ${item.dayId} does not belong to trip ${tripId}`)
+    }
+    const result = await this.db.run(
       `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, time_range, cost, poi, images, pending)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
        ON CONFLICT(id) DO UPDATE SET
@@ -81,13 +84,14 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
          poi = excluded.poi,
          images = excluded.images
          ${metadata.timeRange !== undefined ? ', time_range = excluded.time_range' : ''}
-         ${metadata.cost !== undefined ? ', cost = excluded.cost' : ''}`,
+         ${metadata.cost !== undefined ? ', cost = excluded.cost' : ''}
+       WHERE items.trip_id = excluded.trip_id`,
       [
         item.id,
         tripId,
         item.dayId,
         item.itemOrder,
-        item.type,
+        normalizeItemType(item.type) ?? item.type,
         item.title,
         item.note,
         metadata.timeRange ?? null,
@@ -96,6 +100,7 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
         item.imagesJson,
       ] as SqlValue[],
     )
+    if (result.rowsAffected === 0) throw new Error(`item ${item.id} belongs to another trip`)
   }
 
   async updateItemOrders(tripId: string, orders: ItemOrderPatch[]): Promise<void> {

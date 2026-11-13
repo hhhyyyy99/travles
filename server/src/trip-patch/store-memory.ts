@@ -4,7 +4,7 @@
  * Rows are plain objects shaped like the SQLite rows (snake_case, tolerant
  * `unknown` field values) so read mapping behaves identically.
  */
-import { ActivityItemMetadataSchema } from '@hailar/domain'
+import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
 import type {
   DayRow,
   ItemRow,
@@ -144,7 +144,7 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
     if (existing) {
       existing.day_id = item.dayId
       existing.item_order = item.itemOrder
-      existing.type = item.type
+      existing.type = normalizeItemType(item.type) ?? item.type
       existing.title = item.title
       existing.note = item.note
       existing.poi = item.poi
@@ -158,7 +158,7 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       trip_id: tripId,
       day_id: item.dayId,
       item_order: item.itemOrder,
-      type: item.type,
+      type: normalizeItemType(item.type) ?? item.type,
       title: item.title,
       note: item.note,
       poi: item.poi,

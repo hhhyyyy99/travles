@@ -5,7 +5,7 @@
  * date validator. `withTransaction` uses the libSQL transaction connection
  * when available, so a failed patch apply leaves no partial writes behind.
  */
-import { ActivityItemMetadataSchema } from '@hailar/domain'
+import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
 import { TripPatchIdConflictError } from './types.js'
@@ -127,7 +127,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
         tripId,
         item.dayId,
         item.itemOrder,
-        item.type,
+        normalizeItemType(item.type) ?? item.type,
         item.title,
         item.note,
         item.poi,
