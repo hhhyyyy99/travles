@@ -31,6 +31,10 @@ test('workbench print route derives custom current cards and explicit quality', 
     durationMin: 24,
     polyline: [[119.7, 49.2], [119.8, 49.3]],
     quality: 'reference',
+    distanceMeters: 22200,
+    durationSeconds: 1440,
+    formattedDistance: '22.2 千米',
+    formattedDuration: '24 分钟',
   }
   const inside: WorkbenchLeg = {
     id: 'inside',

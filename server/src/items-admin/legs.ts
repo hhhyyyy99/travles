@@ -27,6 +27,7 @@
  */
 import type { CanvasItem, CanvasLeg, PoiRef } from '../days/types.js'
 import { normalizeLegQuality } from '../days/repository.js'
+import { projectLegMetrics } from '../days/leg-projections.js'
 
 /**
  * A planned leg row ready for storage — structurally the canvas leg shape
@@ -114,6 +115,8 @@ function plannedLegFor(from: CanvasItem, to: CanvasItem, byPair: Map<string, Can
   const same = byPair.get(`${from.id}|${to.id}`)
   if (same) {
     return {
+      // Preserve projections AND their absence; legacy metrics may be fallbacks.
+      ...same,
       id,
       fromItemId: from.id,
       toItemId: to.id,
@@ -126,7 +129,10 @@ function plannedLegFor(from: CanvasItem, to: CanvasItem, byPair: Map<string, Can
   }
   const estimate = estimateLeg(from.poi, to.poi)
   if (estimate) {
-    return { id, fromItemId: from.id, toItemId: to.id, mode: 'drive', ...estimate, polyline: null, quality: 'estimate' }
+    return {
+      id, fromItemId: from.id, toItemId: to.id, mode: 'drive', ...estimate, polyline: null, quality: 'estimate',
+      ...projectLegMetrics(estimate.distanceKm, estimate.durationMin, 'estimate', null),
+    }
   }
   return { id, fromItemId: from.id, toItemId: to.id, mode: 'drive', distanceKm: 0, durationMin: 0, polyline: null, quality: 'pending' }
 }

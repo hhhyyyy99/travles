@@ -230,7 +230,7 @@ test('route refresh replaces estimate rows with real metrics and preserves them 
   }
   const refreshed = await refreshTripLegs(store, 'trip-route', async () => real)
   assert.equal(refreshed.ok, true)
-  if (refreshed.ok) assert.deepEqual(refreshed.legs[0], { id: 'leg-item-a-item-b', fromItemId: 'item-a', toItemId: 'item-b', mode: 'drive', distanceKm: 21.4, durationMin: 28, polyline: real.polyline, quality: 'measured' })
+  if (refreshed.ok) assert.deepEqual(refreshed.legs[0], { id: 'leg-item-a-item-b', fromItemId: 'item-a', toItemId: 'item-b', mode: 'drive', distanceKm: 21.4, durationMin: 28, polyline: real.polyline, quality: 'measured', distanceMeters: 21400, durationSeconds: 1680, formattedDistance: '21.4 千米', formattedDuration: '28 分钟' })
 
   const pending = await refreshTripLegs(store, 'trip-route', async () => pendingRoute('未配置'))
   assert.equal(pending.ok, true)

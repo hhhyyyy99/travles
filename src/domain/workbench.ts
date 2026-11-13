@@ -14,6 +14,7 @@
  *   Leg  { id, fromItemId, toItemId, mode, distanceKm, durationMin, polyline }
  */
 
+import { LegSchema } from '@hailar/domain'
 import type { ApiResult, FetchLike, TripSummary } from './tripList'
 import { defaultFetch, normalizeTrip } from './tripList'
 
@@ -776,7 +777,22 @@ function normalizeLeg(value: unknown): WorkbenchLeg | null {
     durationMin,
     polyline,
     quality: normalizeWorkbenchLegQuality(record.quality, distanceKm, durationMin, polyline),
+    // Keep only explicitly supplied valid fields; never infer from old fallbacks.
+    ...normalizeLegMetricProjection(record),
   }
+}
+
+function normalizeLegMetricProjection(record: Record<string, unknown>): Pick<WorkbenchLeg, 'distanceMeters' | 'durationSeconds' | 'formattedDistance' | 'formattedDuration'> {
+  const result: Pick<WorkbenchLeg, 'distanceMeters' | 'durationSeconds' | 'formattedDistance' | 'formattedDuration'> = {}
+  const distance = LegSchema.shape.distanceMeters.safeParse(record.distanceMeters)
+  const duration = LegSchema.shape.durationSeconds.safeParse(record.durationSeconds)
+  const distanceText = LegSchema.shape.formattedDistance.safeParse(record.formattedDistance)
+  const durationText = LegSchema.shape.formattedDuration.safeParse(record.formattedDuration)
+  if (distance.success && distance.data !== undefined) result.distanceMeters = distance.data
+  if (duration.success && duration.data !== undefined) result.durationSeconds = duration.data
+  if (distanceText.success && distanceText.data !== undefined) result.formattedDistance = distanceText.data
+  if (durationText.success && durationText.data !== undefined) result.formattedDuration = durationText.data
+  return result
 }
 
 function normalizeWorkbenchLegQuality(

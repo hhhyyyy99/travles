@@ -17,8 +17,10 @@
  *     live in persisted SQLite rows read by 25+ modules. Renaming the stored
  *     vocabulary and units is therefore a breaking, cross-module data/API
  *     migration (it must also rewrite existing rows); it is intentionally not
- *     bundled into this contract slice. `ITEM_TYPE_MAP` records the intended
- *     #4 ⇄ current correspondence so a later migration can be driven from one
+ *     bundled into this contract slice. Optional meter/second and text aliases
+ *     expose available legacy scalars without changing storage or quality.
+ *     `ITEM_TYPE_MAP` records the intended #4 ⇄ current correspondence so a
+ *     later migration can be driven from one
  *     place without hunting through consumers.
  *   - `geographicFactCheck` in #4 is still to be designed on top of the
  *     existing warning flow and is not part of this read model yet.
@@ -153,6 +155,11 @@ export const LegSchema = z.object({
   mode: z.string(),
   distanceKm: z.number(),
   durationMin: z.number(),
+  // Optional aliases of available legacy scalars; no precision/trust upgrade.
+  distanceMeters: z.number().finite().nonnegative().optional(),
+  durationSeconds: z.number().finite().nonnegative().optional(),
+  formattedDistance: z.string().optional(),
+  formattedDuration: z.string().optional(),
   polyline: z.array(z.tuple([z.number(), z.number()])).nullable(),
   quality: LegQualitySchema.optional(),
 })

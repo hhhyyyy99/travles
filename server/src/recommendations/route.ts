@@ -1,5 +1,6 @@
 import type { RoutePoint, RouteLegResult, RouteLegSearch } from './types.js'
 import { mapItemRow, mapLegRow } from '../days/repository.js'
+import { projectLegMetrics } from '../days/leg-projections.js'
 import type { CanvasItem, CanvasLeg } from '../days/types.js'
 import type { ItemsAdminStoreDriver } from '../items-admin/types.js'
 import { adjacentTripPairs, estimateLeg, type LegDayOrder } from '../items-admin/legs.js'
@@ -282,6 +283,7 @@ export async function refreshTripLegs(
         durationMin: route.durationMin,
         polyline: route.polyline,
         quality: 'measured',
+        ...projectLegMetrics(route.distanceKm, route.durationMin, 'measured', route.polyline),
       })
       continue
     }
@@ -318,6 +320,7 @@ function fallbackLeg(from: CanvasItem, to: CanvasItem, old: CanvasLeg | undefine
   const expectedId = `leg-${from.id}-${to.id}`
   if (old && old.id === expectedId && (old.distanceKm > 0 || old.durationMin > 0)) {
     return {
+      ...old,
       id: expectedId,
       fromItemId: from.id,
       toItemId: to.id,
@@ -337,6 +340,7 @@ function fallbackLeg(from: CanvasItem, to: CanvasItem, old: CanvasLeg | undefine
     durationMin: estimate?.durationMin ?? 0,
     polyline: null,
     quality: estimate ? 'estimate' : 'pending',
+    ...(estimate ? projectLegMetrics(estimate.distanceKm, estimate.durationMin, 'estimate', null) : {}),
   }
 }
 
