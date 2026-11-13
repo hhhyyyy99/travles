@@ -10,7 +10,7 @@ export class SqliteContentStoreDriver implements ContentStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
 
   async listDayRows(tripId: string): Promise<DayRow[]> {
-    const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color FROM days WHERE trip_id = ? ORDER BY idx ASC, id ASC', [tripId])
+    const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ? ORDER BY idx ASC, id ASC', [tripId])
     return rows as unknown as DayRow[]
   }
 

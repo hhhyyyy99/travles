@@ -21,7 +21,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
 
   async listDayRows(tripId: string): Promise<DayRow[]> {
-    const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color FROM days WHERE trip_id = ?', [
+    const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ?', [
       tripId,
     ])
     return rows as unknown as DayRow[]
@@ -72,11 +72,17 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
 
   async upsertDayRow(tripId: string, day: TripPatchDayUpsert): Promise<void> {
     await this.assertNoForeignOwner('days', day.id, 'day', tripId)
+    // Metadata presence belongs to the operation, not its loaded projection:
+    // omitting a column here also preserves a newer concurrent stored value.
+    const metadata = (['title', 'note'] as const).filter((key) => day[key] !== undefined)
+    const columns = ['id', 'trip_id', 'idx', 'date', 'theme', 'color', ...metadata]
+    const updates = ['idx = excluded.idx', 'date = excluded.date', 'theme = excluded.theme',
+      ...metadata.map((key) => `${key} = excluded.${key}`)]
     await this.db.run(
-      `INSERT INTO days (id, trip_id, idx, date, theme, color) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET idx = excluded.idx, date = excluded.date, theme = excluded.theme
+      `INSERT INTO days (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})
+       ON CONFLICT(id) DO UPDATE SET ${updates.join(', ')}
        WHERE days.trip_id = excluded.trip_id`,
-      [day.id, tripId, day.idx, day.date, day.theme, ''] as SqlValue[],
+      [day.id, tripId, day.idx, day.date, day.theme, '', ...metadata.map((key) => day[key]!)] as SqlValue[],
     )
     await this.assertCurrentOwner('days', day.id, 'day', tripId)
   }

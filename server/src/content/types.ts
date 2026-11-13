@@ -11,9 +11,10 @@
  */
 
 import type { Day } from '@hailar/domain'
+import type { DayMetadataInput } from '../days/metadata.js'
 
 /** Raw days-table row; values unknown so corrupt storage can be represented. */
-export interface DayRow {
+export interface DayRow extends DayMetadataInput {
   id: unknown
   trip_id: unknown
   idx: unknown
@@ -94,7 +95,7 @@ export interface ItemContent {
   poi?: unknown
 }
 
-export interface DayContent extends Pick<Day, 'tripId' | 'dayNumber'> {
+export interface DayContent extends Pick<Day, 'tripId' | 'dayNumber' | 'title' | 'note'> {
   id: string
   idx: number
   date: string

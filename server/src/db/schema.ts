@@ -46,7 +46,9 @@ export const SCHEMA_STATEMENTS: string[] = [
     idx INTEGER NOT NULL,
     date TEXT,
     theme TEXT,
-    color TEXT
+    color TEXT,
+    title TEXT,
+    note TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS items (
     id TEXT PRIMARY KEY,
@@ -189,23 +191,30 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
   } catch {
     // The column already exists on fresh databases or after a prior run.
   }
-  // Optional trip presentation data: preserve old rows as NULL, with no backfill.
-  // Inspect columns so migration failures cannot silently disable trip reads.
-  const { rows: tripColumns } = await db.run('PRAGMA table_info(trips)')
-  for (const [name, type] of [['cover_image', 'TEXT'], ['is_pinned', 'INTEGER'], ['status', 'TEXT']]) {
-    if (!tripColumns.some((column) => column.name === name)) {
-      try {
-        await db.run(`ALTER TABLE trips ADD COLUMN ${name} ${type}`)
-      } catch (error) {
-        // Another connection may have added it after our initial inspection.
-        const { rows } = await db.run('PRAGMA table_info(trips)')
-        if (!rows.some((column) => column.name === name)) throw error
-      }
-    }
+  // Optional metadata stays NULL on old rows, with no backfill or table rebuild.
+  // Inspect and recheck so concurrent startup is safe and real failures propagate.
+  for (const [name, type] of [['cover_image', 'TEXT'], ['is_pinned', 'INTEGER'], ['status', 'TEXT']] as const) {
+    await ensureColumn(db, 'trips', name, type)
+  }
+  for (const name of ['title', 'note']) {
+    await ensureColumn(db, 'days', name, 'TEXT')
   }
   try {
     await db.run('ALTER TABLE legs ADD COLUMN quality TEXT')
   } catch {
     // The column already exists on fresh databases or after a prior run.
+  }
+}
+
+/** Identifiers come only from the fixed migration declarations above. */
+async function ensureColumn(db: SqlDatabase, table: string, name: string, type: string): Promise<void> {
+  const { rows: columns } = await db.run(`PRAGMA table_info(${table})`)
+  if (columns.some((column) => column.name === name)) return
+  try {
+    await db.run(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`)
+  } catch (error) {
+    // Another connection may have added it after our initial inspection.
+    const { rows } = await db.run(`PRAGMA table_info(${table})`)
+    if (!rows.some((column) => column.name === name)) throw error
   }
 }

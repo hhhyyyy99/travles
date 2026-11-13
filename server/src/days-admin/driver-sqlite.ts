@@ -9,7 +9,7 @@ import type { DayRow } from '../days/types.js'
 import type { DayInsert, DaysAdminStoreDriver, DayThemePatch } from './types.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
-const DAY_COLUMNS = 'id, trip_id, idx, date, theme, color'
+const DAY_COLUMNS = 'id, trip_id, idx, date, theme, color, title, note'
 
 export class SqliteDaysAdminStoreDriver implements DaysAdminStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
@@ -26,8 +26,8 @@ export class SqliteDaysAdminStoreDriver implements DaysAdminStoreDriver {
 
   async insertDayRow(row: DayInsert): Promise<void> {
     await this.db.run(
-      'INSERT INTO days (id, trip_id, idx, date, theme, color) VALUES (?, ?, ?, ?, ?, ?)',
-      [row.id, row.tripId, row.idx, row.date, row.theme, row.color] as SqlValue[],
+      'INSERT INTO days (id, trip_id, idx, date, theme, color, title, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [row.id, row.tripId, row.idx, row.date, row.theme, row.color, row.title ?? null, row.note ?? null] as SqlValue[],
     )
   }
 
@@ -41,6 +41,14 @@ export class SqliteDaysAdminStoreDriver implements DaysAdminStoreDriver {
     if (patch.color !== undefined) {
       sets.push('color = ?')
       args.push(patch.color)
+    }
+    if (patch.title !== undefined) {
+      sets.push('title = ?')
+      args.push(patch.title)
+    }
+    if (patch.note !== undefined) {
+      sets.push('note = ?')
+      args.push(patch.note)
     }
     if (sets.length === 0) return
     args.push(dayId)

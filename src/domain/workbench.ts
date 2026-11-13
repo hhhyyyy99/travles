@@ -8,7 +8,7 @@
  * Canonical read shapes (mirror of server/src/days/types.ts — the server
  * normalizes DB rows into these; the client re-normalizes defensively):
  *
- *   Day  { id, tripId?, dayNumber?, index, date, theme, color, items: Item[] }
+ *   Day  { id, tripId?, dayNumber?, index, date, title?, note?, theme, color, items: Item[] }
  *   Item { id, dayId, order, type: 'traffic'|'stay'|'attraction'|'food'|'other',
  *          title, note, poi: PoiRef | null, images: {url, caption}[], pending }
  *   Leg  { id, fromItemId, toItemId, mode, distanceKm, durationMin, polyline }
@@ -56,11 +56,11 @@ export const CANVAS_NETWORK_ERROR = '无法连接服务器，请确认后端服�
 // {ok:true,data} | {ok:false,error}, injectable FetchLike, never throws.
 // ---------------------------------------------------------------------------
 
-/** Optional payload for creating a day; omitted fields take server defaults. */
-export type WorkbenchDayInput = { date?: string; theme?: string; color?: string }
+/** Optional day fields; omitted metadata stays absent. */
+export type WorkbenchDayInput = Partial<Pick<WorkbenchDay, 'date' | 'theme' | 'color' | 'title' | 'note'>>
 
-/** Theme (and color) patch for an existing day. */
-export type WorkbenchDayPatch = { theme?: string; color?: string }
+/** Omitted fields preserve existing values; empty metadata strings clear them. */
+export type WorkbenchDayPatch = Partial<Pick<WorkbenchDay, 'theme' | 'color' | 'title' | 'note'>>
 
 /** Shared response handling for the three day-admin routes. */
 async function dayRequest(
@@ -107,7 +107,7 @@ export async function createWorkbenchDay(
   return { ok: true, data: day }
 }
 
-/** PATCH /api/trips/:id/days/:dayId — update a day's theme (and color). */
+/** PATCH /api/trips/:id/days/:dayId — update day metadata, theme or color. */
 export async function updateWorkbenchDay(
   tripId: string,
   dayId: string,
@@ -702,6 +702,8 @@ function normalizeDay(value: unknown): WorkbenchDay | null {
       : {}),
     index: finiteNumber(record.index),
     date: typeof record.date === 'string' ? record.date : '',
+    ...(Object.hasOwn(record, 'title') && typeof record.title === 'string' ? { title: record.title } : {}),
+    ...(Object.hasOwn(record, 'note') && typeof record.note === 'string' ? { note: record.note } : {}),
     theme: typeof record.theme === 'string' ? record.theme : '',
     color: typeof record.color === 'string' ? record.color : '',
     items: items.map(normalizeItem).filter((item): item is WorkbenchItem => item !== null),

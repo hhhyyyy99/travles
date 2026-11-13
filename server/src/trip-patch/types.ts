@@ -16,8 +16,8 @@
  * Patch vocabulary (PRD 附录 B plan round; forward-compatible with ticket 11
  * patch-explain — same tool behind a confirm step — and ticket 13 flows):
  *
- *   add_day     { dayId, date?, theme? }
- *   update_day  { dayId, date?, theme? }
+ *   add_day     { dayId, date?, theme?, title?, note? }
+ *   update_day  { dayId, date?, theme?, title?, note? }
  *   remove_day  { dayId }
  *   add_item    { itemId, dayId, order?, type, title, note?, pending?, poi?, legPending? }
  *   update_item { itemId, title?, note?, type?, pending?, poi?, legPending? }
@@ -30,6 +30,7 @@
  * distances; this ticket writes placeholder rows with null distance so the
  * canvas stays structure-true without inventing numbers).
  */
+import type { Day } from '@hailar/domain'
 import type { DayRow, ItemRow, LegQuality, LegRow } from '../days/types.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
@@ -65,8 +66,11 @@ export type PatchConfirmationRecord = {
   createdAt: string
 }
 
-/** Upsert payload for one day row (every field server-validated). */
-export interface TripPatchDayUpsert {
+/**
+ * Upsert payload for one day row (every field server-validated).
+ * Only explicitly supplied metadata is written; omission preserves stored values.
+ */
+export interface TripPatchDayUpsert extends Pick<Day, 'title' | 'note'> {
   id: string
   idx: number
   date: string

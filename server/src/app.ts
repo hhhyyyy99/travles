@@ -15,7 +15,7 @@ import { readTripCanvas } from './days/repository.js'
 import type { WorkbenchStoreDriver } from './days/types.js'
 import { DaysAdminRepository } from './days-admin/repository.js'
 import { createSqliteDaysAdminStore } from './days-admin/driver-sqlite.js'
-import type { DaysAdminStoreDriver } from './days-admin/types.js'
+import type { DaysAdminStoreDriver, DayThemeInput } from './days-admin/types.js'
 import { ItemsAdminRepository } from './items-admin/repository.js'
 import { createSqliteItemsAdminStore } from './items-admin/driver-sqlite.js'
 import type { ItemsAdminStoreDriver } from './items-admin/types.js'
@@ -512,6 +512,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
       date: body.date,
       theme: body.theme,
       color: body.color,
+      title: body.title,
+      note: body.note,
     })
     if (!result.ok) return tripError(c, result.error, result.code)
     await synchronizeSchedule(tripId, store, true)
@@ -525,9 +527,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     const tripId = c.req.param('id')
     const body = await readJsonBody(c)
     if (body === null) return c.json({ error: '请求体必须是有效的 JSON' }, 400)
-    const patch: { theme?: unknown; color?: unknown } = {}
+    const patch: DayThemeInput = {}
     if ('theme' in body) patch.theme = body.theme
     if ('color' in body) patch.color = body.color
+    if ('title' in body) patch.title = body.title
+    if ('note' in body) patch.note = body.note
     const store = await resolveDaysAdminStore()
     const days = new DaysAdminRepository(store)
     const result = await days.updateDay(
