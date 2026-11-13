@@ -72,11 +72,20 @@ export interface ContentStoreDriver {
   /**
    * Upsert an item row. The day must belong to `tripId`; implementations
    * throw (or report via `dayExists`) when it does not — the repository
-   * translates that into {ok:false}.
+   * translates that into {ok:false}. An id owned by another trip must throw
+   * ContentItemIdConflictError without changing the existing row.
    */
   dayExists(tripId: string, dayId: string): Promise<boolean>
   upsertItemRow(tripId: string, item: ItemUpsert): Promise<void>
   upsertChecklistRow(tripId: string, entry: ChecklistUpsert): Promise<void>
+}
+
+/** Raised when an item upsert reuses an id owned by another trip. */
+export class ContentItemIdConflictError extends Error {
+  constructor(public readonly id: string) {
+    super(`item id "${id}" belongs to another trip`)
+    this.name = 'ContentItemIdConflictError'
+  }
 }
 
 /** Machine-readable failure class shared with the trips repository. */

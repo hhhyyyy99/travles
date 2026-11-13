@@ -94,7 +94,7 @@ test('patch preserves all seven operations, nullable clearing, unknown-field str
   assert.equal(tripPatchInputSchema.safeParse({ ops: [{ op: 'add_item', itemId: 'i', dayId: 'd', type: 'food', title: '餐饮', note: null }] }).success, false)
 })
 
-test('patch keeps operation count, identifier, order and current vocabulary limits', () => {
+test('patch keeps operation count, identifier and order limits while accepting compatible activity names', () => {
   const op = { op: 'remove_item', itemId: 'x'.repeat(64) }
   assert.equal(tripPatchInputSchema.safeParse({ ops: Array(200).fill(op) }).success, true)
   for (const invalid of [
@@ -105,8 +105,12 @@ test('patch keeps operation count, identifier, order and current vocabulary limi
     { ops: [{ op: 'replace_trip' }] },
     { ops: [{ op: 'move_item', itemId: 'i', dayId: 'd', order: -1 }] },
     { ops: [{ op: 'move_item', itemId: 'i', dayId: 'd', order: 0.5 }] },
-    { ops: [{ op: 'add_item', itemId: 'i', dayId: 'd', type: 'accommodation', title: '酒店' }] },
+    { ops: [{ op: 'add_item', itemId: 'i', dayId: 'd', type: 'hotel', title: '酒店' }] },
   ]) assert.equal(tripPatchInputSchema.safeParse(invalid).success, false)
+  const alias = { ops: [{ op: 'add_item', itemId: 'i', dayId: 'd', type: 'accommodation', title: '酒店' }] }
+  const parsed = parseTripPatchInput(alias)
+  assert.ok(parsed.ok)
+  assert.deepEqual(parsed.value, { ops: [{ ...alias.ops[0], type: 'stay' }] })
 })
 
 test('patch and proposal POIs preserve accommodation metadata and all-or-nothing coordinates', () => {

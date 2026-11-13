@@ -19,9 +19,9 @@
  *     migration (it must also rewrite existing rows); it is intentionally not
  *     bundled into this contract slice. Optional meter/second and text aliases
  *     expose available legacy scalars without changing storage or quality.
- *     `ITEM_TYPE_MAP` records the intended #4 ⇄ current correspondence so a
- *     later migration can be driven from one
- *     place without hunting through consumers.
+ *     Activity inputs accept both vocabularies through ItemTypeInputSchema.
+ *     normalizeItemType adapts them at real read/write boundaries; persisted
+ *     and public read-model `type` values remain in the current vocabulary.
  *   - `geographicFactCheck` in #4 is still to be designed on top of the
  *     existing warning flow and is not part of this read model yet.
  */
@@ -80,18 +80,39 @@ export type Trip = z.infer<typeof TripSchema>
 /* Canvas read model                                                           */
 /* -------------------------------------------------------------------------- */
 
-/** Activity types currently persisted (see module note on the #4 mapping). */
+/** Existing storage, response and UI vocabulary; these values stay stable. */
 export const ItemTypeSchema = z.enum(['traffic', 'stay', 'attraction', 'food', 'other'])
 export type ItemType = z.infer<typeof ItemTypeSchema>
 
-/** Intended correspondence between the running vocabulary and issue #4's. */
+/** The activity vocabulary named by the universal planner specification. */
+export const ActivityTypeSchema = z.enum(['attraction', 'transit', 'dining', 'accommodation', 'note'])
+export type ActivityType = z.infer<typeof ActivityTypeSchema>
+
+/** Both input vocabularies, without transforms so AI tools can expose JSON Schema. */
+export const ItemTypeInputSchema = z.union([ItemTypeSchema, ActivityTypeSchema])
+export type ItemTypeInput = z.infer<typeof ItemTypeInputSchema>
+
+/** One-to-one compatibility correspondence, used by the boundary adapter below. */
 export const ITEM_TYPE_MAP = {
   attraction: 'attraction',
   traffic: 'transit',
   food: 'dining',
   stay: 'accommodation',
   other: 'note',
-} as const satisfies Record<ItemType, string>
+} as const satisfies Record<ItemType, ActivityType>
+
+/**
+ * Normalize only recognized, exact strings. Each caller retains its established
+ * invalid/missing-value policy; this adapter never invents a category from POI,
+ * title, casing, whitespace, or an unknown legacy string.
+ */
+export function normalizeItemType(value: unknown): ItemType | undefined {
+  const legacy = ItemTypeSchema.safeParse(value)
+  if (legacy.success) return legacy.data
+  const activity = ActivityTypeSchema.safeParse(value)
+  if (!activity.success) return undefined
+  return ItemTypeSchema.options.find((type) => ITEM_TYPE_MAP[type] === activity.data)
+}
 
 /** Provenance of a leg's distance/time. */
 export const LegQualitySchema = z.enum(['reference', 'estimate', 'measured', 'pending'])

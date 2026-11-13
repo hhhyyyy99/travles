@@ -1,5 +1,5 @@
 /** Client codec for ticket 13's preview → confirm → TripPatch flow. */
-import { readActivityItemMetadata, type AiProposal as SharedAiProposal, type ProposalItem, type ProposalChange, type ProposalRequest } from '@hailar/domain'
+import { normalizeItemType, readActivityItemMetadata, type AiProposal as SharedAiProposal, type ProposalItem, type ProposalChange, type ProposalRequest } from '@hailar/domain'
 import type { ApiResult, FetchLike } from './tripList'
 import { defaultFetch } from './tripList'
 
@@ -157,18 +157,19 @@ function normalizePatch(raw: unknown): { ops: unknown[] } | null {
 function normalizeProposalItem(raw: unknown): ProposalItem | null {
   if (raw === null || typeof raw !== 'object') return null
   const item = raw as Record<string, unknown>
+  const type = normalizeItemType(item.type)
   if (
     typeof item.itemId !== 'string' || item.itemId.trim() === '' ||
     typeof item.dayId !== 'string' || item.dayId.trim() === '' ||
     typeof item.title !== 'string' || item.title.trim() === '' ||
-    !['traffic', 'stay', 'attraction', 'food', 'other'].includes(String(item.type))
+    type === undefined
   ) return null
   const poi = normalizeProposalPoi(item.poi)
   return {
     itemId: item.itemId.trim(),
     dayId: item.dayId.trim(),
     ...(typeof item.order === 'number' && Number.isInteger(item.order) && item.order >= 0 ? { order: item.order } : {}),
-    type: item.type as ProposalItem['type'],
+    type,
     title: item.title.trim(),
     ...readActivityItemMetadata(item),
     ...(typeof item.note === 'string' ? { note: item.note.trim() } : {}),

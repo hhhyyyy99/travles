@@ -4,7 +4,7 @@
  * convention: reads NEVER throw; corrupt rows degrade and get dropped, the
  * same codec convention as src/domain/storage.ts and the trips repository).
  */
-import { readActivityItemMetadata } from '@hailar/domain'
+import { normalizeItemType, readActivityItemMetadata } from '@hailar/domain'
 import { asText } from '../trips/dates.js'
 import { projectDayIdentity } from './projections.js'
 import { readDayMetadata } from './metadata.js'
@@ -15,7 +15,6 @@ import type {
   CanvasLeg,
   DayRow,
   ItemImage,
-  ItemType,
   ItemRow,
   LegRow,
   LegQuality,
@@ -23,8 +22,6 @@ import type {
   TripCanvas,
   WorkbenchStoreDriver,
 } from './types.js'
-
-const ITEM_TYPES: ItemType[] = ['traffic', 'stay', 'attraction', 'food', 'other']
 
 /** Tolerant whole-trip canvas read; a failing driver → empty canvas. */
 export async function readTripCanvas(driver: WorkbenchStoreDriver, tripId: string): Promise<TripCanvas> {
@@ -97,12 +94,11 @@ export function mapItemRow(row: ItemRow): CanvasItem | null {
   const id = asText(row?.id)
   const dayId = asText(row?.day_id)
   if (!id || !dayId) return null
-  const type = asText(row?.type) as ItemType
   return {
     id,
     dayId,
     order: asNonNegativeNumber(row?.item_order),
-    type: ITEM_TYPES.includes(type) ? type : 'other',
+    type: normalizeItemType(row?.type) ?? 'other',
     title: asText(row?.title),
     note: asText(row?.note),
     ...readActivityItemMetadata({ timeRange: row?.time_range, cost: row?.cost }),

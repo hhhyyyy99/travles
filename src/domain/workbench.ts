@@ -14,7 +14,7 @@
  *   Leg  { id, fromItemId, toItemId, mode, distanceKm, durationMin, polyline }
  */
 
-import { LegSchema, readActivityItemMetadata } from '@hailar/domain'
+import { LegSchema, normalizeItemType, readActivityItemMetadata, type ItemTypeInput } from '@hailar/domain'
 import type { ApiResult, FetchLike, TripSummary } from './tripList'
 import { defaultFetch, normalizeTrip } from './tripList'
 
@@ -454,6 +454,9 @@ export type WorkbenchItemCreateInput = {
   index?: number
 } & Pick<WorkbenchItem, 'timeRange' | 'cost'>
 
+/** API input also accepts specification names; optimistic UI items stay canonical. */
+export type WorkbenchItemCreateRequest = Omit<WorkbenchItemCreateInput, 'type'> & { type?: ItemTypeInput }
+
 /** Field-edit patch for an existing card. */
 export type WorkbenchItemPatch = Partial<Pick<WorkbenchItem, 'title' | 'note' | 'images' | 'poi' | 'timeRange' | 'cost'>>
 
@@ -473,7 +476,7 @@ function parseItemMutation(data: unknown): ApiResult<ItemMutationData> {
 /** POST /api/trips/:id/items — create a card; the server assigns the id. */
 export async function createWorkbenchItem(
   tripId: string,
-  input: WorkbenchItemCreateInput,
+  input: WorkbenchItemCreateRequest,
   fetchLike: FetchLike = defaultFetch(),
 ): Promise<ApiResult<ItemMutationData>> {
   const result = await dayRequest(
@@ -699,8 +702,6 @@ export function tempItemId(prefix: string): string {
 // Tolerant normalization (mirror of the server's; guards against a drifted API)
 // ---------------------------------------------------------------------------
 
-const ITEM_TYPES: ItemType[] = ['traffic', 'stay', 'attraction', 'food', 'other']
-
 function normalizeDay(value: unknown): WorkbenchDay | null {
   if (value === null || typeof value !== 'object') return null
   const record = value as Record<string, unknown>
@@ -729,12 +730,12 @@ function normalizeItem(value: unknown): WorkbenchItem | null {
   const record = value as Record<string, unknown>
   const id = typeof record.id === 'string' ? record.id : ''
   if (!id) return null
-  const type = typeof record.type === 'string' ? (record.type as ItemType) : 'other'
+  const type = normalizeItemType(record.type) ?? 'other'
   return {
     id,
     dayId: typeof record.dayId === 'string' ? record.dayId : '',
     order: finiteNumber(record.order),
-    type: ITEM_TYPES.includes(type) ? type : 'other',
+    type,
     title: typeof record.title === 'string' ? record.title : '',
     ...readActivityItemMetadata(record),
     note: typeof record.note === 'string' ? record.note : '',

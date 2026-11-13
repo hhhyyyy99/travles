@@ -13,7 +13,8 @@
  * of duplicating it. See server/src/seed/builtin-trip-data.ts for the fixed
  * ID scheme.
  */
-import { ActivityItemMetadataSchema, readActivityItemMetadata, type ActivityItemMetadata } from '@hailar/domain'
+import { ActivityItemMetadataSchema, normalizeItemType, readActivityItemMetadata, type ActivityItemMetadata } from '@hailar/domain'
+import { ContentItemIdConflictError } from './types.js'
 import { projectDayIdentity } from '../days/projections.js'
 import { readDayMetadata } from '../days/metadata.js'
 import type {
@@ -86,7 +87,7 @@ export class TripContentRepository {
   /**
    * Upsert one item. Fails with not_found when the target day does not
    * belong to the trip (checked before writing so a bad dayId never creates
-   * an orphan row).
+   * an orphan row). An item id owned by another trip is rejected as invalid.
    */
   async upsertItem(tripId: string, input: Record<string, unknown>): Promise<ContentWriteResult> {
     const item = readItemUpsert(input)
@@ -100,7 +101,10 @@ export class TripContentRepository {
     if (!dayExists) return { ok: false, error: '日程不存在', code: 'not_found' }
     try {
       await this.driver.upsertItemRow(tripId, item)
-    } catch {
+    } catch (error) {
+      if (error instanceof ContentItemIdConflictError) {
+        return { ok: false, error: '条目 id 与其他行程冲突，请使用新的 id', code: 'invalid' }
+      }
       return { ok: false, error: '保存失败', code: 'storage' }
     }
     return { ok: true }
@@ -148,7 +152,7 @@ function mapItemRow(row: ItemRow): ItemContent | null {
     id,
     dayId,
     itemOrder: Number.isFinite(orderNumber) ? orderNumber : 0,
-    type: asText(row?.type) || 'other',
+    type: normalizeItemType(row?.type) ?? (asText(row?.type) || 'other'),
     title: asText(row?.title),
     note: asText(row?.note),
     ...readActivityItemMetadata({ timeRange: row?.time_range, cost: row?.cost }),
@@ -204,7 +208,7 @@ function readItemUpsert(input: Record<string, unknown>): ItemUpsert | null {
     id,
     dayId,
     itemOrder: Number.isFinite(orderNumber) ? Math.trunc(orderNumber) : 0,
-    type: typeof input.type === 'string' && input.type.trim() ? input.type.trim() : 'other',
+    type: normalizeItemType(input.type) ?? (typeof input.type === 'string' && input.type.trim() ? input.type.trim() : 'other'),
     title: typeof input.title === 'string' ? input.title : '',
     note: typeof input.note === 'string' ? input.note : '',
     ...metadata,

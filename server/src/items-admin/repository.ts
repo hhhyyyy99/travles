@@ -16,12 +16,12 @@
  *   clamped to [0, count]. Cross-day drops renumber both days 0..n-1.
  */
 import { randomUUID } from 'node:crypto'
-import { ActivityItemMetadataSchema, readActivityItemMetadata, type ActivityItemMetadata } from '@hailar/domain'
+import { ActivityItemMetadataSchema, normalizeItemType, readActivityItemMetadata, type ActivityItemMetadata } from '@hailar/domain'
 import {
   mapItemRow,
   mapLegRow,
 } from '../days/repository.js'
-import type { CanvasItem, CanvasLeg, ItemImage, ItemRow, ItemType, PoiRef } from '../days/types.js'
+import type { CanvasItem, CanvasLeg, ItemImage, ItemRow, PoiRef } from '../days/types.js'
 import { recomputeTripLegs, type LegDayOrder } from './legs.js'
 import type {
   ItemDeleteResult,
@@ -34,7 +34,6 @@ import type {
   ItemsAdminStoreDriver,
 } from './types.js'
 
-const ITEM_TYPES: ItemType[] = ['traffic', 'stay', 'attraction', 'food', 'other']
 const MAX_TITLE_LENGTH = 200
 const MAX_NOTE_LENGTH = 2000
 const MAX_IMAGES = 20
@@ -146,7 +145,7 @@ export class ItemsAdminRepository {
     if (title === null) return { ok: false, error: '标题不能为空（最多 200 字）', code: 'invalid' }
     const note = readNote(input.note)
     if (note === null) return { ok: false, error: '备注过长（最多 2000 字）', code: 'invalid' }
-    const type = ITEM_TYPES.includes(input.type as ItemType) ? (input.type as ItemType) : 'other'
+    const type = normalizeItemType(input.type) ?? 'other'
     const poi = readPoiInput(input.poi)
     if (poi === false) return { ok: false, error: 'POI 数据无效', code: 'invalid' }
     const images = readImagesInput(input.images)
