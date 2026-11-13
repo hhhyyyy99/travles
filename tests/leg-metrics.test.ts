@@ -19,6 +19,7 @@ import { synchronizeTripSchedule } from '../server/src/trip-events/schedule.js'
 import { fetchTripCanvas, refreshWorkbenchLegs } from '../src/domain/workbench'
 import type { FetchLike } from '../src/domain/tripList'
 import type { LegRow } from '../server/src/days/types.js'
+import type { RouteLegSearch } from '../server/src/recommendations/types.js'
 
 const fields = ['distanceMeters', 'durationSeconds', 'formattedDistance', 'formattedDuration'] as const
 function metrics(leg: Leg) {
@@ -31,7 +32,7 @@ function expected(distance: number, duration: number) {
   return { distanceMeters: distance * 1000, durationSeconds: duration * 60, formattedDistance: `${String(distance)} 千米`, formattedDuration: `${String(duration)} 分钟` }
 }
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, routeLegs: RouteLegSearch = async () => ({ status: 'ok', source: 'amap', distanceKm: 1.25, durationMin: 2.5, polyline: null })) {
   const db = createSqliteDatabase(':memory:')
   t.after(() => db.close())
   await ensureSchema(db)
@@ -47,7 +48,7 @@ async function fixture(t: TestContext) {
   const repository = new TripRepository(new SqliteTripStoreDriver(db))
   const app = await createApp({ tripRepository: repository,
     workbenchStore: createSqliteWorkbenchStore(db), itemsAdminStore: items, daysAdminStore: createSqliteDaysAdminStore(db), tripPatchStore: patchStore, tripEvents: events,
-    routeLegs: async () => ({ status: 'ok', source: 'amap', distanceKm: 1.25, durationMin: 2.5, polyline: null }),
+    routeLegs,
   })
   const fetchLike: FetchLike = (url, init) => app.request(url, init)
   async function read() {
@@ -195,6 +196,44 @@ test('route refresh, patch and schedule/event refetch preserve the aliases and o
   assert.deepEqual(metrics(final.legs[0]!), expected(1.25, 2.5))
   assert.deepEqual([final.legs[0]!.distanceKm, final.legs[0]!.durationMin, final.legs[0]!.quality], [1.25, 2.5, 'measured'])
   assert.deepEqual([final.days[0]!.title, final.days[0]!.note], ['独立名称', '整日备注'])
+})
+
+test('current nullable provider metrics stay absent through HTTP/client refresh, cache hits and immediate reuse', async (t) => {
+  const cases: Array<[number | null, number | null, Record<string, unknown>]> = [
+    [null, 5, { durationSeconds: 300, formattedDuration: '5 分钟' }],
+    [2.5, null, { distanceMeters: 2500, formattedDistance: '2.5 千米' }],
+    [null, null, {}],
+    [0, 5, expected(0, 5)], [2.5, 0, expected(2.5, 0)], [0, 0, expected(0, 0)],
+    [null, 0, { durationSeconds: 0, formattedDuration: '0 分钟' }],
+    [0, null, { distanceMeters: 0, formattedDistance: '0 千米' }],
+  ]
+  for (const [distanceKm, durationMin, projection] of cases) {
+    await t.test(`${distanceKm} km / ${durationMin} min`, async (t) => {
+      let calls = 0
+      const f = await fixture(t, async () => {
+        calls += 1
+        return { status: 'ok', source: 'amap', distanceKm, durationMin, polyline: null }
+      })
+      const items = (await f.read()).days[0]!.items
+      const response = await f.app.request('/api/trips/trip/legs/refresh', { method: 'POST' })
+      assert.equal(response.status, 200)
+      const immediate = await response.json() as { legs: Leg[]; summary: unknown }
+      assert.equal(immediate.legs.length, 2)
+      assert.equal(calls, 2)
+      for (const leg of immediate.legs) {
+        assert.deepEqual(metrics(leg), projection)
+        assert.deepEqual([leg.distanceKm, leg.durationMin, leg.quality], [distanceKm ?? 0, durationMin ?? 0, 'measured'], 'legacy metric/quality behavior stays compatible')
+      }
+      const reused = recomputeTripLegs(items, immediate.legs)
+      assert.deepEqual(reused, immediate.legs, 'immediate same-pair reuse preserves the supplied projection and its absence')
+      const cached = await refreshWorkbenchLegs('trip', f.fetchLike)
+      assert.ok(cached.ok)
+      assert.equal(calls, 2, 'the shared route cache serves the second HTTP refresh')
+      assert.deepEqual(cached.data, immediate, 'cache normalization and the actual client retain the original per-metric source validity')
+      // Subsequent canvas reads may reflect the existing write protocol's zero
+      // values. They cannot recover provider NULLs; that is outside this fix.
+    })
+  }
 })
 
 test('AMap precision remains the existing rounded km/min precision before projection', () => {
