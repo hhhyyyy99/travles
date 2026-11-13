@@ -506,15 +506,19 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     if (trip === null) return c.json({ error: '行程不存在' }, 404)
     // The body is optional for create-day (default: append after the last day).
     const body = (await readJsonBody(c)) ?? {}
-    const result = await new DaysAdminRepository(await resolveDaysAdminStore()).createDay(tripId, {
+    const store = await resolveDaysAdminStore()
+    const days = new DaysAdminRepository(store)
+    const result = await days.createDay(tripId, {
       date: body.date,
       theme: body.theme,
       color: body.color,
     })
     if (!result.ok) return tripError(c, result.error, result.code)
-    await synchronizeSchedule(tripId, await resolveDaysAdminStore(), true)
+    await synchronizeSchedule(tripId, store, true)
     notifyTrip(tripId, 'canvas', 'day_created')
-    return c.json({ day: result.day }, 201)
+    const refreshed = await days.getDay(tripId, result.day.id)
+    if (!refreshed.ok) return tripError(c, refreshed.error, refreshed.code)
+    return c.json({ day: refreshed.day }, 201)
   })
 
   app.patch('/api/trips/:id/days/:dayId', async (c) => {
@@ -524,15 +528,19 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     const patch: { theme?: unknown; color?: unknown } = {}
     if ('theme' in body) patch.theme = body.theme
     if ('color' in body) patch.color = body.color
-    const result = await new DaysAdminRepository(await resolveDaysAdminStore()).updateDay(
+    const store = await resolveDaysAdminStore()
+    const days = new DaysAdminRepository(store)
+    const result = await days.updateDay(
       tripId,
       c.req.param('dayId'),
       patch,
     )
     if (!result.ok) return tripError(c, result.error, result.code)
-    await synchronizeSchedule(tripId, await resolveDaysAdminStore(), true)
+    await synchronizeSchedule(tripId, store, true)
     notifyTrip(tripId, 'canvas', 'day_updated')
-    return c.json({ day: result.day })
+    const refreshed = await days.getDay(tripId, result.day.id)
+    if (!refreshed.ok) return tripError(c, refreshed.error, refreshed.code)
+    return c.json({ day: refreshed.day })
   })
 
   app.delete('/api/trips/:id/days/:dayId', async (c) => {

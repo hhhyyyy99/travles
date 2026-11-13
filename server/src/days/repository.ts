@@ -5,6 +5,7 @@
  * same codec convention as src/domain/storage.ts and the trips repository).
  */
 import { asText } from '../trips/dates.js'
+import { projectDayIdentity } from './projections.js'
 import type {
   CanvasDay,
   CanvasItem,
@@ -36,7 +37,7 @@ export async function readTripCanvas(driver: WorkbenchStoreDriver, tripId: strin
   } catch {
     return { days: [], legs: [] }
   }
-  return assembleCanvas(dayRows, itemRows, legRows)
+  return assembleCanvas(dayRows, itemRows, legRows, tripId)
 }
 
 /**
@@ -44,7 +45,7 @@ export async function readTripCanvas(driver: WorkbenchStoreDriver, tripId: strin
  * items under their day, and sorts days by idx / items by order. Legs that
  * reference unknown items are dropped.
  */
-export function assembleCanvas(dayRows: DayRow[], itemRows: ItemRow[], legRows: LegRow[]): TripCanvas {
+export function assembleCanvas(dayRows: DayRow[], itemRows: ItemRow[], legRows: LegRow[], tripId?: string): TripCanvas {
   const itemsByDay = new Map<string, CanvasItem[]>()
   const itemIds = new Set<string>()
   for (const row of itemRows) {
@@ -60,7 +61,7 @@ export function assembleCanvas(dayRows: DayRow[], itemRows: ItemRow[], legRows: 
   }
 
   const days = dayRows
-    .map((row) => mapDayRow(row, itemsByDay.get(asText(row?.id)) ?? []))
+    .map((row) => mapDayRow(row, itemsByDay.get(asText(row?.id)) ?? [], tripId))
     .filter((day): day is CanvasDay => day !== null)
     .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id))
 
@@ -73,11 +74,12 @@ export function assembleCanvas(dayRows: DayRow[], itemRows: ItemRow[], legRows: 
 }
 
 /** 容错 day row → CanvasDay; null = unusable row (dropped). */
-export function mapDayRow(row: DayRow, items: CanvasItem[]): CanvasDay | null {
+export function mapDayRow(row: DayRow, items: CanvasItem[], tripId?: string): CanvasDay | null {
   const id = asText(row?.id)
   if (!id) return null
   return {
     id,
+    ...projectDayIdentity(row?.trip_id, row?.idx, tripId),
     index: asNonNegativeNumber(row?.idx),
     date: asDateString(row?.date),
     theme: asText(row?.theme),

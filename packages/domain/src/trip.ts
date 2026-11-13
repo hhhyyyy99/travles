@@ -131,6 +131,9 @@ export type ActivityItem = z.infer<typeof ActivityItemSchema>
 
 export const DaySchema = z.object({
   id: z.string(),
+  // Optional read projections: legacy days retain their existing shape.
+  tripId: z.string().optional(),
+  dayNumber: z.number().int().positive().optional(),
   index: z.number(),
   date: z.string(),
   theme: z.string(),

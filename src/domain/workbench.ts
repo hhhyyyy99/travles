@@ -8,7 +8,7 @@
  * Canonical read shapes (mirror of server/src/days/types.ts — the server
  * normalizes DB rows into these; the client re-normalizes defensively):
  *
- *   Day  { id, index, date, theme, color, items: Item[] }
+ *   Day  { id, tripId?, dayNumber?, index, date, theme, color, items: Item[] }
  *   Item { id, dayId, order, type: 'traffic'|'stay'|'attraction'|'food'|'other',
  *          title, note, poi: PoiRef | null, images: {url, caption}[], pending }
  *   Leg  { id, fromItemId, toItemId, mode, distanceKm, durationMin, polyline }
@@ -695,6 +695,11 @@ function normalizeDay(value: unknown): WorkbenchDay | null {
   const items = Array.isArray(record.items) ? record.items : []
   return {
     id,
+    // Preserve explicit projections independently; never derive them from layout.
+    ...(typeof record.tripId === 'string' ? { tripId: record.tripId } : {}),
+    ...(typeof record.dayNumber === 'number' && Number.isSafeInteger(record.dayNumber) && record.dayNumber > 0
+      ? { dayNumber: record.dayNumber }
+      : {}),
     index: finiteNumber(record.index),
     date: typeof record.date === 'string' ? record.date : '',
     theme: typeof record.theme === 'string' ? record.theme : '',

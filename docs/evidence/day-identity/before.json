@@ -1,0 +1,433 @@
+{
+  "label": "before",
+  "revision": "954ad6d05088dbed348dcfa650b00b53c37dc407",
+  "sourceTree": "799e743ed5e9e3fa61276e636ef4664120666938",
+  "root": "/tmp/travles-day-identity-baseline-ecZVTQ",
+  "startedAt": "2026-11-13T04:21:47.049Z",
+  "capturedAt": "2026-11-13T04:21:49.167Z",
+  "node": "v24.22.1",
+  "pnpm": "11.17.0",
+  "browserVersion": "156.0.8078.4",
+  "browserExecutable": "/Users/eamon.j.he/Library/Caches/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/chrome-headless-shell",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "deviceScaleFactor": 1,
+  "colorScheme": "light",
+  "locale": "zh-CN",
+  "timezoneId": "Asia/Shanghai",
+  "theme": {
+    "rootClass": "",
+    "bodyClass": "",
+    "background": "rgb(248, 250, 249)"
+  },
+  "origin": "http://127.0.0.1:62814",
+  "serverPort": 62813,
+  "frontendPort": 62814,
+  "databasePath": "/var/folders/ps/9qm_xmxd6ms7rthc39bkj_h8v56yjb/T/travles-day-identity-before-run-25eokM/trips.db",
+  "initialDatabase": {
+    "trips": [
+      {
+        "id": "evidence-day-identity",
+        "title": "日程序号兼容验证",
+        "start_date": "",
+        "end_date": ""
+      },
+      {
+        "id": "evidence-day-identity-client",
+        "title": "日程序号兼容验证（浏览器客户端断言）",
+        "start_date": "",
+        "end_date": ""
+      }
+    ],
+    "days": [
+      {
+        "id": "evidence-day-identity-day-a",
+        "trip_id": "evidence-day-identity",
+        "idx": 0,
+        "date": "",
+        "theme": "已有日程一",
+        "color": "#c26d4f"
+      },
+      {
+        "id": "evidence-day-identity-day-b",
+        "trip_id": "evidence-day-identity",
+        "idx": 7,
+        "date": "",
+        "theme": "已有日程二",
+        "color": "#3f7d5c"
+      },
+      {
+        "id": "evidence-day-identity-client-day-a",
+        "trip_id": "evidence-day-identity-client",
+        "idx": 0,
+        "date": "",
+        "theme": "已有日程一",
+        "color": "#c26d4f"
+      },
+      {
+        "id": "evidence-day-identity-client-day-b",
+        "trip_id": "evidence-day-identity-client",
+        "idx": 7,
+        "date": "",
+        "theme": "已有日程二",
+        "color": "#3f7d5c"
+      }
+    ],
+    "items": []
+  },
+  "initialTabs": [
+    "D1D1",
+    "D8D8"
+  ],
+  "initialClient": {
+    "ok": true,
+    "data": {
+      "trip": {
+        "id": "evidence-day-identity",
+        "title": "日程序号兼容验证",
+        "startDate": "",
+        "endDate": "",
+        "days": 0,
+        "nights": 0,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "days": [
+        {
+          "id": "evidence-day-identity-day-a",
+          "index": 0,
+          "date": "",
+          "theme": "已有日程一",
+          "color": "#c26d4f",
+          "items": []
+        },
+        {
+          "id": "evidence-day-identity-day-b",
+          "index": 7,
+          "date": "",
+          "theme": "已有日程二",
+          "color": "#3f7d5c",
+          "items": []
+        }
+      ],
+      "legs": []
+    }
+  },
+  "createHttpStatus": 201,
+  "createResponse": {
+    "day": {
+      "id": "b8948173-3e71-496d-84a1-9e306a6e4d56",
+      "index": 8,
+      "date": "",
+      "theme": "",
+      "color": "",
+      "items": []
+    }
+  },
+  "readsBeforeClick": 5,
+  "readsAtScreenshot": 5,
+  "selectedTab": "D9D9",
+  "tabsAtScreenshot": [
+    "D1D1",
+    "D8D8",
+    "D9D9"
+  ],
+  "serverCanvasAfter": {
+    "trip": {
+      "id": "evidence-day-identity",
+      "title": "日程序号兼容验证",
+      "startDate": "",
+      "endDate": "",
+      "days": 0,
+      "nights": 0,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "days": [
+      {
+        "id": "evidence-day-identity-day-a",
+        "index": 0,
+        "date": "",
+        "theme": "已有日程一",
+        "color": "#c26d4f",
+        "items": []
+      },
+      {
+        "id": "evidence-day-identity-day-b",
+        "index": 1,
+        "date": "",
+        "theme": "已有日程二",
+        "color": "#3f7d5c",
+        "items": []
+      },
+      {
+        "id": "b8948173-3e71-496d-84a1-9e306a6e4d56",
+        "index": 2,
+        "date": "",
+        "theme": "",
+        "color": "",
+        "items": []
+      }
+    ],
+    "legs": []
+  },
+  "clientFunctions": {
+    "canvasBefore": {
+      "ok": true,
+      "data": {
+        "trip": {
+          "id": "evidence-day-identity-client",
+          "title": "日程序号兼容验证（浏览器客户端断言）",
+          "startDate": "",
+          "endDate": "",
+          "days": 0,
+          "nights": 0,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        },
+        "days": [
+          {
+            "id": "evidence-day-identity-client-day-a",
+            "index": 0,
+            "date": "",
+            "theme": "已有日程一",
+            "color": "#c26d4f",
+            "items": []
+          },
+          {
+            "id": "evidence-day-identity-client-day-b",
+            "index": 7,
+            "date": "",
+            "theme": "已有日程二",
+            "color": "#3f7d5c",
+            "items": []
+          }
+        ],
+        "legs": []
+      }
+    },
+    "created": {
+      "ok": true,
+      "data": {
+        "id": "11717163-6e25-491b-8e78-d7a5825816a9",
+        "index": 8,
+        "date": "",
+        "theme": "",
+        "color": "",
+        "items": []
+      }
+    },
+    "canvasAfter": {
+      "ok": true,
+      "data": {
+        "trip": {
+          "id": "evidence-day-identity-client",
+          "title": "日程序号兼容验证（浏览器客户端断言）",
+          "startDate": "",
+          "endDate": "",
+          "days": 0,
+          "nights": 0,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        },
+        "days": [
+          {
+            "id": "evidence-day-identity-client-day-a",
+            "index": 0,
+            "date": "",
+            "theme": "已有日程一",
+            "color": "#c26d4f",
+            "items": []
+          },
+          {
+            "id": "evidence-day-identity-client-day-b",
+            "index": 1,
+            "date": "",
+            "theme": "已有日程二",
+            "color": "#3f7d5c",
+            "items": []
+          },
+          {
+            "id": "11717163-6e25-491b-8e78-d7a5825816a9",
+            "index": 2,
+            "date": "",
+            "theme": "",
+            "color": "",
+            "items": []
+          }
+        ],
+        "legs": []
+      }
+    }
+  },
+  "abortedEvents": 3,
+  "blockedExternal": [
+    "https://tile.openstreetmap.org/5/24/11.png",
+    "https://tile.openstreetmap.org/5/25/11.png",
+    "https://tile.openstreetmap.org/5/24/12.png",
+    "https://tile.openstreetmap.org/5/25/12.png",
+    "https://tile.openstreetmap.org/5/24/10.png",
+    "https://tile.openstreetmap.org/5/25/10.png",
+    "https://tile.openstreetmap.org/5/24/13.png",
+    "https://tile.openstreetmap.org/5/25/13.png"
+  ],
+  "browserErrors": [],
+  "screenshot": "before.png",
+  "screenshotSha256": "5640653fe6369fa3197d2a1e451e0356e5d0c3ec3ae228f3d26c8aacbc46d949",
+  "commandLog": [
+    {
+      "cwd": "/tmp/travles-day-identity-baseline-ecZVTQ",
+      "executable": "/usr/local/bin/node",
+      "argv": [
+        "--import",
+        "tsx",
+        "server/src/index.ts"
+      ],
+      "env": {
+        "SERVER_PORT": "62813",
+        "TRIPS_DB_PATH": "/var/folders/ps/9qm_xmxd6ms7rthc39bkj_h8v56yjb/T/travles-day-identity-before-run-25eokM/trips.db",
+        "APP_TEST_VITE_CACHE_DIR": "/var/folders/ps/9qm_xmxd6ms7rthc39bkj_h8v56yjb/T/travles-day-identity-before-run-25eokM/vite-cache"
+      }
+    },
+    {
+      "cwd": "/tmp/travles-day-identity-baseline-ecZVTQ",
+      "executable": "/usr/local/bin/node",
+      "argv": [
+        "/tmp/travles-day-identity-baseline-ecZVTQ/node_modules/vite/bin/vite.js",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "62814",
+        "--strictPort"
+      ],
+      "env": {
+        "SERVER_PORT": "62813",
+        "TRIPS_DB_PATH": "/var/folders/ps/9qm_xmxd6ms7rthc39bkj_h8v56yjb/T/travles-day-identity-before-run-25eokM/trips.db",
+        "APP_TEST_VITE_CACHE_DIR": "/var/folders/ps/9qm_xmxd6ms7rthc39bkj_h8v56yjb/T/travles-day-identity-before-run-25eokM/vite-cache"
+      }
+    }
+  ],
+  "logs": [
+    "/Users/eamon.j.he/src/travles/day-identity-projections-41734e43c999/docs/evidence/day-identity/before-server.log",
+    "/Users/eamon.j.he/src/travles/day-identity-projections-41734e43c999/docs/evidence/day-identity/before-vite.log"
+  ],
+  "network": [
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/messages",
+      "at": 1794543708849
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/recommendations",
+      "at": 1794543708849
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/canvas",
+      "at": 1794543708850
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/messages",
+      "at": 1794543708850
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/recommendations",
+      "at": 1794543708850
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/canvas",
+      "at": 1794543708850
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/events",
+      "at": 1794543708859
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/events",
+      "at": 1794543708859
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/events",
+      "at": 1794543708859
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/canvas",
+      "at": 1794543708887
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/notes",
+      "at": 1794543708888
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/checklist",
+      "at": 1794543708888
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/canvas",
+      "at": 1794543708888
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/notes",
+      "at": 1794543708888
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/checklist",
+      "at": 1794543708888
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity/canvas",
+      "at": 1794543708994
+    },
+    {
+      "method": "POST",
+      "path": "/api/trips/evidence-day-identity/days",
+      "at": 1794543709066
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity-client/canvas",
+      "at": 1794543709148
+    },
+    {
+      "method": "POST",
+      "path": "/api/trips/evidence-day-identity-client/days",
+      "at": 1794543709150
+    },
+    {
+      "method": "GET",
+      "path": "/api/trips/evidence-day-identity-client/canvas",
+      "at": 1794543709153
+    }
+  ],
+  "cleanup": [
+    {
+      "name": "vite",
+      "pid": 81479,
+      "code": 143,
+      "signal": null
+    },
+    {
+      "name": "server",
+      "pid": 81478,
+      "code": null,
+      "signal": "SIGTERM"
+    }
+  ],
+  "cleanupComplete": true
+}
