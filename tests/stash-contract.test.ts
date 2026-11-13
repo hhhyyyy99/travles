@@ -93,7 +93,7 @@ test('legacy repository output accepts finite coordinates, empty metadata and ti
     images: [{ url: 'legacy-photo', caption: '' }],
   }
   assert.deepEqual(snapshot, {
-    stash: [{ id: 'legacy-stash', poi: expectedPoi, origin: 'recommend', addedAt: '' }],
+    stash: [{ id: 'legacy-stash', poi: expectedPoi, origin: 'recommend', addedAt: '', tripId: 'trip-legacy', title: '  旧收藏  ' }],
     favorites: [{ id: 'legacy-favorite', poi: expectedPoi, createdAt: 'legacy-date' }],
   })
   assert.deepEqual(RecommendationPoiSchema.parse(snapshot.stash[0]!.poi), expectedPoi)

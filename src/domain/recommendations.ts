@@ -8,6 +8,7 @@ import type { ApiResult, FetchLike } from './tripList'
 import { defaultFetch } from './tripList'
 import type { PoiRef, WorkbenchItem, WorkbenchItemCreateInput } from './workbench'
 
+import { readStashFields } from '@hailar/domain'
 import type {
   FavoriteItem,
   RecommendationPoi,
@@ -35,7 +36,7 @@ export async function fetchRecommendations(
   } catch {
     return { ok: false, error: REQUEST_ERROR }
   }
-  return parseSnapshotResponse(response)
+  return parseSnapshotResponse(response, tripId)
 }
 
 export async function searchRecommendations(
@@ -76,7 +77,7 @@ export async function addToStash(
     body: JSON.stringify({ poi, origin }),
   })
   if (!response.ok) return response
-  const item = normalizeStash((response.data as { item?: unknown }).item)
+  const item = normalizeStash((response.data as { item?: unknown }).item, tripId)
   return item ? { ok: true, data: item } : { ok: false, error: '服务器返回的待计划点位无法解析。' }
 }
 
@@ -162,7 +163,7 @@ export function recommendationFilterCounts(pois: RecommendationPoi[]): Record<'a
   )
 }
 
-function normalizeStash(value: unknown): StashItem | null {
+function normalizeStash(value: unknown, expectedTripId: string): StashItem | null {
   if (value === null || typeof value !== 'object') return null
   const record = value as Record<string, unknown>
   const poi = normalizePoi(record.poi)
@@ -172,6 +173,12 @@ function normalizeStash(value: unknown): StashItem | null {
     poi,
     origin: record.origin === 'favorite' ? 'favorite' : 'recommend',
     addedAt: typeof record.addedAt === 'string' ? record.addedAt : '',
+    ...readStashFields({
+      tripId: record.tripId,
+      title: record.title,
+      category: record.category,
+      createdAt: record.createdAt,
+    }, expectedTripId),
   }
 }
 
@@ -222,14 +229,16 @@ function normalizePoi(value: unknown): RecommendationPoi | null {
   }
 }
 
-async function parseSnapshotResponse(response: Response): Promise<ApiResult<RecommendationsSnapshot>> {
+async function parseSnapshotResponse(response: Response, expectedTripId: string): Promise<ApiResult<RecommendationsSnapshot>> {
   if (!response.ok) return { ok: false, error: await responseError(response) }
   const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null
   if (!payload) return { ok: false, error: '服务器返回的推荐数据无法解析。' }
   const recommendations = Array.isArray(payload.recommendations)
     ? payload.recommendations.map(normalizePoi).filter((poi): poi is RecommendationPoi => poi !== null)
     : []
-  const stash = Array.isArray(payload.stash) ? payload.stash.map(normalizeStash).filter((item): item is StashItem => item !== null) : []
+  const stash = Array.isArray(payload.stash)
+    ? payload.stash.map((item) => normalizeStash(item, expectedTripId)).filter((item): item is StashItem => item !== null)
+    : []
   const favorites = Array.isArray(payload.favorites)
     ? payload.favorites.map(normalizeFavorite).filter((item): item is FavoriteItem => item !== null)
     : []
