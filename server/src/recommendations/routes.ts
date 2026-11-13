@@ -155,7 +155,7 @@ function resultResponse(c: Context<AppEnv>, result: { ok: false; error: string; 
   return c.json({ error: result.error }, status)
 }
 
-function uniquePois(snapshot: { stash: Array<{ poi: RecommendationPoi }>; favorites: Array<{ poi: RecommendationPoi }> }, extra: RecommendationPoi[] = []): RecommendationPoi[] {
+function uniquePois(snapshot: { stash: Array<{ poi: RecommendationPoi | null }>; favorites: Array<{ poi: RecommendationPoi }> }, extra: RecommendationPoi[] = []): RecommendationPoi[] {
   const values = [...extra, ...snapshot.stash.map((entry) => entry.poi), ...snapshot.favorites.map((entry) => entry.poi)]
   const seen = new Set<string>()
   const normalizedPois: RecommendationPoi[] = []

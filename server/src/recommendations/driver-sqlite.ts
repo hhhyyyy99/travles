@@ -13,7 +13,7 @@ export class SqliteRecommendationsStoreDriver implements RecommendationsStoreDri
 
   async listStashRows(tripId: string): Promise<StashRow[]> {
     const { rows } = await this.db.run(
-      'SELECT id, trip_id, poi, origin, added_at FROM stash WHERE trip_id = ? ORDER BY added_at ASC, id ASC',
+      'SELECT id, trip_id, poi, origin, added_at, title, note, category, created_at FROM stash WHERE trip_id = ? ORDER BY added_at ASC, id ASC',
       [tripId],
     )
     return rows as unknown as StashRow[]
@@ -21,8 +21,8 @@ export class SqliteRecommendationsStoreDriver implements RecommendationsStoreDri
 
   async insertStashRow(tripId: string, item: StashInsert): Promise<void> {
     await this.db.run(
-      'INSERT INTO stash (id, trip_id, poi, origin, added_at) VALUES (?, ?, ?, ?, ?)',
-      [item.id, tripId, item.poi, item.origin, item.addedAt] as SqlValue[],
+      'INSERT INTO stash (id, trip_id, poi, origin, added_at, title, note, category, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [item.id, tripId, item.poi, item.origin, item.addedAt, item.title ?? null, item.note ?? null, item.category ?? null, item.createdAt ?? null] as SqlValue[],
     )
   }
 

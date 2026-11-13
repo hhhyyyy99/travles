@@ -21,6 +21,10 @@ export interface StashRow {
   poi: unknown
   origin: unknown
   added_at: unknown
+  title?: unknown
+  note?: unknown
+  category?: unknown
+  created_at?: unknown
 }
 
 export interface FavoriteRow {
@@ -35,6 +39,10 @@ export interface StashInsert {
   poi: string
   origin: RecommendationOrigin
   addedAt: string
+  title?: string
+  note?: string
+  category?: string
+  createdAt?: string
 }
 
 export interface FavoriteInsert {

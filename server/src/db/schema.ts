@@ -115,7 +115,11 @@ export const SCHEMA_STATEMENTS: string[] = [
     trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
     poi TEXT NOT NULL,
     origin TEXT NOT NULL DEFAULT 'recommend',
-    added_at TEXT NOT NULL
+    added_at TEXT NOT NULL,
+    title TEXT,
+    note TEXT,
+    category TEXT,
+    created_at TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS favorites (
     id TEXT PRIMARY KEY,
@@ -203,6 +207,11 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
   }
   for (const name of ['time_range', 'cost']) {
     await ensureColumn(db, 'items', name, 'TEXT')
+  }
+  // Explicit stash content is independent of the optional POI. Keep legacy rows
+  // NULL so read-time aliases retain their original sources without backfill.
+  for (const name of ['title', 'note', 'category', 'created_at']) {
+    await ensureColumn(db, 'stash', name, 'TEXT')
   }
   try {
     await db.run('ALTER TABLE legs ADD COLUMN quality TEXT')

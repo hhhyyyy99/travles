@@ -7,7 +7,7 @@
  * Design notes:
  * - Ops execute strictly in array order; later ops see earlier ones' effects
  *   (an add_day can be followed by add_item referencing its dayId).
- * - Every op carries caller-generated ids (dayId/itemId) so a single patch
+ * - Every op carries caller-generated ids (dayId/itemId/stashId) so a single patch
  *   can reference what it creates. Ids are 1..64 chars, trimmed.
  * - `poi` is all-or-nothing: a card either carries usable coordinates
  *   (name + lat + lng) or none (poi omitted/null → plain-text card).
@@ -24,6 +24,7 @@
  */
 import { z } from 'zod'
 import { ActivityItemMetadataSchema, DaySchema, ItemTypeInputSchema } from './trip.js'
+import { StashContentSchema } from './recommendations.js'
 
 const idField = z
   .string()
@@ -117,6 +118,24 @@ const removeItemOp = z.object({
   itemId: idField.describe('要删除的卡片'),
 })
 
+const addStashOp = z.object({
+  ...StashContentSchema.shape,
+  op: z.literal('add_stash'),
+  stashId: idField.describe('新候选的 id；后续 move_stash_to_day 可直接引用'),
+})
+
+const moveStashToDayOp = z.object({
+  ...ActivityItemMetadataSchema.shape,
+  op: z.literal('move_stash_to_day'),
+  stashId: idField.describe('当前行程已有或本 patch 前面新建的候选 id'),
+  itemId: idField.describe('新日程卡片的全新 id'),
+  dayId: idField.describe('目标天（已存在或本 patch 前面新建）'),
+  order: z.number().int().min(0).optional(),
+  type: ItemTypeInputSchema.optional().describe('显式卡片类型；省略使用候选 POI 的旧类型，纯文本使用 other'),
+  pending: z.boolean().optional(),
+  legPending: z.boolean().optional().describe('纯文本候选与其他卡片相邻时，声明相邻交通段待定'),
+})
+
 export const tripPatchOpSchema = z.discriminatedUnion('op', [
   addDayOp,
   updateDayOp,
@@ -125,6 +144,8 @@ export const tripPatchOpSchema = z.discriminatedUnion('op', [
   updateItemOp,
   moveItemOp,
   removeItemOp,
+  addStashOp,
+  moveStashToDayOp,
 ])
 
 /** Full `apply_trip_patch` tool input. */

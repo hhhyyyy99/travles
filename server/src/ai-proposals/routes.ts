@@ -14,6 +14,7 @@ import { readJsonBody } from '../http/body.js'
 import type { TripRepository } from '../trips/repository.js'
 import type { TripPatchRecord, TripPatchStoreDriver } from '../trip-patch/types.js'
 import { applyTripPatch } from '../trip-patch/apply.js'
+import { hashTripSnapshotRows, readTripSnapshotRows } from '../chat/confirmation.js'
 import { proposalRequestSchema } from './schema.js'
 import {
   CREATE_TRIP_PROPOSAL_TOOL_NAME,
@@ -92,6 +93,7 @@ export function registerAiProposalRoutes(app: Hono<AppEnv>, options: AiProposalR
     }
 
     let proposalInput: ProposalPayload | null = null
+    let proposalSnapshotHash: string | undefined
     let snapshotRead = input.kind === 'parse'
     let proposalBeforeSnapshot = false
     let streamError: unknown = null
@@ -110,6 +112,7 @@ export function registerAiProposalRoutes(app: Hono<AppEnv>, options: AiProposalR
           if (result?.ok === true) {
             if (!snapshotRead) proposalBeforeSnapshot = true
             proposalInput = result.proposal
+            proposalSnapshotHash = result.snapshotHash
           }
           else if (result?.ok === false) streamError = result.error
           continue
@@ -133,7 +136,7 @@ export function registerAiProposalRoutes(app: Hono<AppEnv>, options: AiProposalR
         422,
       )
     }
-    if (proposalBeforeSnapshot || !snapshotRead) {
+    if (proposalBeforeSnapshot || !snapshotRead || (input.kind !== 'parse' && !proposalSnapshotHash)) {
       return c.json(
         {
           error: '路线优化建议未读取当前行程，无法确认建议范围。',
@@ -154,7 +157,7 @@ export function registerAiProposalRoutes(app: Hono<AppEnv>, options: AiProposalR
       ...proposalInput,
       createdAt: new Date().toISOString(),
     }
-    options.proposalStore.save(proposal)
+    options.proposalStore.save({ ...proposal, ...(proposalSnapshotHash ? { snapshotHash: proposalSnapshotHash } : {}) })
     return c.json({ proposal }, 201)
   }
 
@@ -169,13 +172,30 @@ export function registerAiProposalRoutes(app: Hono<AppEnv>, options: AiProposalR
     if (!scope.ok) {
       return c.json({ error: scope.error, guidance: '建议未写入行程，请重新生成。', code: 'proposal_invalid' }, 422)
     }
+    if (proposal.kind !== 'parse' && !proposal.snapshotHash) {
+      return c.json({ error: '建议缺少行程快照，请重新生成。', code: 'proposal_invalid' }, 422)
+    }
+    let stale = false
     let result: Awaited<ReturnType<typeof applyTripPatch>>
     try {
-      result = await applyTripPatch(await options.resolveTripPatchStore(), tripId, proposal.patch)
+      result = await applyTripPatch(await options.resolveTripPatchStore(), tripId, proposal.patch, {
+        // The explicit proposal apply route is its confirmation gate. Unlike
+        // chat it has no saved chip; bind it to the rows the model actually read
+        // and check them within the same transaction as the patch writes.
+        beforeApply: async (store) => {
+          if (proposal.snapshotHash && hashTripSnapshotRows(await readTripSnapshotRows(store, tripId)) !== proposal.snapshotHash) {
+            stale = true
+            return { ok: false, code: 'invalid', error: '行程或候选池已发生变化，这份建议已经过期。' }
+          }
+          const currentScope = await validateProposalScope(tripId, proposal.kind, proposal.targetDayId, proposal, async () => store)
+          return currentScope.ok ? { ok: true } : { ok: false, code: 'invalid', error: currentScope.error }
+        },
+      })
     } catch {
       return c.json({ error: '行程存储不可用，请稍后重试。', guidance: '建议仍保留，请稍后再次确认。', code: 'storage' }, 503)
     }
     if (!result.ok) {
+      if (stale) return c.json({ error: result.error, guidance: '建议未写入行程，请基于最新行程重新生成。', code: 'proposal_stale' }, 409)
       const status = result.code === 'not_found' ? 404 : result.code === 'storage' ? 503 : 422
       return c.json({ error: result.error, guidance: '行程未被改动，请修正后重新生成建议。', code: 'patch_invalid' }, status)
     }
@@ -225,7 +245,10 @@ function buildProposalPrompt(tripId: string, input: ProposalRequest): string {
     `这是行程 ${tripId} 的全局路线优化请求。`,
     '先调用 read_trip_snapshot，再只调用 create_trip_proposal；不要调用 apply_trip_patch。',
     '结合当前行程的日期、地点、交通段与节奏，给出可确认的全局路线建议。',
-    'patch 只包含必要的 move_item/update_item 操作，diff 说明走法、顺序、节奏的变化。',
+    'patch 可包含必要的 move_item/update_item、add_stash、move_stash_to_day；不能增删日期或删除卡片。',
+    'add_stash 需要新的 stashId 和 title，可带 note/category 与可空 poi；暂不排期的想法保留在候选池。',
+    'move_stash_to_day 用快照中的真实 stash.id（不是 POI ID）、新的 itemId 和已有 dayId；同一 patch 可先 add_stash 再引用它。',
+    '候选安排到日程后会从候选池移除。纯文字候选无坐标时按需要设置 pending/legPending。diff 用 stashId/itemId/toDayId 说明候选与日程变化。',
   ].join('\n')
 }
 
@@ -244,9 +267,10 @@ async function validateProposalScope(
   tripId: string,
   kind: ProposalKind,
   targetDayId: string | undefined,
-  proposal: { patch: AiProposal['patch']; targetDayId?: string },
+  proposal: Pick<AiProposal, 'kind' | 'patch' | 'targetDayId'>,
   resolveStore: () => Promise<TripPatchStoreDriver>,
 ): Promise<ScopeResult> {
+  if (proposal.kind !== kind) return { ok: false, error: '建议类型与请求不一致。' }
   const ops = proposal.patch.ops
   if (kind === 'parse') {
     if (ops.some((op) => op.op !== 'add_day' && op.op !== 'add_item')) {
@@ -255,8 +279,8 @@ async function validateProposalScope(
     return { ok: true }
   }
   if (kind === 'optimize') {
-    if (ops.some((op) => op.op !== 'move_item' && op.op !== 'update_item')) {
-      return { ok: false, error: '路线优化只能调整卡片顺序或内容，不能增删日期和卡片。' }
+    if (ops.some((op) => op.op !== 'move_item' && op.op !== 'update_item' && op.op !== 'add_stash' && op.op !== 'move_stash_to_day')) {
+      return { ok: false, error: '路线优化只能调整已有卡片、新增候选或将候选移入日程，不能增删日期或删除卡片。' }
     }
     return { ok: true }
   }

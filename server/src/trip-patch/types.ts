@@ -23,6 +23,8 @@
  *   update_item { itemId, title?, timeRange?, cost?, note?, type?, pending?, poi?, legPending? }
  *   move_item   { itemId, dayId, order? }   (cross-day move + reorder)
  *   remove_item { itemId }
+ *   add_stash   { stashId, title, note?, category?, poi? }
+ *   move_stash_to_day { stashId, itemId, dayId, order?, type?, pending?, legPending?, timeRange?, cost? }
  *
  * `update_item` with type 'stay' covers PRD's UpdateStay; `move_item` with
  * the same dayId covers ReorderItem. Legs are NOT modeled explicitly: the
@@ -33,6 +35,7 @@
 import type { ActivityItemMetadata, Day } from '@hailar/domain'
 import type { DayRow, ItemRow, LegQuality, LegRow } from '../days/types.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
+import type { StashInsert, StashRow } from '../recommendations/types.js'
 
 /** One POI reference on a card, derived from the shared patch validator. */
 export type { PatchPoiRef } from '@hailar/domain'
@@ -45,6 +48,8 @@ export type TripPatchStats = {
   itemsUpdated: number
   itemsRemoved: number
   legsWritten: number
+  stashAdded?: number
+  stashMoved?: number
 }
 
 /** The applied-patch record persisted on the assistant message (messages.applied_patch JSON). */
@@ -87,6 +92,8 @@ export interface TripPatchItemUpsert extends ActivityItemMetadata {
   note: string
   /** JSON text or null (no POI / plain-text card). */
   poi: string | null
+  /** Explicit image JSON for newly scheduled stash POIs; omission preserves existing images. */
+  images?: string | null
   pending: boolean
 }
 
@@ -112,6 +119,11 @@ export interface TripPatchStoreDriver {
   listDayRows(tripId: string): Promise<DayRow[]>
   listItemRows(tripId: string): Promise<ItemRow[]>
   listLegRows(tripId: string): Promise<LegRow[]>
+  /** Raw rows, including malformed/legacy metadata, for snapshot hashing. */
+  listStashRows(tripId: string): Promise<StashRow[]>
+  getStashTripId(stashId: string): Promise<string | null>
+  insertStashRow(tripId: string, item: StashInsert): Promise<void>
+  deleteStashRow(tripId: string, stashId: string): Promise<boolean>
   /** Return the owning trip for a globally keyed day id, or null when absent. */
   getDayTripId(dayId: string): Promise<string | null>
   /** Return the owning trip for a globally keyed item id, or null when absent. */
@@ -142,7 +154,7 @@ export type TripPatchErrorCode = 'invalid' | 'not_found' | 'storage'
 /** Raised by a driver when a globally keyed row belongs to another trip. */
 export class TripPatchIdConflictError extends Error {
   constructor(
-    public readonly entity: 'day' | 'item' | 'leg',
+    public readonly entity: 'day' | 'item' | 'leg' | 'stash',
     public readonly id: string,
     public readonly ownerTripId: string,
   ) {

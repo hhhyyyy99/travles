@@ -34,13 +34,26 @@ export type RecommendationPoi = z.infer<typeof RecommendationPoiSchema>
 // Check presence without changing the saved text (including surrounding space).
 const StashTextSchema = z.string().refine((value) => value.trim().length > 0)
 
+/** Content authored for a stash candidate, independently of any matched POI. */
+export const StashContentSchema = z.object({
+  title: StashTextSchema.max(80),
+  note: z.string().max(500).optional(),
+  category: StashTextSchema.max(80).optional(),
+  poi: RecommendationPoiSchema.extend({
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+  }).nullable().optional(),
+})
+export type StashContent = z.infer<typeof StashContentSchema>
+
 export const StashItemSchema = z.object({
   id: z.string(),
-  poi: RecommendationPoiSchema,
+  poi: RecommendationPoiSchema.nullable(),
   origin: RecommendationOriginSchema,
   addedAt: z.string(),
   tripId: StashTextSchema.optional(),
   title: StashTextSchema.optional(),
+  note: z.string().optional(),
   category: StashTextSchema.optional(),
   createdAt: StashTextSchema.optional(),
 })
@@ -48,11 +61,11 @@ export type StashItem = z.infer<typeof StashItemSchema>
 
 /** Retain independently valid, explicitly sourced aliases; never infer defaults. */
 export function readStashFields(
-  value: { tripId?: unknown; title?: unknown; category?: unknown; createdAt?: unknown },
+  value: { tripId?: unknown; title?: unknown; note?: unknown; category?: unknown; createdAt?: unknown },
   expectedTripId?: string,
-): Pick<StashItem, 'tripId' | 'title' | 'category' | 'createdAt'> {
-  const fields: Pick<StashItem, 'tripId' | 'title' | 'category' | 'createdAt'> = {}
-  for (const key of ['tripId', 'title', 'category', 'createdAt'] as const) {
+): Pick<StashItem, 'tripId' | 'title' | 'note' | 'category' | 'createdAt'> {
+  const fields: Pick<StashItem, 'tripId' | 'title' | 'note' | 'category' | 'createdAt'> = {}
+  for (const key of ['tripId', 'title', 'note', 'category', 'createdAt'] as const) {
     const parsed = StashItemSchema.shape[key].safeParse(value[key])
     if (!parsed.success || parsed.data === undefined) continue
     if (key === 'tripId' && expectedTripId !== undefined && parsed.data !== expectedTripId) continue

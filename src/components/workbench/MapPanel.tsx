@@ -66,6 +66,8 @@ const RECOMMENDATION_EVENT_REASONS = new Set([
   'stash_deleted',
   'favorite_added',
   'favorite_deleted',
+  'ai_patch',
+  'ai_proposal',
 ])
 
 export interface MapPanelProps {
@@ -84,6 +86,7 @@ export interface MapPanelProps {
   focus?: { name: string; lat: number; lng: number; amapId?: string } | null
   /** Schedule a recommendation through the existing item-admin write path. */
   onSchedulePoi?: (poi: RecommendationPoi, stashId?: string, dayId?: string, index?: number) => Promise<boolean>
+  onScheduleStash?: (item: StashItem, dayId?: string, index?: number) => Promise<boolean>
   /** A card edit or remote update is recomputing the route projection. */
   syncing?: boolean
 }
@@ -97,7 +100,7 @@ function findSelectedItem(days: WorkbenchDay[], itemId: string | null): { item: 
   return null
 }
 
-export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectItem, onCollapse, focus, onSchedulePoi, syncing = false }: MapPanelProps) {
+export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectItem, onCollapse, focus, onSchedulePoi, onScheduleStash, syncing = false }: MapPanelProps) {
   const { containerRef, handleRef, tileError } = useRouteMap({
     onDaySelect: () => {},
     onMapReady: () => {
@@ -127,7 +130,11 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
   const [recommendations, setRecommendations] = useState<RecommendationPoi[]>([])
   const [recommendationsEnabled, setRecommendationsEnabled] = useState(false)
   const [recommendationPanel, setRecommendationPanel] = useState<'stash' | 'favorites' | null>(null)
-  const [selectedRecommendationId, setSelectedRecommendationId] = useState<string | null>(null)
+  const [recommendationSelection, setRecommendationSelection] = useState<{ poiId: string | null; stashId?: string }>({ poiId: null })
+  const selectedRecommendationId = recommendationSelection.poiId
+  const setSelectedRecommendationId = (poiId: string | null, stashId?: string): void => {
+    setRecommendationSelection({ poiId, ...(stashId ? { stashId } : {}) })
+  }
   const [regionFilter, setRegionFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState<RecommendationType | 'all'>('all')
   const [recommendationQuery, setRecommendationQuery] = useState('沿途推荐')
@@ -216,6 +223,7 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
   const recommendationPool = useMemo(() => {
     const byKey = new Map<string, RecommendationPoi>()
     for (const poi of [...recommendations, ...stash.map((item) => item.poi), ...favorites.map((item) => item.poi)]) {
+      if (!poi) continue
       byKey.set(poi.amapId || poi.id || `${poi.name}|${poi.lat}|${poi.lng}`, poi)
     }
     return [...byKey.values()]
@@ -232,12 +240,13 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
     () => [...new Set(recommendationPool.map((poi) => poi.region).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     [recommendationPool],
   )
-  const selectedRecommendation = selectedRecommendationId
-    ? recommendationPool.find((candidate) => candidate.id === selectedRecommendationId) ?? null
-    : null
-  const selectedRecommendationStash = selectedRecommendation
-    ? stash.find((item) => samePoi(item.poi, selectedRecommendation))
-    : undefined
+  const selectedStash = recommendationSelection.stashId
+    ? stash.find((item) => item.id === recommendationSelection.stashId) : undefined
+  const selectedRecommendation = recommendationSelection.stashId
+    ? selectedStash?.poi ?? null
+    : selectedRecommendationId ? recommendationPool.find((candidate) => candidate.id === selectedRecommendationId) ?? null : null
+  const selectedRecommendationStash = recommendationSelection.stashId ? selectedStash : (selectedRecommendation
+    ? stash.find((item) => samePoi(item.poi, selectedRecommendation)) : undefined)
   const selectedFavorite = selectedRecommendation
     ? favorites.find((item) => samePoi(item.poi, selectedRecommendation))
     : undefined
@@ -400,7 +409,17 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
     else refreshRecommendations()
   }
 
+  const scheduleStash = async (item: StashItem): Promise<void> => {
+    if (!selectedDayId || !onScheduleStash) return
+    if (await onScheduleStash(item, selectedDayId)) {
+      setSelectedRecommendationId(null)
+      refreshRecommendations()
+    }
+  }
+
   const scheduleRecommendation = async (target: RecommendationPoi, stashId?: string): Promise<void> => {
+    const pending = stash.find((item) => item.id === stashId)
+    if (pending && onScheduleStash) return scheduleStash(pending)
     if (!selectedDayId || !onSchedulePoi) return
     const scheduled = await onSchedulePoi(target, stashId, selectedDayId)
     if (scheduled) {
@@ -680,14 +699,14 @@ export default function MapPanel({ tripId, days, legs, selectedItemId, onSelectI
                         <StashRow
                           key={item.id}
                           item={item}
-                          onSelect={() => setSelectedRecommendationId(item.poi.id)}
+                          onSelect={() => setSelectedRecommendationId(item.poi?.id ?? null, item.id)}
                           onRemove={() => {
                             void removeFromStash(tripId, item.id).then((result) => {
                               if (result.ok) setStash((current) => current.filter((entry) => entry.id !== item.id))
                               else setRecommendationError(result.error)
                             })
                           }}
-                          onSchedule={() => void scheduleRecommendation(item.poi, item.id)}
+                          onSchedule={() => void scheduleStash(item)}
                         />
                       ))}
                     </div>
@@ -827,7 +846,8 @@ function viewDropdownLabel(days: WorkbenchDay[], dayId: string): string {
   return `${date} ${day.theme || ''}`.trim()
 }
 
-function samePoi(a: Pick<RecommendationPoi, 'amapId' | 'id' | 'name' | 'lat' | 'lng'>, b: Pick<RecommendationPoi, 'amapId' | 'id' | 'name' | 'lat' | 'lng'>): boolean {
+function samePoi(a: Pick<RecommendationPoi, 'amapId' | 'id' | 'name' | 'lat' | 'lng'> | null, b: Pick<RecommendationPoi, 'amapId' | 'id' | 'name' | 'lat' | 'lng'>): boolean {
+  if (!a) return false
   return Boolean(
     (a.amapId && b.amapId && a.amapId === b.amapId) ||
       (a.id && b.id && a.id === b.id) ||
@@ -908,7 +928,7 @@ function StashRow({
       }}
       className="flex items-center gap-[5px] rounded-[5px] border border-line px-[6px] py-[5px]"
     >
-      <button type="button" data-action="stash-select" onClick={onSelect} className="min-w-0 flex-1 truncate text-left text-[11px] font-[550]">{item.poi.name}</button>
+      <button type="button" data-action="stash-select" onClick={onSelect} title={item.note} className="min-w-0 flex-1 truncate text-left text-[11px] font-[550]">{item.title ?? item.poi?.name}</button>
       <button type="button" data-action="stash-schedule" onClick={onSchedule} className="rounded-[4px] bg-green px-[5px] py-[3px] text-[10px] text-white">加入</button>
       <button type="button" data-action="stash-remove" aria-label="移出待计划" onClick={onRemove} className="grid h-[22px] w-[22px] place-items-center rounded-[4px] border border-line text-muted"><X className="h-[11px]" /></button>
     </div>

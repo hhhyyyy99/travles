@@ -98,13 +98,12 @@ import { RequestContext } from '@mastra/core/request-context'
 import type { Agent } from '@mastra/core/agent'
 import type { TripRepository } from '../trips/repository.js'
 import type { TripPlanningContext, TripSummary } from '../trips/types.js'
-import type { DayRow, ItemRow, LegRow } from '../days/types.js'
 import { ChatMessageRepository } from './repository.js'
 import type { AppEnv } from '../app.js'
 import { readJsonBody } from '../http/body.js'
 import type { RoundMetaPayload, RoundWarning } from './round-meta.js'
 import { readRoundFromToolArgs } from './round-meta.js'
-import { createPatchConfirmation, hashTripSnapshot } from './confirmation.js'
+import { createPatchConfirmation, hashTripSnapshot, readTripSnapshotRows } from './confirmation.js'
 import {
   detectTimeConstraintConflicts,
   isModificationRequest,
@@ -217,6 +216,15 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
     // the trip id and the retry state the route owns (read back after the run).
     const requestContext = new RequestContext()
     const patchTurn = createPatchTurnState(PATCH_TURN_MAX_ATTEMPTS, allowPatchApply)
+    if (confirmationRequested && analysis.snapshotHash !== null) {
+      const confirmedHash = analysis.snapshotHash
+      patchTurn.beforeApply = async (store) => {
+        const rows = await readTripSnapshotRows(store, trip.id)
+        return hashTripSnapshot(trip, rows.days, rows.items, rows.legs, rows.stash) === confirmedHash
+          ? { ok: true }
+          : { ok: false, code: 'invalid', error: '行程或候选池已发生变化，这份影响分析已经过期。请重新分析后确认。' }
+      }
+    }
     requestContext.set(PATCH_TRIP_ID_KEY, trip.id)
     requestContext.set(PATCH_TURN_STATE_KEY, patchTurn)
     // Ticket 13's read_trip_snapshot tool uses the proposal context key. Set
@@ -343,10 +351,9 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         ...postApplyWarnings,
         ...analysis.conflicts.map(conflictToWarning),
       ])
-      const mustExplainPatch = forcedPatchExplain || patchTurn.blockedBeforeConfirmation
+      const mustExplainPatch = forcedPatchExplain || patchTurn.blockedBeforeConfirmation || round === 'patch-explain'
       const shouldSaveConfirmation =
         analysis.hasExistingPlan &&
-        analysis.isModification &&
         !confirmationRequested &&
         patchTurn.applied === null &&
         !patchTurn.exhausted &&
@@ -501,18 +508,6 @@ type TripTurnAnalysis = {
   planningContext?: TripPlanningContext
 }
 
-type TripRows = { days: DayRow[]; items: ItemRow[]; legs: LegRow[] }
-
-/** Read one authoritative trip projection for all chat guardrails. */
-async function readTripRows(store: TripPatchStoreDriver, tripId: string): Promise<TripRows> {
-  const [days, items, legs] = await Promise.all([
-    store.listDayRows(tripId),
-    store.listItemRows(tripId),
-    store.listLegRows(tripId),
-  ])
-  return { days, items, legs }
-}
-
 /** Inspect trip rows locally for guardrails and confirmation gating. */
 async function analyzeTripTurn(
   trip: TripSummary,
@@ -537,11 +532,12 @@ async function analyzeTripTurn(
   }
   try {
     const store = await resolveStore()
-    const { days: dayRows, items: itemRows, legs: legRows } = await readTripRows(store, trip.id)
-    const hasExistingPlan = dayRows.some((row) => typeof row?.id === 'string' && row.id !== '')
-    const snapshotHash = hashTripSnapshot(trip, dayRows, itemRows, legRows)
+    const { days: dayRows, items: itemRows, legs: legRows, stash: stashRows } = await readTripSnapshotRows(store, trip.id)
+    const hasDays = dayRows.some((row) => typeof row?.id === 'string' && row.id !== '')
+    const hasExistingPlan = hasDays || stashRows.length > 0
+    const snapshotHash = hashTripSnapshot(trip, dayRows, itemRows, legRows, stashRows)
     const conflicts = scheduleRequest
-      ? hasExistingPlan
+      ? hasDays
         ? detectTimeConstraintConflicts(content, trip)
         : explicitConflicts
       : []
@@ -574,7 +570,7 @@ async function readLongDriveWarnings(
   if (!resolveStore) return []
   try {
     const store = await resolveStore()
-    const { days, items, legs } = await readTripRows(store, tripId)
+    const { days, items, legs } = await readTripSnapshotRows(store, tripId)
     return longDriveWarnings(legs, items, days)
   } catch {
     return []

@@ -47,7 +47,10 @@ export async function createAiProposal(
   if (!response.ok) return { ok: false, error: await readError(response) }
   const payload = (await response.json().catch(() => null)) as { proposal?: unknown } | null
   const proposal = normalizeProposal(payload?.proposal, tripId)
-  return proposal === null ? { ok: false, error: '服务器返回的建议无法解析。' } : { ok: true, data: proposal }
+  if (proposal === null || proposal.kind !== request.kind || (request.kind === 'day-optimize' && proposal.targetDayId !== request.dayId)) {
+    return { ok: false, error: '服务器返回的建议无法解析。' }
+  }
+  return { ok: true, data: proposal }
 }
 
 export async function applyAiProposal(
@@ -118,6 +121,7 @@ export function normalizeProposal(raw: unknown, expectedTripId?: string): AiProp
       label: item.label.trim(),
       ...(typeof item.detail === 'string' && item.detail.trim() ? { detail: item.detail.trim() } : {}),
       ...(typeof item.itemId === 'string' && item.itemId ? { itemId: item.itemId } : {}),
+      ...(typeof item.stashId === 'string' && item.stashId ? { stashId: item.stashId } : {}),
       ...(typeof item.dayId === 'string' && item.dayId ? { dayId: item.dayId } : {}),
       ...(typeof item.fromDayId === 'string' && item.fromDayId ? { fromDayId: item.fromDayId } : {}),
       ...(typeof item.toDayId === 'string' && item.toDayId ? { toDayId: item.toDayId } : {}),
@@ -149,7 +153,7 @@ function normalizePatch(raw: unknown): { ops: unknown[] } | null {
   if (raw === null || typeof raw !== 'object') return null
   const ops = (raw as { ops?: unknown }).ops
   if (!Array.isArray(ops) || ops.length === 0 || ops.length > 200) return null
-  const known = new Set(['add_day', 'update_day', 'remove_day', 'add_item', 'update_item', 'move_item', 'remove_item'])
+  const known = new Set(['add_day', 'update_day', 'remove_day', 'add_item', 'update_item', 'move_item', 'remove_item', 'add_stash', 'move_stash_to_day'])
   if (!ops.every((op) => op !== null && typeof op === 'object' && known.has(String((op as { op?: unknown }).op)))) return null
   return { ops }
 }

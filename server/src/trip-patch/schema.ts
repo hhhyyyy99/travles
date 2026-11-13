@@ -11,7 +11,7 @@ export function normalizeTripPatchTypes(patch: TripPatchInput): TripPatchInput {
     ...patch,
     ops: patch.ops.map((op) => {
       if (op.op === 'add_item') return { ...op, type: normalizeItemType(op.type) ?? op.type }
-      if (op.op === 'update_item' && op.type !== undefined) {
+      if ((op.op === 'update_item' || op.op === 'move_stash_to_day') && op.type !== undefined) {
         return { ...op, type: normalizeItemType(op.type) ?? op.type }
       }
       return op

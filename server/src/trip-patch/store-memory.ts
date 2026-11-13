@@ -19,6 +19,7 @@ import type {
   TripPatchStoreDriver,
 } from './types.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
+import type { StashInsert, StashRow } from '../recommendations/types.js'
 
 interface StoredDayRow extends DayRow {
   id: string
@@ -59,7 +60,9 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
   readonly dayRows: StoredDayRow[] = []
   readonly itemRows: StoredItemRow[] = []
   readonly legRows: StoredLegRow[] = []
+  readonly stashRows: StashRow[] = []
   readonly patchConfirmations = new Map<string, StoredPatchConfirmation>()
+  private transactionTail: Promise<void> = Promise.resolve()
 
   async listDayRows(tripId: string): Promise<DayRow[]> {
     return this.dayRows.filter((row) => row.trip_id === tripId)
@@ -81,16 +84,58 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
     return this.itemRows.find((row) => row.id === itemId)?.trip_id ?? null
   }
 
+  async listStashRows(tripId: string): Promise<StashRow[]> {
+    return this.stashRows.filter((row) => row.trip_id === tripId)
+  }
+
+  async getStashTripId(stashId: string): Promise<string | null> {
+    const owner = this.stashRows.find((row) => row.id === stashId)?.trip_id
+    return typeof owner === 'string' ? owner : null
+  }
+
+  async insertStashRow(tripId: string, item: StashInsert): Promise<void> {
+    const owner = await this.getStashTripId(item.id)
+    if (owner !== null) {
+      if (owner !== tripId) throw new TripPatchIdConflictError('stash', item.id, owner)
+      throw new Error(`stash id "${item.id}" already exists`)
+    }
+    this.stashRows.push({
+      id: item.id, trip_id: tripId, poi: item.poi, origin: item.origin, added_at: item.addedAt,
+      ...(item.title !== undefined ? { title: item.title } : {}),
+      ...(item.note !== undefined ? { note: item.note } : {}),
+      ...(item.category !== undefined ? { category: item.category } : {}),
+      ...(item.createdAt !== undefined ? { created_at: item.createdAt } : {}),
+    })
+  }
+
+  async deleteStashRow(tripId: string, stashId: string): Promise<boolean> {
+    const index = this.stashRows.findIndex((row) => row.id === stashId && row.trip_id === tripId)
+    if (index < 0) return false
+    this.stashRows.splice(index, 1)
+    return true
+  }
+
   async withTransaction<T>(fn: (store: TripPatchStoreDriver) => Promise<T>): Promise<T> {
+    const run = this.transactionTail.then(() => this.executeTransaction(fn))
+    this.transactionTail = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  private async executeTransaction<T>(fn: (store: TripPatchStoreDriver) => Promise<T>): Promise<T> {
     const days = this.dayRows.map((row) => ({ ...row }))
     const items = this.itemRows.map((row) => ({ ...row }))
     const legs = this.legRows.map((row) => ({ ...row }))
+    const stash = this.stashRows.map((row) => ({ ...row }))
+    const confirmations = structuredClone(this.patchConfirmations)
     try {
       return await fn(this)
     } catch (error) {
       this.dayRows.splice(0, this.dayRows.length, ...days)
       this.itemRows.splice(0, this.itemRows.length, ...items)
       this.legRows.splice(0, this.legRows.length, ...legs)
+      this.stashRows.splice(0, this.stashRows.length, ...stash)
+      this.patchConfirmations.clear()
+      for (const [tripId, record] of confirmations) this.patchConfirmations.set(tripId, record)
       throw error
     }
   }
@@ -148,6 +193,7 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       existing.title = item.title
       existing.note = item.note
       existing.poi = item.poi
+      if (item.images !== undefined) existing.images = item.images
       existing.pending = item.pending ? 1 : 0
       if (metadata.timeRange !== undefined) existing.time_range = metadata.timeRange
       if (metadata.cost !== undefined) existing.cost = metadata.cost
@@ -162,7 +208,7 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       title: item.title,
       note: item.note,
       poi: item.poi,
-      images: null,
+      images: item.images ?? null,
       pending: item.pending ? 1 : 0,
       time_range: metadata.timeRange ?? null,
       cost: metadata.cost ?? null,

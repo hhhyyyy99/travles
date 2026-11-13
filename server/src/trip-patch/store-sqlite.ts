@@ -17,6 +17,8 @@ import type {
   TripPatchStoreDriver,
 } from './types.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
+import { SqliteRecommendationsStoreDriver } from '../recommendations/driver-sqlite.js'
+import type { StashInsert, StashRow } from '../recommendations/types.js'
 
 export class SqliteTripPatchStore implements TripPatchStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
@@ -50,6 +52,23 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
 
   async getItemTripId(itemId: string): Promise<string | null> {
     return this.ownerTripId('items', itemId)
+  }
+
+  async listStashRows(tripId: string): Promise<StashRow[]> {
+    return new SqliteRecommendationsStoreDriver(this.db).listStashRows(tripId)
+  }
+
+  async getStashTripId(stashId: string): Promise<string | null> {
+    return this.ownerTripId('stash', stashId)
+  }
+
+  async insertStashRow(tripId: string, item: StashInsert): Promise<void> {
+    await this.assertNoForeignOwner('stash', item.id, 'stash', tripId)
+    await new SqliteRecommendationsStoreDriver(this.db).insertStashRow(tripId, item)
+  }
+
+  async deleteStashRow(tripId: string, stashId: string): Promise<boolean> {
+    return new SqliteRecommendationsStoreDriver(this.db).deleteStashRow(tripId, stashId)
   }
 
   async withTransaction<T>(fn: (store: TripPatchStoreDriver) => Promise<T>): Promise<T> {
@@ -116,6 +135,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
     const updates = [
       'day_id = excluded.day_id', 'item_order = excluded.item_order', 'type = excluded.type',
       'title = excluded.title', 'note = excluded.note', 'poi = excluded.poi', 'pending = excluded.pending',
+      ...(item.images !== undefined ? ['images = excluded.images'] : []),
       ...metadataColumns.map((column) => `${column} = excluded.${column}`),
     ]
     await this.db.run(
@@ -131,7 +151,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
         item.title,
         item.note,
         item.poi,
-        null,
+        item.images ?? null,
         item.pending ? 1 : 0,
         ...fields.map((key) => metadata[key]!),
       ] as SqlValue[],
@@ -234,16 +254,16 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
     return result.rowsAffected > 0
   }
 
-  private async ownerTripId(table: 'days' | 'items' | 'legs', id: string): Promise<string | null> {
+  private async ownerTripId(table: 'days' | 'items' | 'legs' | 'stash', id: string): Promise<string | null> {
     const { rows } = await this.db.run(`SELECT trip_id FROM ${table} WHERE id = ?`, [id])
     const owner = rows[0]?.trip_id
     return typeof owner === 'string' ? owner : null
   }
 
   private async assertNoForeignOwner(
-    table: 'days' | 'items' | 'legs',
+    table: 'days' | 'items' | 'legs' | 'stash',
     id: string,
-    entity: 'day' | 'item' | 'leg',
+    entity: 'day' | 'item' | 'leg' | 'stash',
     tripId: string,
   ): Promise<void> {
     const owner = await this.ownerTripId(table, id)
@@ -251,9 +271,9 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
   }
 
   private async assertCurrentOwner(
-    table: 'days' | 'items' | 'legs',
+    table: 'days' | 'items' | 'legs' | 'stash',
     id: string,
-    entity: 'day' | 'item' | 'leg',
+    entity: 'day' | 'item' | 'leg' | 'stash',
     tripId: string,
   ): Promise<void> {
     const owner = await this.ownerTripId(table, id)
