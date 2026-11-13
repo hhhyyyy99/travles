@@ -7,6 +7,7 @@
 import { asText } from '../trips/dates.js'
 import { projectDayIdentity } from './projections.js'
 import { readDayMetadata } from './metadata.js'
+import { projectLegMetrics } from './leg-projections.js'
 import type {
   CanvasDay,
   CanvasItem,
@@ -127,6 +128,7 @@ export function mapLegRow(row: LegRow): CanvasLeg | null {
     durationMin,
     polyline,
     quality: normalizeLegQuality(row?.quality, distanceKm, durationMin, polyline),
+    ...projectLegMetrics(row?.distance_km, row?.duration_min, row?.quality, polyline),
   }
 }
 

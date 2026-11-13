@@ -205,7 +205,12 @@ export function workbenchPrintRoute(day: WorkbenchDay, legs: WorkbenchLeg[], pre
     ? usable.some((leg) => legQuality(leg) !== 'measured') ? 'estimate' : 'measured'
     : 'partial'
   const summaryLeg: WorkbenchLeg = {
-    ...usable[0]!,
+    id: usable[0]!.id,
+    fromItemId: usable[0]!.fromItemId,
+    toItemId: usable[0]!.toItemId,
+    mode: usable[0]!.mode,
+    polyline: null,
+    // This synthetic total has no independently sourced precise aliases.
     distanceKm: usable.reduce((sum, leg) => sum + leg.distanceKm, 0),
     durationMin: usable.reduce((sum, leg) => sum + leg.durationMin, 0),
     quality: status === 'measured' ? 'measured' : 'estimate',
