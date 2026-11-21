@@ -37,6 +37,12 @@ function stableRows(rows: unknown): unknown[] {
 function stableValue(value: unknown): unknown {
   if (typeof value === 'bigint') return value.toString()
   if (typeof value === 'number' && !Number.isFinite(value)) return String(value)
+  // SQLite can hold blobs in nullable text columns. Include their bytes so
+  // even corrupt day metadata changes invalidate an earlier explanation.
+  if (value instanceof ArrayBuffer) return Array.from(new Uint8Array(value))
+  if (ArrayBuffer.isView(value)) {
+    return Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength))
+  }
   if (Array.isArray(value)) return value.map(stableValue)
   if (value !== null && typeof value === 'object') {
     const record = value as Record<string, unknown>

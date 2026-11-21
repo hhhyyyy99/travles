@@ -20,43 +20,17 @@
  * `{ok:false,error}`.
  */
 
+import type { RoundMetaPayload, RoundOptionChip, RoundPoiLink, RoundSource, RoundWarning } from '@hailar/domain'
 import type { ApiResult, FetchLike } from './tripList'
 import { defaultFetch } from './tripList'
 
 /** 'system' rows are the lightweight manual-edit notes from ticket 09. */
 export type ChatRole = 'user' | 'assistant' | 'system'
 
-/** One clickable clarify option chip (clicking sends `value` as the reply). */
-export type ChatOptionChip = {
-  label: string
-  value: string
-}
-
-/** A place the AI mentioned; clicking focuses the map on it. */
-export type ChatPoiLink = {
-  name: string
-  lat: number
-  lng: number
-  amapId?: string
-}
-
-/** One citation for the 来源 collapsible. */
-export type ChatSource = {
-  title: string
-  url: string
-}
-
-export type ChatRoundWarning = {
-  kind: 'time-conflict' | 'long-drive'
-  title: string
-  message: string
-  suggestion?: string
-  from?: string
-  to?: string
-  durationMin?: number
-  /** True when a warning is based on coordinates rather than a verified route. */
-  estimated?: boolean
-}
+export type ChatOptionChip = RoundOptionChip
+export type ChatPoiLink = RoundPoiLink
+export type ChatSource = RoundSource
+export type ChatRoundWarning = RoundWarning
 
 /**
  * Structured round metadata (ticket 07) — the `meta` SSE event payload and
@@ -66,18 +40,7 @@ export type ChatRoundWarning = {
  * inline POI links, `think`/`thinkComplete` the 思考完成 collapsible and
  * `sources` the 来源 collapsible (both hidden when absent).
  */
-export type ChatMessageMeta = {
-  round?: string
-  chips?: ChatOptionChip[]
-  poiLinks?: ChatPoiLink[]
-  think?: string
-  thinkComplete?: boolean
-  sources?: ChatSource[]
-  impacts?: string[]
-  conflicts?: string[]
-  compromises?: string[]
-  warnings?: ChatRoundWarning[]
-}
+export type ChatMessageMeta = Partial<RoundMetaPayload>
 
 /**
  * Structured record of a successful `apply_trip_patch` (ticket 08) — the

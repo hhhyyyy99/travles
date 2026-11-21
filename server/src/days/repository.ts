@@ -4,14 +4,17 @@
  * convention: reads NEVER throw; corrupt rows degrade and get dropped, the
  * same codec convention as src/domain/storage.ts and the trips repository).
  */
+import { normalizeItemType, readActivityItemMetadata } from '@hailar/domain'
 import { asText } from '../trips/dates.js'
+import { projectDayIdentity } from './projections.js'
+import { readDayMetadata } from './metadata.js'
+import { projectLegMetrics } from './leg-projections.js'
 import type {
   CanvasDay,
   CanvasItem,
   CanvasLeg,
   DayRow,
   ItemImage,
-  ItemType,
   ItemRow,
   LegRow,
   LegQuality,
@@ -19,8 +22,6 @@ import type {
   TripCanvas,
   WorkbenchStoreDriver,
 } from './types.js'
-
-const ITEM_TYPES: ItemType[] = ['traffic', 'stay', 'attraction', 'food', 'other']
 
 /** Tolerant whole-trip canvas read; a failing driver → empty canvas. */
 export async function readTripCanvas(driver: WorkbenchStoreDriver, tripId: string): Promise<TripCanvas> {
@@ -36,7 +37,7 @@ export async function readTripCanvas(driver: WorkbenchStoreDriver, tripId: strin
   } catch {
     return { days: [], legs: [] }
   }
-  return assembleCanvas(dayRows, itemRows, legRows)
+  return assembleCanvas(dayRows, itemRows, legRows, tripId)
 }
 
 /**
@@ -44,7 +45,7 @@ export async function readTripCanvas(driver: WorkbenchStoreDriver, tripId: strin
  * items under their day, and sorts days by idx / items by order. Legs that
  * reference unknown items are dropped.
  */
-export function assembleCanvas(dayRows: DayRow[], itemRows: ItemRow[], legRows: LegRow[]): TripCanvas {
+export function assembleCanvas(dayRows: DayRow[], itemRows: ItemRow[], legRows: LegRow[], tripId?: string): TripCanvas {
   const itemsByDay = new Map<string, CanvasItem[]>()
   const itemIds = new Set<string>()
   for (const row of itemRows) {
@@ -60,7 +61,7 @@ export function assembleCanvas(dayRows: DayRow[], itemRows: ItemRow[], legRows: 
   }
 
   const days = dayRows
-    .map((row) => mapDayRow(row, itemsByDay.get(asText(row?.id)) ?? []))
+    .map((row) => mapDayRow(row, itemsByDay.get(asText(row?.id)) ?? [], tripId))
     .filter((day): day is CanvasDay => day !== null)
     .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id))
 
@@ -73,11 +74,13 @@ export function assembleCanvas(dayRows: DayRow[], itemRows: ItemRow[], legRows: 
 }
 
 /** 容错 day row → CanvasDay; null = unusable row (dropped). */
-export function mapDayRow(row: DayRow, items: CanvasItem[]): CanvasDay | null {
+export function mapDayRow(row: DayRow, items: CanvasItem[], tripId?: string): CanvasDay | null {
   const id = asText(row?.id)
   if (!id) return null
   return {
     id,
+    ...projectDayIdentity(row?.trip_id, row?.idx, tripId),
+    ...readDayMetadata(row),
     index: asNonNegativeNumber(row?.idx),
     date: asDateString(row?.date),
     theme: asText(row?.theme),
@@ -91,14 +94,14 @@ export function mapItemRow(row: ItemRow): CanvasItem | null {
   const id = asText(row?.id)
   const dayId = asText(row?.day_id)
   if (!id || !dayId) return null
-  const type = asText(row?.type) as ItemType
   return {
     id,
     dayId,
     order: asNonNegativeNumber(row?.item_order),
-    type: ITEM_TYPES.includes(type) ? type : 'other',
+    type: normalizeItemType(row?.type) ?? 'other',
     title: asText(row?.title),
     note: asText(row?.note),
+    ...readActivityItemMetadata({ timeRange: row?.time_range, cost: row?.cost }),
     poi: mapPoiRef(row?.poi),
     images: mapImages(row?.images),
     pending: row?.pending === true || row?.pending === 1,
@@ -123,6 +126,7 @@ export function mapLegRow(row: LegRow): CanvasLeg | null {
     durationMin,
     polyline,
     quality: normalizeLegQuality(row?.quality, distanceKm, durationMin, polyline),
+    ...projectLegMetrics(row?.distance_km, row?.duration_min, row?.quality, polyline),
   }
 }
 

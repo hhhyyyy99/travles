@@ -3,6 +3,8 @@
  * unit tests, mirroring MemoryTripStoreDriver. Maps are exposed so tests can
  * seed corrupt rows; `nextWriteError` simulates storage failures.
  */
+import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
+import { ContentItemIdConflictError } from './types.js'
 import type {
   ChecklistRow,
   ChecklistUpsert,
@@ -45,18 +47,23 @@ export class MemoryContentStoreDriver implements ContentStoreDriver {
   }
 
   async upsertItemRow(tripId: string, item: ItemUpsert): Promise<void> {
+    const metadata = ActivityItemMetadataSchema.parse(item)
     this.failNextWrite()
     if (!(await this.dayExists(tripId, item.dayId))) {
       throw new Error(`day ${item.dayId} does not belong to trip ${tripId}`)
     }
+    const existing = this.itemRows.get(item.id)
+    if (existing && existing.trip_id !== tripId) throw new ContentItemIdConflictError(item.id)
     this.itemRows.set(item.id, {
       id: item.id,
       trip_id: tripId,
       day_id: item.dayId,
       item_order: item.itemOrder,
-      type: item.type,
+      type: normalizeItemType(item.type) ?? item.type,
       title: item.title,
       note: item.note,
+      time_range: metadata.timeRange !== undefined ? metadata.timeRange : existing?.time_range ?? null,
+      cost: metadata.cost !== undefined ? metadata.cost : existing?.cost ?? null,
       poi: item.poiJson ?? null,
       images: null,
       pending: item.pending ? 1 : 0,

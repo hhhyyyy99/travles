@@ -10,7 +10,7 @@ export class SqliteWorkbenchStoreDriver implements WorkbenchStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
 
   async listDayRows(tripId: string): Promise<DayRow[]> {
-    const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color FROM days WHERE trip_id = ?', [
+    const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ?', [
       tripId,
     ])
     return rows as unknown as DayRow[]
@@ -18,7 +18,7 @@ export class SqliteWorkbenchStoreDriver implements WorkbenchStoreDriver {
 
   async listItemRows(tripId: string): Promise<ItemRow[]> {
     const { rows } = await this.db.run(
-      'SELECT id, trip_id, day_id, item_order, type, title, note, poi, images, pending FROM items WHERE trip_id = ?',
+      'SELECT id, trip_id, day_id, item_order, type, title, note, time_range, cost, poi, images, pending FROM items WHERE trip_id = ?',
       [tripId],
     )
     return rows as unknown as ItemRow[]

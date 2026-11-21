@@ -16,11 +16,12 @@
    * those items are removed too (the legs table has no FK on items, so the
    * driver performs the cleanup explicitly).
  */
-import type { DayRow } from '../days/types.js'
+import type { DayRow, CanvasDay } from '../days/types.js'
+import type { DayMetadata, DayMetadataInput } from '../days/metadata.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 
 /** Validated insert payload (every field a server-checked value). */
-export interface DayInsert {
+export interface DayInsert extends DayMetadata {
   id: string
   tripId: string
   idx: number
@@ -29,8 +30,8 @@ export interface DayInsert {
   color: string
 }
 
-/** Theme/color patch; only the fields the caller sent are present. */
-export interface DayThemePatch {
+/** Day metadata/theme/color patch; only fields the caller sent are present. */
+export interface DayThemePatch extends DayMetadata {
   theme?: string
   color?: string
 }
@@ -39,9 +40,13 @@ export interface DayThemePatch {
  * Raw patch off the request body (values unvalidated); the repository
  * coerces/rejects before anything reaches a driver.
  */
-export interface DayThemeInput {
+export interface DayThemeInput extends DayMetadataInput {
   theme?: unknown
   color?: unknown
+}
+
+export interface DayCreateInput extends DayThemeInput {
+  date?: unknown
 }
 
 /** Write-side driver seam (SQLite in production, in-memory in tests). */
@@ -66,14 +71,7 @@ export interface DaysAdminStoreDriver {
 export type DaysAdminErrorCode = 'invalid' | 'not_found' | 'storage'
 
 /** The day shape the HTTP layer returns (canvas-day parity, items omitted). */
-export interface AdminDay {
-  id: string
-  index: number
-  date: string
-  theme: string
-  color: string
-  items: []
-}
+export type AdminDay = Omit<CanvasDay, 'items'> & { items: [] }
 
 export type DayWriteResult =
   | { ok: true; day: AdminDay }

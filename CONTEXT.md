@@ -1,20 +1,40 @@
-# Travel Planner
+# Travel Planning
+
+围绕旅行计划组织行程日及其中的活动安排。
 
 An AI-driven travel itinerary planning workstation for exploring, designing, and refining multi-day road trips and vacations.
 
-## Core Concepts
+## Language
 
 **Trip**:
-A complete travel plan with a title, destination, date range or duration, containing a sequence of days and unassigned stash items.
+围绕一个旅行计划组织的行程日和活动。
+A Trip has a title, destination, and date range or duration, and can contain unscheduled Stash items.
 _Avoid_: Plan, journey, tour, guide
 
 **Day**:
-A single calendar day or sequential stage within a trip, containing an ordered sequence of activity items.
+属于某个 Trip 的活动安排单元，可以尚未确定日历日期。
+A Day contains an ordered sequence of activity items.
 _Avoid_: Stage, date, schedule-column
 
-**Activity Item**:
-A discrete event or stop in a day, categorized as attraction, transit, dining, accommodation, or note.
+**Day theme**:
+对整日安排的主题概括。
+
+**Day title**:
+行程日可选的独立名称，与 Day theme 含义不同。
+
+**Day note**:
+适用于整日安排的可选自由文字，与活动级备注和行程级备注相互独立。
+
+**ActivityItem**:
+行程日内可以独立排序或移动的活动安排。
+An activity item may represent an attraction, transit, dining, accommodation, or a note.
 _Avoid_: Card, point, stop, event
+
+**Activity timeRange**:
+作者为某个活动写下的可选时间说明原文，独立于活动标题与备注，不表示可计算的时间区间。
+
+**Activity cost**:
+作者为某个活动写下的可选费用说明原文，独立于时间说明与行程预算，不表示标准化金额或实际收费。
 
 **Leg**:
 The transit segment connecting two consecutive activity items, carrying estimated or verified driving distance and duration.

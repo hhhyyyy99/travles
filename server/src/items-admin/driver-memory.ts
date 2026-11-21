@@ -4,6 +4,7 @@
  * exposed so tests can seed realistic (or corrupt) rows directly;
  * `nextWriteError` simulates storage failures.
  */
+import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
 import { normalizeLegQuality } from '../days/repository.js'
 import type { ItemFullUpsert, ItemOrderPatch, ItemsAdminStoreDriver } from './types.js'
@@ -63,18 +64,23 @@ export class MemoryItemsAdminStoreDriver implements ItemsAdminStoreDriver {
   }
 
   async upsertItemFull(tripId: string, item: ItemFullUpsert): Promise<void> {
+    const metadata = ActivityItemMetadataSchema.parse(item)
     this.failNextWrite()
     if (!(await this.dayExists(tripId, item.dayId))) {
       throw new Error(`day ${item.dayId} does not belong to trip ${tripId}`)
     }
+    const existing = this.itemRows.get(item.id)
+    if (existing && existing.trip_id !== tripId) throw new Error(`item ${item.id} belongs to another trip`)
     this.itemRows.set(item.id, {
       id: item.id,
       trip_id: tripId,
       day_id: item.dayId,
       item_order: item.itemOrder,
-      type: item.type,
+      type: normalizeItemType(item.type) ?? item.type,
       title: item.title,
       note: item.note,
+      time_range: metadata.timeRange !== undefined ? metadata.timeRange : existing?.time_range ?? null,
+      cost: metadata.cost !== undefined ? metadata.cost : existing?.cost ?? null,
       poi: item.poiJson,
       images: item.imagesJson,
       pending: 0,

@@ -6,7 +6,7 @@ import { gcj02ToWgs84LngLat } from './geo.js'
  * key is configured and otherwise returns an empty result set; the workbench
  * remains usable with saved stash/favorite rows and injected test providers.
  */
-export const searchAmapPoi: PoiSearch = async ({ query, region, type }) => {
+export const searchAmapPoi: PoiSearch = async ({ query, region, type, signal }) => {
   const key = process.env.AMAP_WEB_KEY ?? process.env.AMAP_KEY
   if (!key) return []
   const params = new URLSearchParams({
@@ -17,7 +17,7 @@ export const searchAmapPoi: PoiSearch = async ({ query, region, type }) => {
     extensions: 'all',
   })
   if (region) params.set('city', region)
-  const response = await fetch(`https://restapi.amap.com/v3/place/text?${params.toString()}`)
+  const response = await fetch(`https://restapi.amap.com/v3/place/text?${params.toString()}`, { signal })
   if (!response.ok) throw new Error(`AMap HTTP ${response.status}`)
   const payload = (await response.json()) as { status?: string; pois?: Array<Record<string, unknown>> }
   if (payload.status !== '1' || !Array.isArray(payload.pois)) return []
@@ -47,6 +47,8 @@ function normalizeAmapPoi(poi: Record<string, unknown>, requestedType?: Recommen
     category,
     type,
     region: text(poi.adname) || text(poi.cityname) || text(poi.pname),
+    ...(text(poi.cityname) ? { city: text(poi.cityname) } : {}),
+    ...(text(poi.pname) ? { province: text(poi.pname) } : {}),
     rating,
     introSummary: text(poi.businessarea) || text(poi.address),
     address: text(poi.address),

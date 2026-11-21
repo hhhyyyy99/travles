@@ -13,6 +13,10 @@
  * of duplicating it. See server/src/seed/builtin-trip-data.ts for the fixed
  * ID scheme.
  */
+import { ActivityItemMetadataSchema, normalizeItemType, readActivityItemMetadata, type ActivityItemMetadata } from '@hailar/domain'
+import { ContentItemIdConflictError } from './types.js'
+import { projectDayIdentity } from '../days/projections.js'
+import { readDayMetadata } from '../days/metadata.js'
 import type {
   ChecklistEntry,
   ChecklistRow,
@@ -61,7 +65,7 @@ export class TripContentRepository {
     }
 
     return dayRows
-      .map((row) => mapDayRow(row, itemsByDay))
+      .map((row) => mapDayRow(row, itemsByDay, tripId))
       .filter((day): day is DayContent => day !== null)
       .sort((a, b) => a.idx - b.idx || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   }
@@ -83,7 +87,7 @@ export class TripContentRepository {
   /**
    * Upsert one item. Fails with not_found when the target day does not
    * belong to the trip (checked before writing so a bad dayId never creates
-   * an orphan row).
+   * an orphan row). An item id owned by another trip is rejected as invalid.
    */
   async upsertItem(tripId: string, input: Record<string, unknown>): Promise<ContentWriteResult> {
     const item = readItemUpsert(input)
@@ -97,7 +101,10 @@ export class TripContentRepository {
     if (!dayExists) return { ok: false, error: '日程不存在', code: 'not_found' }
     try {
       await this.driver.upsertItemRow(tripId, item)
-    } catch {
+    } catch (error) {
+      if (error instanceof ContentItemIdConflictError) {
+        return { ok: false, error: '条目 id 与其他行程冲突，请使用新的 id', code: 'invalid' }
+      }
       return { ok: false, error: '保存失败', code: 'storage' }
     }
     return { ok: true }
@@ -120,12 +127,14 @@ export class TripContentRepository {
 // Tolerant mapping helpers (corrupt values degrade, never throw)
 // ---------------------------------------------------------------------------
 
-function mapDayRow(row: DayRow, itemsByDay: Map<string, ItemContent[]>): DayContent | null {
+function mapDayRow(row: DayRow, itemsByDay: Map<string, ItemContent[]>, tripId: string): DayContent | null {
   const id = asText(row?.id)
   if (!id) return null
   const idxNumber = Number(row?.idx)
   return {
     id,
+    ...projectDayIdentity(row?.trip_id, row?.idx, tripId),
+    ...readDayMetadata(row),
     idx: Number.isInteger(idxNumber) ? idxNumber : 0,
     date: asText(row?.date),
     theme: asText(row?.theme),
@@ -143,9 +152,10 @@ function mapItemRow(row: ItemRow): ItemContent | null {
     id,
     dayId,
     itemOrder: Number.isFinite(orderNumber) ? orderNumber : 0,
-    type: asText(row?.type) || 'other',
+    type: normalizeItemType(row?.type) ?? (asText(row?.type) || 'other'),
     title: asText(row?.title),
     note: asText(row?.note),
+    ...readActivityItemMetadata({ timeRange: row?.time_range, cost: row?.cost }),
     pending: row?.pending === 1 || row?.pending === true,
     ...(typeof row?.poi === 'string' && row.poi.trim() ? { poi: row.poi } : {}),
   }
@@ -175,6 +185,12 @@ function readId(value: unknown): string | null {
 
 /** Tolerant write-side coercion of an item payload; null = reject. */
 function readItemUpsert(input: Record<string, unknown>): ItemUpsert | null {
+  let metadata: ActivityItemMetadata
+  try {
+    metadata = ActivityItemMetadataSchema.parse(input)
+  } catch {
+    return null
+  }
   const id = readId(input.id)
   const dayId = readId(input.dayId)
   if (!id || !dayId) return null
@@ -192,9 +208,10 @@ function readItemUpsert(input: Record<string, unknown>): ItemUpsert | null {
     id,
     dayId,
     itemOrder: Number.isFinite(orderNumber) ? Math.trunc(orderNumber) : 0,
-    type: typeof input.type === 'string' && input.type.trim() ? input.type.trim() : 'other',
+    type: normalizeItemType(input.type) ?? (typeof input.type === 'string' && input.type.trim() ? input.type.trim() : 'other'),
     title: typeof input.title === 'string' ? input.title : '',
     note: typeof input.note === 'string' ? input.note : '',
+    ...metadata,
     poiJson,
     pending: input.pending === true || input.pending === 1,
   }

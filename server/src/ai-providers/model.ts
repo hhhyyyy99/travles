@@ -1,10 +1,12 @@
+import { createHash } from 'node:crypto'
 import type { MastraLanguageModel } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
 import type { AiProvider, ProviderCapabilities } from './types.js'
 import { THINKING_LEVELS } from './types.js'
 import { endpointFor } from './probe.js'
 
-type PromptPart = { type?: string; text?: string; delta?: string; toolCallId?: string; toolName?: string; input?: unknown; output?: unknown; value?: unknown }
+type ProviderMetadata = { hailar: { providerId: string; modelId: string; endpointFingerprint: string }; google?: { thoughtSignature: string } }
+type PromptPart = { type?: string; text?: string; delta?: string; toolCallId?: string; toolName?: string; input?: unknown; output?: unknown; value?: unknown; providerOptions?: Record<string, Record<string, unknown>> }
 type PromptMessage = { role: string; content: string | PromptPart[] }
 type CallOptions = {
   prompt: PromptMessage[]
@@ -24,11 +26,14 @@ type StreamPart =
   | { type: 'text-start'; id: string }
   | { type: 'text-delta'; id: string; delta: string }
   | { type: 'text-end'; id: string }
-  | { type: 'tool-call'; toolCallId: string; toolName: string; input: string }
+  | { type: 'reasoning-start'; id: string; providerMetadata: ProviderMetadata }
+  | { type: 'reasoning-delta'; id: string; delta: string; providerMetadata: ProviderMetadata }
+  | { type: 'reasoning-end'; id: string; providerMetadata: ProviderMetadata }
+  | { type: 'tool-call'; toolCallId: string; toolName: string; input: string; providerMetadata?: ProviderMetadata }
   | { type: 'finish'; finishReason: 'stop' | 'length' | 'tool-calls' | 'error' | 'other'; usage: { inputTokens: number; outputTokens: number; totalTokens: number } }
   | { type: 'error'; error: unknown }
 
-type ToolCall = { id: string; name: string; args: string; index?: number; aliases?: string[] }
+type ToolCall = { id: string; name: string; args: string; index?: number; aliases?: string[]; thoughtSignature?: string }
 
 /**
  * HTTP model adapter for both OpenAI-compatible wire formats. It keeps the
@@ -107,11 +112,19 @@ class ProviderLanguageModel {
       .filter((part): part is Extract<StreamPart, { type: 'text-delta' }> => part.type === 'text-delta')
       .map((part) => part.delta)
       .join('')
+    const reasoning = parts
+      .filter((part): part is Extract<StreamPart, { type: 'reasoning-delta' }> => part.type === 'reasoning-delta')
+      .map((part) => part.delta)
+      .join('')
     const toolCalls = parts.filter((part): part is Extract<StreamPart, { type: 'tool-call' }> => part.type === 'tool-call')
     return {
       content: [
+        ...(parts.some((part) => part.type === 'reasoning-start') ? [{ type: 'reasoning', text: reasoning, providerMetadata: sourceMetadata(this.config) }] : []),
         ...(text ? [{ type: 'text', text }] : []),
-        ...toolCalls.map((call) => ({ type: 'tool-call', toolCallId: call.toolCallId, toolName: call.toolName, input: JSON.parse(call.input) as unknown })),
+        ...toolCalls.map((call) => ({
+          type: 'tool-call', toolCallId: call.toolCallId, toolName: call.toolName, input: JSON.parse(call.input) as unknown,
+          ...(call.providerMetadata ? { providerMetadata: call.providerMetadata } : {}),
+        })),
       ],
       finishReason: toolCalls.length > 0 ? 'tool-calls' : 'stop',
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
@@ -137,7 +150,7 @@ class ProviderLanguageModel {
     if (!response.ok) throw providerHttpError(response.status)
     if (!response.body) throw new Error('模型服务没有返回响应体')
 
-    return { stream: parseProviderStream(response, this.config.protocol, this.capabilities.functionCalling) }
+    return { stream: parseProviderStream(response, this.config, this.capabilities.functionCalling) }
   }
 }
 
@@ -158,7 +171,7 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
     headers.authorization = `Bearer ${provider.apiKey}`
   }
   const fallback = !capabilities.functionCalling
-  const messages = options.prompt.flatMap((message) => toChatMessage(message, fallback))
+  const messages = options.prompt.flatMap((message) => toChatMessage(message, provider, fallback))
   const tools = capabilities.functionCalling ? options.tools?.map((tool) => toTool(tool, provider.protocol)) : undefined
   // Thinking budget: wire-format-only. `off` (the default for env/legacy
   // providers) emits no reasoning field at all; `low/medium/high` map to the
@@ -187,6 +200,12 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
   }
   const prompt = messages
   if (!capabilities.functionCalling) appendFallbackInstruction(prompt, '', options.tools)
+  // OpenAI reasoning models reject the older max_tokens field; most other
+  // compatible providers (including DeepSeek/Qwen) use that legacy spelling.
+  const modelName = provider.modelId.split('/').at(-1) ?? provider.modelId
+  const tokenLimitField = /^(?:o[1-9](?:[.-]|$)|gpt-5(?:[.-]|$))/.test(modelName)
+    ? 'max_completion_tokens'
+    : 'max_tokens'
   return {
     url: endpointFor(provider.baseUrl, provider.protocol),
     headers,
@@ -198,13 +217,14 @@ function buildRequest(provider: AiProvider, capabilities: ProviderCapabilities, 
       ...(tools && tools.length > 0 ? { tools, tool_choice: options.toolChoice ? toToolChoice(options.toolChoice) : 'auto' } : {}),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.topP !== undefined ? { top_p: options.topP } : {}),
+      ...(options.maxOutputTokens !== undefined ? { [tokenLimitField]: options.maxOutputTokens } : {}),
       ...(options.stopSequences ? { stop: options.stopSequences } : {}),
     },
   }
 }
 
-function toChatMessage(message: PromptMessage, fallback = false): Record<string, unknown>[] {
-  if (fallback) return toFallbackChatMessages(message)
+function toChatMessage(message: PromptMessage, provider: AiProvider, fallback = false): Record<string, unknown>[] {
+  if (fallback) return toFallbackChatMessages(message, provider)
   const content = message.content
   if (message.role === 'tool') {
     const results = Array.isArray(content) ? content.filter((part) => part.type === 'tool-result') : []
@@ -217,22 +237,50 @@ function toChatMessage(message: PromptMessage, fallback = false): Record<string,
       : [{ role: 'tool', tool_call_id: 'tool-call', content: '' }]
   }
   if (!Array.isArray(content)) return [{ role: message.role, content }]
-  const text = content.filter((part) => part.type === 'text' || part.type === 'reasoning').map((part) => part.text ?? '').join('')
+  const text = content.filter((part) => part.type === 'text').map((part) => part.text ?? '').join('')
+  const reasoning = assistantReasoning(message, provider)
   const toolCalls = content
     .filter((part) => part.type === 'tool-call')
     .map((part) => ({
       id: part.toolCallId ?? 'tool-call',
       type: 'function',
       function: { name: part.toolName ?? '', arguments: JSON.stringify(part.input ?? {}) },
+      ...(matchesSource(part, provider) && typeof part.providerOptions?.google?.thoughtSignature === 'string'
+        ? { extra_content: { google: { thought_signature: part.providerOptions.google.thoughtSignature } } }
+        : {}),
     }))
   return [{
     role: message.role,
     content: text,
+    ...(reasoning !== undefined ? { reasoning_content: reasoning } : {}),
     ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
   }]
 }
 
-function toFallbackChatMessages(message: PromptMessage): Record<string, unknown>[] {
+function endpointFingerprint(provider: AiProvider): string {
+  const endpoint = new URL(endpointFor(provider.baseUrl, provider.protocol)).href
+  // URLs may contain credentials; only their opaque identity enters memory.
+  return createHash('sha256').update(JSON.stringify([provider.protocol, endpoint])).digest('hex')
+}
+
+function sourceMetadata(provider: AiProvider): ProviderMetadata {
+  return { hailar: { providerId: provider.id, modelId: provider.modelId, endpointFingerprint: endpointFingerprint(provider) } }
+}
+
+/** Private replay fields belong to the provider/model/endpoint that returned them. */
+function matchesSource(part: PromptPart, provider: AiProvider): boolean {
+  const source = part.providerOptions?.hailar
+  return !source || (source.providerId === provider.id && source.modelId === provider.modelId && source.endpointFingerprint === endpointFingerprint(provider))
+}
+
+/** An empty reasoning part still records an upstream field; absence must stay absent. */
+function assistantReasoning(message: PromptMessage, provider: AiProvider): string | undefined {
+  if (message.role !== 'assistant' || !Array.isArray(message.content)) return undefined
+  const parts = message.content.filter((part) => part.type === 'reasoning' && matchesSource(part, provider))
+  return parts.length > 0 ? parts.map((part) => part.text ?? '').join('') : undefined
+}
+
+function toFallbackChatMessages(message: PromptMessage, provider: AiProvider): Record<string, unknown>[] {
   const content = message.content
   if (!Array.isArray(content)) return [{ role: fallbackChatRole(message.role), content: message.role === 'tool' ? `工具结果：${content}` : content }]
   if (message.role === 'tool') {
@@ -241,9 +289,14 @@ function toFallbackChatMessages(message: PromptMessage): Record<string, unknown>
       ? results.map((part) => ({ role: 'user', content: fallbackToolResultText(part) }))
       : [{ role: 'user', content: '工具结果：' }]
   }
-  const text = content.filter((part) => part.type === 'text' || part.type === 'reasoning').map((part) => part.text ?? '').filter(Boolean)
+  const text = content.filter((part) => part.type === 'text').map((part) => part.text ?? '').filter(Boolean)
+  const reasoning = assistantReasoning(message, provider)
   const toolCalls = content.filter((part) => part.type === 'tool-call').map(fallbackToolCallText)
-  return [{ role: fallbackChatRole(message.role), content: [...text, ...toolCalls].join('\n\n') }]
+  return [{
+    role: fallbackChatRole(message.role),
+    content: [...text, ...toolCalls].join('\n\n'),
+    ...(reasoning !== undefined ? { reasoning_content: reasoning } : {}),
+  }]
 }
 
 function toResponseInput(message: PromptMessage, fallback = false): Record<string, unknown>[] {
@@ -251,7 +304,9 @@ function toResponseInput(message: PromptMessage, fallback = false): Record<strin
   if (!Array.isArray(message.content)) return [{ role: responseRole(message.role), content: [{ type: 'input_text', text: message.content }] }]
   const output: Record<string, unknown>[] = []
   for (const part of message.content) {
-    if (part.type === 'text' || part.type === 'reasoning') {
+    // Chat reasoning lacks the native Responses item ids/encrypted payload;
+    // omit it rather than exposing private reasoning as output_text.
+    if (part.type === 'text') {
       output.push({ role: responseRole(message.role), content: [{ type: message.role === 'assistant' ? 'output_text' : 'input_text', text: part.text ?? '' }] })
     } else if (part.type === 'tool-call') {
       output.push({ type: 'function_call', call_id: part.toolCallId, name: part.toolName, arguments: JSON.stringify(part.input ?? {}) })
@@ -268,7 +323,9 @@ function toFallbackResponseInput(message: PromptMessage): Record<string, unknown
   if (!Array.isArray(content)) return [{ role, content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text: message.content }] }]
   const output: Record<string, unknown>[] = []
   for (const part of content) {
-    if (part.type === 'text' || part.type === 'reasoning') {
+    // Chat reasoning lacks the native Responses item ids/encrypted payload;
+    // omit it rather than exposing private reasoning as output_text.
+    if (part.type === 'text') {
       output.push({ role, content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text: part.text ?? '' }] })
     } else if (part.type === 'tool-call') {
       output.push({ role: 'assistant', content: [{ type: 'output_text', text: fallbackToolCallText(part) }] })
@@ -356,7 +413,9 @@ function fallbackInstruction(
   return `当前模型不支持 function calling。需要调用工具时，只输出 JSON：{"tool":"工具名","arguments":{}}；不要输出 Markdown 代码围栏。可调用工具：${JSON.stringify(toolList)}。普通回答直接输出文本。`
 }
 
-function parseProviderStream(response: Response, protocol: AiProvider['protocol'], functionCalling: boolean): ReadableStream<StreamPart> {
+function parseProviderStream(response: Response, provider: AiProvider, functionCalling: boolean): ReadableStream<StreamPart> {
+  const protocol = provider.protocol
+  const providerMetadata = sourceMetadata(provider)
   return new ReadableStream<StreamPart>({
     async start(controller) {
       controller.enqueue({ type: 'stream-start', warnings: [] })
@@ -365,6 +424,15 @@ function parseProviderStream(response: Response, protocol: AiProvider['protocol'
       let finishReason: 'stop' | 'length' | 'tool-calls' | 'error' | 'other' = 'stop'
       let textStarted = false
       let textEnded = false
+      let reasoningStarted = false
+
+      const emitReasoning = (text: string): void => {
+        if (!reasoningStarted) {
+          reasoningStarted = true
+          controller.enqueue({ type: 'reasoning-start', id: 'reasoning-1', providerMetadata })
+        }
+        controller.enqueue({ type: 'reasoning-delta', id: 'reasoning-1', delta: text, providerMetadata })
+      }
 
       const emitText = (text: string): void => {
         if (!text) return
@@ -378,6 +446,7 @@ function parseProviderStream(response: Response, protocol: AiProvider['protocol'
       const handleEvent = (event: string, payload: Record<string, unknown>): void => {
         const result = parseEvent(event, payload, protocol, functionCalling, toolCalls)
         if (result.error) throw result.error
+        if (result.reasoning !== undefined) emitReasoning(result.reasoning)
         if (result.text) {
           if (functionCalling) emitText(result.text)
           else textParts.push(result.text)
@@ -419,6 +488,7 @@ function parseProviderStream(response: Response, protocol: AiProvider['protocol'
           const parsed = JSON.parse(buffered) as unknown
           if (hasProviderError(parsed, protocol)) throw providerEventError(parsed)
           const result = parseJsonResponse(parsed, protocol, toolCalls)
+          if (result.reasoning !== undefined) emitReasoning(result.reasoning)
           if (result.text) textParts.push(result.text)
           if (result.finishReason) finishReason = result.finishReason
         }
@@ -433,12 +503,18 @@ function parseProviderStream(response: Response, protocol: AiProvider['protocol'
           // enabled. Preserve its text just like streamed text deltas.
           emitText(completeText)
         }
+        if (reasoningStarted) controller.enqueue({ type: 'reasoning-end', id: 'reasoning-1', providerMetadata })
         if (textStarted && !textEnded) {
           controller.enqueue({ type: 'text-end', id: 'text-1' })
           textEnded = true
         }
         for (const call of toolCalls.values()) {
-          controller.enqueue({ type: 'tool-call', toolCallId: call.id, toolName: call.name, input: call.args })
+          controller.enqueue({
+            type: 'tool-call', toolCallId: call.id, toolName: call.name, input: call.args,
+            ...(call.thoughtSignature !== undefined
+              ? { providerMetadata: { ...providerMetadata, google: { thoughtSignature: call.thoughtSignature } } }
+              : {}),
+          })
         }
         if (toolCalls.size > 0) finishReason = 'tool-calls'
         controller.enqueue({ type: 'finish', finishReason, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } })
@@ -512,7 +588,7 @@ class IncrementalSseParser {
   }
 }
 
-function parseEvent(event: string, payload: Record<string, unknown>, protocol: AiProvider['protocol'], functionCalling: boolean, toolCalls: Map<string, ToolCall>): { text?: string; error?: Error; finishReason?: 'stop' | 'length' | 'tool-calls' | 'error' | 'other' } {
+function parseEvent(event: string, payload: Record<string, unknown>, protocol: AiProvider['protocol'], functionCalling: boolean, toolCalls: Map<string, ToolCall>): { text?: string; reasoning?: string; error?: Error; finishReason?: 'stop' | 'length' | 'tool-calls' | 'error' | 'other' } {
   if (event === 'error' || payload.type === 'error' || hasProviderError(payload, protocol)) return { error: providerEventError(payload) }
   if (protocol === 'responses') {
     const type = event || stringValue(payload.type)
@@ -566,15 +642,16 @@ function parseEvent(event: string, payload: Record<string, unknown>, protocol: A
   }
   const choice = objectValue((Array.isArray(payload.choices) ? payload.choices[0] : undefined))
   const delta = objectValue(choice?.delta)
-  if (delta) {
-    if (typeof delta.content === 'string') return { text: delta.content }
-    if (functionCalling) addChatToolCalls(delta, toolCalls)
-  }
+  if (delta && functionCalling) addChatToolCalls(delta, toolCalls)
   const reason = stringValue(choice?.finish_reason)
-  return { finishReason: reason === 'tool_calls' ? 'tool-calls' : reason === 'length' ? 'length' : reason ? 'stop' : undefined }
+  return {
+    text: typeof delta?.content === 'string' ? delta.content : undefined,
+    reasoning: typeof delta?.reasoning_content === 'string' ? delta.reasoning_content : undefined,
+    finishReason: reason === 'tool_calls' ? 'tool-calls' : reason === 'length' ? 'length' : reason ? 'stop' : undefined,
+  }
 }
 
-function parseJsonResponse(payload: unknown, protocol: AiProvider['protocol'], toolCalls: Map<string, ToolCall>): { text: string; finishReason?: 'stop' | 'length' | 'tool-calls' | 'error' | 'other' } {
+function parseJsonResponse(payload: unknown, protocol: AiProvider['protocol'], toolCalls: Map<string, ToolCall>): { text: string; reasoning?: string; finishReason?: 'stop' | 'length' | 'tool-calls' | 'error' | 'other' } {
   const response = objectValue(payload)
   if (!response) return { text: '' }
   if (protocol === 'responses') {
@@ -584,7 +661,11 @@ function parseJsonResponse(payload: unknown, protocol: AiProvider['protocol'], t
   const choice = objectValue(Array.isArray(response.choices) ? response.choices[0] : undefined)
   const message = objectValue(choice?.message)
   if (message) addChatToolCalls(message, toolCalls)
-  return { text: contentText(message?.content), finishReason: stringValue(choice?.finish_reason) === 'tool_calls' ? 'tool-calls' : 'stop' }
+  return {
+    text: contentText(message?.content),
+    reasoning: typeof message?.reasoning_content === 'string' ? message.reasoning_content : undefined,
+    finishReason: stringValue(choice?.finish_reason) === 'tool_calls' ? 'tool-calls' : 'stop',
+  }
 }
 
 function addChatToolCalls(value: Record<string, unknown>, calls: Map<string, ToolCall>): void {
@@ -600,6 +681,8 @@ function addChatToolCalls(value: Record<string, unknown>, calls: Map<string, Too
     const existing = calls.get(id) ?? { id, name: stringValue(fn.name), args: '', ...(index !== undefined ? { index } : {}) }
     existing.name ||= stringValue(fn.name)
     existing.args += stringValue(fn.arguments)
+    const signature = objectValue(objectValue(call.extra_content)?.google)?.thought_signature
+    if (typeof signature === 'string') existing.thoughtSignature = signature
     calls.set(id, existing)
   }
 }

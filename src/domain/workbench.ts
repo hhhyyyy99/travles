@@ -8,69 +8,34 @@
  * Canonical read shapes (mirror of server/src/days/types.ts — the server
  * normalizes DB rows into these; the client re-normalizes defensively):
  *
- *   Day  { id, index, date, theme, color, items: Item[] }
+ *   Day  { id, tripId?, dayNumber?, index, date, title?, note?, theme, color, items: Item[] }
  *   Item { id, dayId, order, type: 'traffic'|'stay'|'attraction'|'food'|'other',
  *          title, note, poi: PoiRef | null, images: {url, caption}[], pending }
  *   Leg  { id, fromItemId, toItemId, mode, distanceKm, durationMin, polyline }
  */
 
+import { LegSchema, normalizeItemType, readActivityItemMetadata, type ItemTypeInput } from '@hailar/domain'
 import type { ApiResult, FetchLike, TripSummary } from './tripList'
 import { defaultFetch, normalizeTrip } from './tripList'
 
-export type ItemType = 'traffic' | 'stay' | 'attraction' | 'food' | 'other'
-
-export type PoiRef = {
-  amapId: string
-  name: string
-  lat: number
-  lng: number
-  address?: string
-  accommodationBaseId?: string
-  accommodationType?: 'area' | 'hotel'
-  accommodationNotes?: string
-  accommodationMigrationVersion?: number
-  category: string
-  rating: number
-  introSummary: string
-}
-
-export type ItemImage = { url: string; caption: string }
-
-export type WorkbenchItem = {
-  id: string
-  dayId: string
-  order: number
-  type: ItemType
-  title: string
-  note: string
-  poi: PoiRef | null
-  images: ItemImage[]
-  pending: boolean
-}
-
-export type LegQuality = 'reference' | 'estimate' | 'measured' | 'pending'
-
-export type WorkbenchDay = {
-  id: string
-  index: number
-  date: string
-  theme: string
-  color: string
-  items: WorkbenchItem[]
-}
-
-export type WorkbenchLeg = {
-  id: string
-  fromItemId: string
-  toItemId: string
-  mode: string
-  distanceKm: number
-  durationMin: number
-  /** WGS-84 [lng, lat][] driving geometry from the server; null → straight-line fallback. */
-  polyline: [number, number][] | null
-  /** Provenance of the leg metrics; omitted by older API fixtures. */
-  quality?: LegQuality
-}
+export type {
+  ItemType,
+  LegQuality,
+  PoiRef,
+  ItemImage,
+  ActivityItem as WorkbenchItem,
+  Day as WorkbenchDay,
+  Leg as WorkbenchLeg,
+} from '@hailar/domain'
+import type {
+  ItemType,
+  LegQuality,
+  PoiRef,
+  ItemImage,
+  ActivityItem as WorkbenchItem,
+  Day as WorkbenchDay,
+  Leg as WorkbenchLeg,
+} from '@hailar/domain'
 
 export type TripCanvasData = {
   trip: TripSummary
@@ -92,11 +57,11 @@ export const CANVAS_NETWORK_ERROR = '无法连接服务器，请确认后端服�
 // {ok:true,data} | {ok:false,error}, injectable FetchLike, never throws.
 // ---------------------------------------------------------------------------
 
-/** Optional payload for creating a day; omitted fields take server defaults. */
-export type WorkbenchDayInput = { date?: string; theme?: string; color?: string }
+/** Optional day fields; omitted metadata stays absent. */
+export type WorkbenchDayInput = Partial<Pick<WorkbenchDay, 'date' | 'theme' | 'color' | 'title' | 'note'>>
 
-/** Theme (and color) patch for an existing day. */
-export type WorkbenchDayPatch = { theme?: string; color?: string }
+/** Omitted fields preserve existing values; empty metadata strings clear them. */
+export type WorkbenchDayPatch = Partial<Pick<WorkbenchDay, 'theme' | 'color' | 'title' | 'note'>>
 
 /** Shared response handling for the three day-admin routes. */
 async function dayRequest(
@@ -143,7 +108,7 @@ export async function createWorkbenchDay(
   return { ok: true, data: day }
 }
 
-/** PATCH /api/trips/:id/days/:dayId — update a day's theme (and color). */
+/** PATCH /api/trips/:id/days/:dayId — update day metadata, theme or color. */
 export async function updateWorkbenchDay(
   tripId: string,
   dayId: string,
@@ -487,10 +452,13 @@ export type WorkbenchItemCreateInput = {
   poi?: PoiRef | null
   images?: ItemImage[]
   index?: number
-}
+} & Pick<WorkbenchItem, 'timeRange' | 'cost'>
+
+/** API input also accepts specification names; optimistic UI items stay canonical. */
+export type WorkbenchItemCreateRequest = Omit<WorkbenchItemCreateInput, 'type'> & { type?: ItemTypeInput }
 
 /** Field-edit patch for an existing card. */
-export type WorkbenchItemPatch = { title?: string; note?: string; images?: ItemImage[]; poi?: PoiRef | null }
+export type WorkbenchItemPatch = Partial<Pick<WorkbenchItem, 'title' | 'note' | 'images' | 'poi' | 'timeRange' | 'cost'>>
 
 /** Move/copy target: dayId omitted keeps the day; index omitted appends. */
 export type WorkbenchItemTarget = { dayId?: string; index?: number }
@@ -508,7 +476,7 @@ function parseItemMutation(data: unknown): ApiResult<ItemMutationData> {
 /** POST /api/trips/:id/items — create a card; the server assigns the id. */
 export async function createWorkbenchItem(
   tripId: string,
-  input: WorkbenchItemCreateInput,
+  input: WorkbenchItemCreateRequest,
   fetchLike: FetchLike = defaultFetch(),
 ): Promise<ApiResult<ItemMutationData>> {
   const result = await dayRequest(
@@ -670,17 +638,30 @@ export function applyItemPatch(days: WorkbenchDay[], itemId: string, patch: Part
   }))
 }
 
-/** Pure: replace the temp optimistic item with its persisted server version. */
+/** Pure: reconcile an optimistic item with server fields, keeping its local layout. */
 export function applyItemReplace(days: WorkbenchDay[], tempId: string, serverItem: WorkbenchItem): WorkbenchDay[] {
-  return applyItemPatch(days, tempId, {
-    id: serverItem.id,
-    title: serverItem.title,
-    note: serverItem.note,
-    poi: serverItem.poi,
-    images: serverItem.images,
-    type: serverItem.type,
-    pending: serverItem.pending,
-  })
+  if (!days.some((day) => day.items.some((item) => item.id === tempId))) return days
+  return days.map((day) => ({
+    ...day,
+    items: day.items.map((item) => {
+      if (item.id !== tempId) return item
+      const replacement: WorkbenchItem = {
+        ...item,
+        id: serverItem.id,
+        title: serverItem.title,
+        note: serverItem.note,
+        poi: serverItem.poi,
+        images: serverItem.images,
+        type: serverItem.type,
+        pending: serverItem.pending,
+      }
+      // The response is authoritative: an old/malformed response must not
+      // inherit metadata from a copied card or the optimistic request.
+      delete replacement.timeRange
+      delete replacement.cost
+      return { ...replacement, ...readActivityItemMetadata(serverItem) }
+    }),
+  }))
 }
 
 /**
@@ -721,8 +702,6 @@ export function tempItemId(prefix: string): string {
 // Tolerant normalization (mirror of the server's; guards against a drifted API)
 // ---------------------------------------------------------------------------
 
-const ITEM_TYPES: ItemType[] = ['traffic', 'stay', 'attraction', 'food', 'other']
-
 function normalizeDay(value: unknown): WorkbenchDay | null {
   if (value === null || typeof value !== 'object') return null
   const record = value as Record<string, unknown>
@@ -731,8 +710,15 @@ function normalizeDay(value: unknown): WorkbenchDay | null {
   const items = Array.isArray(record.items) ? record.items : []
   return {
     id,
+    // Preserve explicit projections independently; never derive them from layout.
+    ...(typeof record.tripId === 'string' ? { tripId: record.tripId } : {}),
+    ...(typeof record.dayNumber === 'number' && Number.isSafeInteger(record.dayNumber) && record.dayNumber > 0
+      ? { dayNumber: record.dayNumber }
+      : {}),
     index: finiteNumber(record.index),
     date: typeof record.date === 'string' ? record.date : '',
+    ...(Object.hasOwn(record, 'title') && typeof record.title === 'string' ? { title: record.title } : {}),
+    ...(Object.hasOwn(record, 'note') && typeof record.note === 'string' ? { note: record.note } : {}),
     theme: typeof record.theme === 'string' ? record.theme : '',
     color: typeof record.color === 'string' ? record.color : '',
     items: items.map(normalizeItem).filter((item): item is WorkbenchItem => item !== null),
@@ -744,13 +730,14 @@ function normalizeItem(value: unknown): WorkbenchItem | null {
   const record = value as Record<string, unknown>
   const id = typeof record.id === 'string' ? record.id : ''
   if (!id) return null
-  const type = typeof record.type === 'string' ? (record.type as ItemType) : 'other'
+  const type = normalizeItemType(record.type) ?? 'other'
   return {
     id,
     dayId: typeof record.dayId === 'string' ? record.dayId : '',
     order: finiteNumber(record.order),
-    type: ITEM_TYPES.includes(type) ? type : 'other',
+    type,
     title: typeof record.title === 'string' ? record.title : '',
+    ...readActivityItemMetadata(record),
     note: typeof record.note === 'string' ? record.note : '',
     poi: normalizePoi(record.poi),
     images: Array.isArray(record.images) ? record.images : [],
@@ -805,7 +792,22 @@ function normalizeLeg(value: unknown): WorkbenchLeg | null {
     durationMin,
     polyline,
     quality: normalizeWorkbenchLegQuality(record.quality, distanceKm, durationMin, polyline),
+    // Keep only explicitly supplied valid fields; never infer from old fallbacks.
+    ...normalizeLegMetricProjection(record),
   }
+}
+
+function normalizeLegMetricProjection(record: Record<string, unknown>): Pick<WorkbenchLeg, 'distanceMeters' | 'durationSeconds' | 'formattedDistance' | 'formattedDuration'> {
+  const result: Pick<WorkbenchLeg, 'distanceMeters' | 'durationSeconds' | 'formattedDistance' | 'formattedDuration'> = {}
+  const distance = LegSchema.shape.distanceMeters.safeParse(record.distanceMeters)
+  const duration = LegSchema.shape.durationSeconds.safeParse(record.durationSeconds)
+  const distanceText = LegSchema.shape.formattedDistance.safeParse(record.formattedDistance)
+  const durationText = LegSchema.shape.formattedDuration.safeParse(record.formattedDuration)
+  if (distance.success && distance.data !== undefined) result.distanceMeters = distance.data
+  if (duration.success && duration.data !== undefined) result.durationSeconds = duration.data
+  if (distanceText.success && distanceText.data !== undefined) result.formattedDistance = distanceText.data
+  if (durationText.success && durationText.data !== undefined) result.formattedDuration = durationText.data
+  return result
 }
 
 function normalizeWorkbenchLegQuality(

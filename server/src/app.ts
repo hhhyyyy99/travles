@@ -15,7 +15,7 @@ import { readTripCanvas } from './days/repository.js'
 import type { WorkbenchStoreDriver } from './days/types.js'
 import { DaysAdminRepository } from './days-admin/repository.js'
 import { createSqliteDaysAdminStore } from './days-admin/driver-sqlite.js'
-import type { DaysAdminStoreDriver } from './days-admin/types.js'
+import type { DaysAdminStoreDriver, DayThemeInput } from './days-admin/types.js'
 import { ItemsAdminRepository } from './items-admin/repository.js'
 import { createSqliteItemsAdminStore } from './items-admin/driver-sqlite.js'
 import type { ItemsAdminStoreDriver } from './items-admin/types.js'
@@ -49,6 +49,9 @@ import { TripEventHub } from './trip-events/hub.js'
 import { registerTripEventRoutes } from './trip-events/routes.js'
 import { synchronizeTripSchedule } from './trip-events/schedule.js'
 import { RouteLookupCache, routeAmapLeg } from './recommendations/route.js'
+import { registerGuideParsingRoutes } from './guide-parsing/routes.js'
+import type { GuideSourceDependencies } from './guide-parsing/source.js'
+import { registerGuideImportRoutes } from './guide-import/routes.js'
 
 export type AppEnv = {
   Bindings: HonoBindings
@@ -65,6 +68,8 @@ export type CreateAppOptions = {
   contentRepository?: TripContentRepository
   /** SQLite file URL for the default repository (env: TRIPS_DB_PATH). */
   databaseUrl?: string
+  /** Explicit transactional database for guide imports with injected repositories. */
+  guideImportDatabase?: SqlDatabase
   /**
    * Seed the built-in example trip (ticket 03) on startup. Defaults to true
    * only on the default production startup path (no injected repository, no
@@ -130,6 +135,8 @@ export type CreateAppOptions = {
   aiProviderStore?: AiProviderStoreDriver
   /** Injected provider probe (ticket 12; API tests avoid external services). */
   aiProviderProbe?: AiProviderProbe
+  /** Injected URL transport for guide parsing tests (destination checks still apply). */
+  guideSourceDependencies?: GuideSourceDependencies
   /** Injected route lookup; production uses the AMap driving API. */
   routeLegs?: import('./recommendations/types.js').RouteLegSearch
   /** Process-local fan-out bus for workbench near-real-time updates. */
@@ -202,11 +209,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     resolveTripPatchStore: resolveTripPatchStore,
     searchPoi: options.searchPoi ?? searchAmapPoi,
     routeLegs: options.routeLegs ?? routeAmapLeg,
+    guideSourceDependencies: options.guideSourceDependencies,
   })
   const memoryConfigured = options.plannerMemory !== undefined || !options.tripRepository
 
   const server = new MastraServer({ app, mastra })
   await server.init()
+  registerGuideParsingRoutes(app, mastra)
 
   // ---- Workbench canvas read (ticket 04, additive) --------------------------
   // Read-only day/item/leg reads for the three-column workbench. Resolved
@@ -295,6 +304,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
       await seedBuiltinTrip(sqlite.db)
     }
   }
+
+  registerGuideImportRoutes(app, () => options.guideImportDatabase ?? sharedDb)
 
   mountAiProviderRoutes(app, {
     repository: await resolveAiProviderRepository(),
@@ -495,33 +506,45 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     if (trip === null) return c.json({ error: '行程不存在' }, 404)
     // The body is optional for create-day (default: append after the last day).
     const body = (await readJsonBody(c)) ?? {}
-    const result = await new DaysAdminRepository(await resolveDaysAdminStore()).createDay(tripId, {
+    const store = await resolveDaysAdminStore()
+    const days = new DaysAdminRepository(store)
+    const result = await days.createDay(tripId, {
       date: body.date,
       theme: body.theme,
       color: body.color,
+      title: body.title,
+      note: body.note,
     })
     if (!result.ok) return tripError(c, result.error, result.code)
-    await synchronizeSchedule(tripId, await resolveDaysAdminStore(), true)
+    await synchronizeSchedule(tripId, store, true)
     notifyTrip(tripId, 'canvas', 'day_created')
-    return c.json({ day: result.day }, 201)
+    const refreshed = await days.getDay(tripId, result.day.id)
+    if (!refreshed.ok) return tripError(c, refreshed.error, refreshed.code)
+    return c.json({ day: refreshed.day }, 201)
   })
 
   app.patch('/api/trips/:id/days/:dayId', async (c) => {
     const tripId = c.req.param('id')
     const body = await readJsonBody(c)
     if (body === null) return c.json({ error: '请求体必须是有效的 JSON' }, 400)
-    const patch: { theme?: unknown; color?: unknown } = {}
+    const patch: DayThemeInput = {}
     if ('theme' in body) patch.theme = body.theme
     if ('color' in body) patch.color = body.color
-    const result = await new DaysAdminRepository(await resolveDaysAdminStore()).updateDay(
+    if ('title' in body) patch.title = body.title
+    if ('note' in body) patch.note = body.note
+    const store = await resolveDaysAdminStore()
+    const days = new DaysAdminRepository(store)
+    const result = await days.updateDay(
       tripId,
       c.req.param('dayId'),
       patch,
     )
     if (!result.ok) return tripError(c, result.error, result.code)
-    await synchronizeSchedule(tripId, await resolveDaysAdminStore(), true)
+    await synchronizeSchedule(tripId, store, true)
     notifyTrip(tripId, 'canvas', 'day_updated')
-    return c.json({ day: result.day })
+    const refreshed = await days.getDay(tripId, result.day.id)
+    if (!refreshed.ok) return tripError(c, refreshed.error, refreshed.code)
+    return c.json({ day: refreshed.day })
   })
 
   app.delete('/api/trips/:id/days/:dayId', async (c) => {
@@ -620,12 +643,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     if (await tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
     const body = await readJsonBody(c)
     if (body === null) return c.json({ error: '请求体必须是有效的 JSON' }, 400)
-    const patch: { title?: unknown; note?: unknown; images?: unknown; poi?: unknown } = {}
-    if ('title' in body) patch.title = body.title
-    if ('note' in body) patch.note = body.note
-    if ('images' in body) patch.images = body.images
-    if ('poi' in body) patch.poi = body.poi
-    if (patch.title === undefined && patch.note === undefined && patch.images === undefined && patch.poi === undefined) {
+    const patch: Record<string, unknown> = {}
+    for (const field of ['title', 'note', 'images', 'poi', 'timeRange', 'cost']) {
+      if (field in body) patch[field] = body[field]
+    }
+    if (Object.values(patch).every((value) => value === undefined)) {
       return c.json({ error: '没有可更新的字段' }, 400)
     }
     const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).updateItem(

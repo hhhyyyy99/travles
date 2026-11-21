@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { ArrowLeft, Check, CircleAlert, CircleHelp, KeyRound, List, Plus, Save, Server, Trash2, WandSparkles } from 'lucide-react'
+import { AI_PROVIDER_TEMPLATES } from '../domain/aiProviderTemplates'
 import {
   createAiProvider,
   deleteAiProvider,
@@ -30,7 +31,8 @@ type ProviderForm = {
 }
 
 const THINKING_OPTIONS: { value: ThinkingLevel; label: string }[] = [
-  { value: 'off', label: '关闭' },
+  // `off` omits the override; models with built-in thinking keep their default.
+  { value: 'off', label: '默认' },
   { value: 'low', label: '低' },
   { value: 'medium', label: '中' },
   { value: 'high', label: '高' },
@@ -51,6 +53,9 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
   const [providers, setProviders] = useState<AiProvider[]>([])
   const [form, setForm] = useState<ProviderForm>(EMPTY_FORM)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [templateId, setTemplateId] = useState('')
+  const selectedTemplate = AI_PROVIDER_TEMPLATES.find((template) => template.id === templateId)
+  const isKimiK3 = /(?:^|\/)kimi-k3(?:[.-]|$)/i.test(form.modelId.trim())
   const [loadError, setLoadError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -72,7 +77,26 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
 
   const beginNew = () => {
     setEditingId(null)
+    setTemplateId('')
     setForm({ ...EMPTY_FORM, isDefault: providers.length === 0 })
+    setProbe(null)
+    setModels([])
+    setModelOpen(false)
+    setActionError(null)
+    setNotice(null)
+  }
+
+  const applyTemplate = (id: string) => {
+    if (busy || editingId) return
+    const template = AI_PROVIDER_TEMPLATES.find((entry) => entry.id === id)
+    setTemplateId(template?.id ?? '')
+    setForm((current) => ({
+      ...EMPTY_FORM,
+      isDefault: current.isDefault,
+      ...(template ? { name: template.name, baseUrl: template.baseUrl, modelId: template.modelId, protocol: template.protocol } : {}),
+    }))
+    // A different endpoint must never inherit credentials, probe results or
+    // model choices from the previously selected service.
     setProbe(null)
     setModels([])
     setModelOpen(false)
@@ -82,6 +106,7 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
 
   const beginEdit = (provider: AiProvider) => {
     setEditingId(provider.id)
+    setTemplateId('')
     setForm({
       name: provider.name,
       baseUrl: provider.baseUrl,
@@ -126,6 +151,7 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
     if (!form.name.trim()) return '请填写配置名称。'
     if (!form.baseUrl.trim()) return '请填写 Base URL。'
     if (!form.modelId.trim()) return '请填写模型 ID。'
+    if (isKimiK3 && form.thinking === 'medium') return 'Kimi K3 不支持中档位，请选择默认、低或高。'
     if (!editingId && !form.apiKey.trim()) return '首次保存需要填写 API Key。'
     if (form.headersText.trim()) {
       try {
@@ -231,6 +257,7 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
     setProviders((current) => current.filter((item) => item.id !== provider.id))
     if (editingId === provider.id) {
       setEditingId(null)
+      setTemplateId('')
       setForm({ ...EMPTY_FORM, isDefault: providers.length === 1 })
       setProbe(null)
       setModels([])
@@ -321,6 +348,31 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
             </div>
           </div>
           <form id="ai-provider-form" className="mt-[18px] flex flex-col gap-[14px]" onSubmit={(event) => void handleSave(event)}>
+            {!editingId && (
+              <div>
+                <label htmlFor="ai-provider-template" className="block text-[12px] text-muted">服务商模板</label>
+                <select
+                  id="ai-provider-template"
+                  value={templateId}
+                  onChange={(event) => applyTemplate(event.target.value)}
+                  disabled={busy !== null}
+                  aria-describedby="ai-provider-template-help"
+                  className="mt-[6px] h-[44px] w-full rounded-[5px] border border-line bg-paper px-[10px] text-[13px] text-ink focus:border-green focus:outline-2 focus:outline-offset-2 focus:outline-green disabled:opacity-50"
+                >
+                  <option value="">自定义（手动填写）</option>
+                  {AI_PROVIDER_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+                </select>
+                <p id="ai-provider-template-help" className="mt-[7px] text-[12px] leading-[1.7] text-muted">
+                  模板预填连接信息，仍可手动修改。切换会清空未保存的密钥和请求头。
+                </p>
+                {selectedTemplate && (
+                  <p className="mt-[5px] text-[12px] leading-[1.7] text-muted">
+                    {selectedTemplate.guidance}{' '}
+                    <a href={selectedTemplate.documentationUrl} target="_blank" rel="noreferrer" className="text-green underline underline-offset-2">接入文档</a>
+                  </p>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-[12px] max-[560px]:grid-cols-1">
               <Field label="配置名称" htmlFor="ai-provider-name"><input id="ai-provider-name" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="例如：公司模型网关" maxLength={100} /></Field>
               <Field label="模型 ID" htmlFor="ai-provider-model">
@@ -348,6 +400,8 @@ export default function AiSettingsPage({ onBack }: { onBack: () => void }) {
                 {THINKING_OPTIONS.map((option) => (
                   <ProtocolOption
                     key={option.value}
+                    name="ai-provider-thinking"
+                    disabled={isKimiK3 && option.value === 'medium'}
                     id={`ai-provider-thinking-${option.value}`}
                     checked={form.thinking === option.value}
                     onChange={() => setForm((current) => ({ ...current, thinking: option.value }))}
@@ -447,8 +501,8 @@ function ModelCombobox({ id, models, value, onChange, open, setOpen }: {
   )
 }
 
-function ProtocolOption({ id, checked, onChange, label }: { id: string; checked: boolean; onChange: () => void; label: string }) {
-  return <label className={`flex h-[38px] cursor-pointer items-center gap-[7px] rounded-[5px] border px-[10px] text-[12px] ${checked ? 'border-green bg-[#e9f0eb] text-green' : 'border-line text-muted'}`}><input id={id} type="radio" name="ai-provider-protocol" checked={checked} onChange={onChange} />{label}</label>
+function ProtocolOption({ id, name = 'ai-provider-protocol', checked, disabled = false, onChange, label }: { id: string; name?: string; checked: boolean; disabled?: boolean; onChange: () => void; label: string }) {
+  return <label className={`flex h-[38px] items-center gap-[7px] rounded-[5px] border px-[10px] text-[12px] ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${checked ? 'border-green bg-[#e9f0eb] text-green' : 'border-line text-muted'}`}><input id={id} type="radio" name={name} checked={checked} disabled={disabled} onChange={onChange} />{label}</label>
 }
 
 function CapabilityStatus({ capabilities, ok }: { capabilities: ProviderCapabilities; ok: boolean }) {

@@ -11,14 +11,14 @@ export class SqliteTripStoreDriver implements TripStoreDriver {
 
   async listTripRows(): Promise<TripRow[]> {
     const { rows } = await this.db.run(
-      'SELECT id, title, start_date, end_date, planning_context, created_at, updated_at FROM trips ORDER BY created_at ASC, id ASC',
+      'SELECT id, title, start_date, end_date, planning_context, cover_image, is_pinned, status, created_at, updated_at FROM trips ORDER BY created_at ASC, id ASC',
     )
     return rows as unknown as TripRow[]
   }
 
   async getTripRow(id: string): Promise<TripRow | null> {
     const { rows } = await this.db.run(
-      'SELECT id, title, start_date, end_date, planning_context, created_at, updated_at FROM trips WHERE id = ?',
+      'SELECT id, title, start_date, end_date, planning_context, cover_image, is_pinned, status, created_at, updated_at FROM trips WHERE id = ?',
       [id],
     )
     return (rows[0] as TripRow | undefined) ?? null

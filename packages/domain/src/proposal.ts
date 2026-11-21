@@ -1,0 +1,78 @@
+/**
+ * Existing AI proposal tool and HTTP request validators, shared unchanged.
+ * Route-specific requirements (parse items, optimization scope) stay server-side.
+ */
+import { z } from 'zod'
+import { tripPatchInputSchema } from './trip-patch.js'
+import { ActivityItemMetadataSchema, ItemTypeInputSchema } from './trip.js'
+
+const poiSchema = z
+  .object({
+    name: z.string().min(1).max(60),
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+    amapId: z.string().max(64).optional(),
+    address: z.string().max(500).optional(),
+    category: z.string().max(30).optional(),
+    rating: z.number().min(0).max(5).optional(),
+    introSummary: z.string().max(1000).optional(),
+    accommodationBaseId: z.string().max(200).optional(),
+    accommodationType: z.enum(['area', 'hotel']).optional(),
+    accommodationNotes: z.string().max(2000).optional(),
+    accommodationMigrationVersion: z.number().int().positive().max(100).optional(),
+  })
+  .nullable()
+  .optional()
+
+export const proposalItemSchema = z.object({
+  ...ActivityItemMetadataSchema.shape,
+  itemId: z.string().trim().min(1).max(64),
+  dayId: z.string().trim().min(1).max(64),
+  order: z.number().int().min(0).optional(),
+  type: ItemTypeInputSchema,
+  title: z.string().trim().min(1).max(80),
+  note: z.string().max(500).optional(),
+  pending: z.boolean().optional(),
+  poi: poiSchema,
+  legPending: z.boolean().optional(),
+})
+
+export const proposalChangeSchema = z.object({
+  action: z.enum(['add', 'update', 'move', 'remove']),
+  label: z.string().trim().min(1).max(120),
+  detail: z.string().max(500).optional(),
+  itemId: z.string().trim().min(1).max(64).optional(),
+  dayId: z.string().trim().min(1).max(64).optional(),
+  fromDayId: z.string().trim().min(1).max(64).optional(),
+  toDayId: z.string().trim().min(1).max(64).optional(),
+})
+
+export const proposalToolInputSchema = z.object({
+  kind: z.enum(['parse', 'optimize', 'day-optimize']),
+  title: z.string().trim().min(1).max(120),
+  summary: z.string().trim().min(1).max(1000),
+  diff: z.array(proposalChangeSchema).min(1).max(100),
+  patch: tripPatchInputSchema,
+  items: z.array(proposalItemSchema).max(200).optional(),
+  targetDayId: z.string().trim().min(1).max(64).optional(),
+})
+
+export const proposalRequestSchema = z.object({
+  kind: z.enum(['parse', 'optimize', 'day-optimize']),
+  text: z.string().trim().max(20000).optional(),
+  dayId: z.string().trim().min(1).max(64).optional(),
+})
+
+/** Stored/API proposal metadata is added after the model input is validated. */
+export const AiProposalSchema = proposalToolInputSchema.extend({
+  id: z.string(),
+  tripId: z.string(),
+  createdAt: z.string(),
+})
+
+export type ProposalItem = z.infer<typeof proposalItemSchema>
+export type ProposalChange = z.infer<typeof proposalChangeSchema>
+export type ProposalToolInput = z.infer<typeof proposalToolInputSchema>
+export type ProposalRequest = z.infer<typeof proposalRequestSchema>
+export type ProposalKind = ProposalToolInput['kind']
+export type AiProposal = z.infer<typeof AiProposalSchema>

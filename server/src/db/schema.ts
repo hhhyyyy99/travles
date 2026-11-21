@@ -28,8 +28,17 @@ export const SCHEMA_STATEMENTS: string[] = [
     owner TEXT,
     share_token TEXT,
     planning_context TEXT,
+    cover_image TEXT,
+    is_pinned INTEGER,
+    status TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+  )`,
+  // Keep the import receipt after a trip is deleted so a stale retry cannot recreate it.
+  `CREATE TABLE IF NOT EXISTS guide_imports (
+    import_id TEXT PRIMARY KEY,
+    payload_hash TEXT NOT NULL,
+    trip_id TEXT NOT NULL UNIQUE
   )`,
   `CREATE TABLE IF NOT EXISTS days (
     id TEXT PRIMARY KEY,
@@ -37,7 +46,9 @@ export const SCHEMA_STATEMENTS: string[] = [
     idx INTEGER NOT NULL,
     date TEXT,
     theme TEXT,
-    color TEXT
+    color TEXT,
+    title TEXT,
+    note TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS items (
     id TEXT PRIMARY KEY,
@@ -47,6 +58,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     type TEXT NOT NULL DEFAULT 'other',
     title TEXT NOT NULL DEFAULT '',
     note TEXT,
+    time_range TEXT,
+    cost TEXT,
     poi TEXT,
     images TEXT,
     pending INTEGER NOT NULL DEFAULT 0
@@ -180,9 +193,33 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
   } catch {
     // The column already exists on fresh databases or after a prior run.
   }
+  // Optional metadata stays NULL on old rows, with no backfill or table rebuild.
+  // Inspect and recheck so concurrent startup is safe and real failures propagate.
+  for (const [name, type] of [['cover_image', 'TEXT'], ['is_pinned', 'INTEGER'], ['status', 'TEXT']] as const) {
+    await ensureColumn(db, 'trips', name, type)
+  }
+  for (const name of ['title', 'note']) {
+    await ensureColumn(db, 'days', name, 'TEXT')
+  }
+  for (const name of ['time_range', 'cost']) {
+    await ensureColumn(db, 'items', name, 'TEXT')
+  }
   try {
     await db.run('ALTER TABLE legs ADD COLUMN quality TEXT')
   } catch {
     // The column already exists on fresh databases or after a prior run.
+  }
+}
+
+/** Identifiers come only from the fixed migration declarations above. */
+async function ensureColumn(db: SqlDatabase, table: string, name: string, type: string): Promise<void> {
+  const { rows: columns } = await db.run(`PRAGMA table_info(${table})`)
+  if (columns.some((column) => column.name === name)) return
+  try {
+    await db.run(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`)
+  } catch (error) {
+    // Another connection may have added it after our initial inspection.
+    const { rows } = await db.run(`PRAGMA table_info(${table})`)
+    if (!rows.some((column) => column.name === name)) throw error
   }
 }

@@ -1,45 +1,12 @@
 /** Client codec for ticket 13's preview → confirm → TripPatch flow. */
+import { normalizeItemType, readActivityItemMetadata, type AiProposal as SharedAiProposal, type ProposalItem, type ProposalChange, type ProposalRequest } from '@hailar/domain'
 import type { ApiResult, FetchLike } from './tripList'
 import { defaultFetch } from './tripList'
 
-export type ProposalKind = 'parse' | 'optimize' | 'day-optimize'
+export type { ProposalKind, ProposalItem, ProposalChange, ProposalRequest } from '@hailar/domain'
 
-export type ProposalItem = {
-  itemId: string
-  dayId: string
-  order?: number
-  type: 'traffic' | 'stay' | 'attraction' | 'food' | 'other'
-  title: string
-  note?: string
-  pending?: boolean
-  poi?: { name: string; lat: number; lng: number; amapId?: string; category?: string; rating?: number } | null
-  legPending?: boolean
-}
-
-export type ProposalChange = {
-  action: 'add' | 'update' | 'move' | 'remove'
-  label: string
-  detail?: string
-  itemId?: string
-  dayId?: string
-  fromDayId?: string
-  toDayId?: string
-}
-
-export type AiProposal = {
-  id: string
-  tripId: string
-  kind: ProposalKind
-  title: string
-  summary: string
-  diff: ProposalChange[]
-  patch: unknown
-  items?: ProposalItem[]
-  targetDayId?: string
-  createdAt: string
-}
-
-export type ProposalRequest = { kind: ProposalKind; text?: string; dayId?: string }
+/** The tolerant preview decoder checks the patch envelope; the server validates its operations. */
+export type AiProposal = Omit<SharedAiProposal, 'patch'> & { patch: unknown }
 
 export type ProposalAppliedPatch = {
   summary: string
@@ -190,19 +157,21 @@ function normalizePatch(raw: unknown): { ops: unknown[] } | null {
 function normalizeProposalItem(raw: unknown): ProposalItem | null {
   if (raw === null || typeof raw !== 'object') return null
   const item = raw as Record<string, unknown>
+  const type = normalizeItemType(item.type)
   if (
     typeof item.itemId !== 'string' || item.itemId.trim() === '' ||
     typeof item.dayId !== 'string' || item.dayId.trim() === '' ||
     typeof item.title !== 'string' || item.title.trim() === '' ||
-    !['traffic', 'stay', 'attraction', 'food', 'other'].includes(String(item.type))
+    type === undefined
   ) return null
   const poi = normalizeProposalPoi(item.poi)
   return {
     itemId: item.itemId.trim(),
     dayId: item.dayId.trim(),
     ...(typeof item.order === 'number' && Number.isInteger(item.order) && item.order >= 0 ? { order: item.order } : {}),
-    type: item.type as ProposalItem['type'],
+    type,
     title: item.title.trim(),
+    ...readActivityItemMetadata(item),
     ...(typeof item.note === 'string' ? { note: item.note.trim() } : {}),
     ...(typeof item.pending === 'boolean' ? { pending: item.pending } : {}),
     ...(poi !== undefined ? { poi } : {}),

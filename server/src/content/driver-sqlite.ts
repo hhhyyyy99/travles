@@ -3,6 +3,8 @@
  * access over the same `SqlDatabase` seam as the trips driver. Upserts are
  * keyed by row id (the idempotency mechanism for the seed + migration).
  */
+import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
+import { ContentItemIdConflictError } from './types.js'
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { ChecklistRow, ChecklistUpsert, ContentStoreDriver, DayRow, ItemRow, ItemUpsert } from './types.js'
 
@@ -10,13 +12,13 @@ export class SqliteContentStoreDriver implements ContentStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
 
   async listDayRows(tripId: string): Promise<DayRow[]> {
-    const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color FROM days WHERE trip_id = ? ORDER BY idx ASC, id ASC', [tripId])
+    const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ? ORDER BY idx ASC, id ASC', [tripId])
     return rows as unknown as DayRow[]
   }
 
   async listItemRows(tripId: string): Promise<ItemRow[]> {
     const { rows } = await this.db.run(
-      'SELECT id, trip_id, day_id, item_order, type, title, note, poi, images, pending FROM items WHERE trip_id = ? ORDER BY day_id ASC, item_order ASC, id ASC',
+      'SELECT id, trip_id, day_id, item_order, type, title, note, time_range, cost, poi, images, pending FROM items WHERE trip_id = ? ORDER BY day_id ASC, item_order ASC, id ASC',
       [tripId],
     )
     return rows as unknown as ItemRow[]
@@ -33,14 +35,22 @@ export class SqliteContentStoreDriver implements ContentStoreDriver {
   }
 
   async upsertItemRow(tripId: string, item: ItemUpsert): Promise<void> {
-    await this.db.run(
-      `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, poi, pending)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    const metadata = ActivityItemMetadataSchema.parse(item)
+    if (!(await this.dayExists(tripId, item.dayId))) {
+      throw new Error(`day ${item.dayId} does not belong to trip ${tripId}`)
+    }
+    const result = await this.db.run(
+      `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, time_range, cost, poi, pending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
-         trip_id = excluded.trip_id, day_id = excluded.day_id, item_order = excluded.item_order,
-         type = excluded.type, title = excluded.title, note = excluded.note, poi = excluded.poi, pending = excluded.pending`,
-      [item.id, tripId, item.dayId, item.itemOrder, item.type, item.title, item.note, item.poiJson ?? null, item.pending ? 1 : 0] as SqlValue[],
+         day_id = excluded.day_id, item_order = excluded.item_order,
+         type = excluded.type, title = excluded.title, note = excluded.note, poi = excluded.poi, pending = excluded.pending
+         ${metadata.timeRange !== undefined ? ', time_range = excluded.time_range' : ''}
+         ${metadata.cost !== undefined ? ', cost = excluded.cost' : ''}
+       WHERE items.trip_id = excluded.trip_id`,
+      [item.id, tripId, item.dayId, item.itemOrder, normalizeItemType(item.type) ?? item.type, item.title, item.note, metadata.timeRange ?? null, metadata.cost ?? null, item.poiJson ?? null, item.pending ? 1 : 0] as SqlValue[],
     )
+    if (result.rowsAffected === 0) throw new ContentItemIdConflictError(item.id)
   }
 
   async upsertChecklistRow(tripId: string, entry: ChecklistUpsert): Promise<void> {

@@ -6,22 +6,14 @@
  * rows cannot take the workbench down.
  */
 
-export type RecommendationOrigin = 'recommend' | 'favorite'
-
-export type RecommendationPoi = {
-  id: string
-  amapId: string
-  name: string
-  lat: number
-  lng: number
-  category: string
-  type: 'attraction' | 'food' | 'stay' | 'other'
-  region: string
-  rating: number
-  introSummary: string
-  address: string
-  images: Array<{ url: string; caption: string }>
-}
+import type { RecommendationOrigin, RecommendationPoi } from '@hailar/domain'
+export type {
+  FavoriteItem,
+  RecommendationOrigin,
+  RecommendationPoi,
+  RecommendationsSnapshot,
+  StashItem,
+} from '@hailar/domain'
 
 export interface StashRow {
   id: unknown
@@ -66,28 +58,12 @@ export type RecommendationWriteResult<T = unknown> =
   | { ok: true; value: T }
   | { ok: false; error: string; code: RecommendationsErrorCode }
 
-export type StashItem = {
-  id: string
-  poi: RecommendationPoi
-  origin: RecommendationOrigin
-  addedAt: string
-}
-
-export type FavoriteItem = {
-  id: string
-  poi: RecommendationPoi
-  createdAt: string
-}
-
-export type RecommendationsSnapshot = {
-  stash: StashItem[]
-  favorites: FavoriteItem[]
-}
-
 export type PoiSearchInput = {
   query: string
   region?: string
   type?: RecommendationPoi['type'] | null
+  /** Optional caller deadline for bounded background matching. */
+  signal?: AbortSignal
 }
 
 export type PoiSearch = (input: PoiSearchInput) => Promise<RecommendationPoi[]>

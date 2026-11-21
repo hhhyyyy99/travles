@@ -40,6 +40,8 @@ export class MemoryDaysAdminStoreDriver implements DaysAdminStoreDriver {
       date: row.date,
       theme: row.theme,
       color: row.color,
+      title: row.title ?? null,
+      note: row.note ?? null,
     })
   }
 
@@ -51,6 +53,8 @@ export class MemoryDaysAdminStoreDriver implements DaysAdminStoreDriver {
       ...existing,
       theme: patch.theme !== undefined ? patch.theme : existing.theme,
       color: patch.color !== undefined ? patch.color : existing.color,
+      title: patch.title !== undefined ? patch.title : existing.title,
+      note: patch.note !== undefined ? patch.note : existing.note,
     })
   }
 

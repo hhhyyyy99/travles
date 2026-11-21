@@ -11,30 +11,8 @@
  * default 4310); in production the deployment is expected to be same-origin.
  */
 
-export type TripSummary = {
-  id: string
-  title: string
-  startDate: string
-  endDate: string
-  days: number
-  nights: number
-  createdAt: string
-  updatedAt: string
-  durationDays?: number
-  dateStatus?: TripDateStatus
-  planningContext?: TripPlanningContext
-}
-
-export type TripDateStatus = 'confirmed' | 'unspecified' | 'tentative'
-
-export type TripPlanningContext = {
-  destination: string
-  durationDays: number
-  preferences: string
-  originalSentence: string
-  dateStatus: TripDateStatus
-  datePhrase?: string
-}
+export type { TripSummary, TripDateStatus, TripPlanningContext } from '@hailar/domain'
+import type { TripSummary, TripPlanningContext } from '@hailar/domain'
 
 export type TripFormInput = { title: string; startDate: string; endDate: string }
 export type TripIntakeInput = { sentence: string }
@@ -240,6 +218,14 @@ export function normalizeTrip(value: unknown): TripSummary | null {
     nights,
     createdAt: typeof record.createdAt === 'string' ? record.createdAt : '',
     updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : '',
+    ...(typeof record.coverImage === 'string' ? { coverImage: record.coverImage } : {}),
+    ...(typeof record.isPinned === 'boolean' ? { isPinned: record.isPinned } : {}),
+    ...(typeof record.status === 'string' ? { status: record.status } : {}),
+    // Read only explicit projections from the server; older responses stay as-is.
+    ...(typeof record.destination === 'string' ? { destination: record.destination } : {}),
+    ...(typeof record.daysCount === 'number' && Number.isSafeInteger(record.daysCount) && record.daysCount > 0
+      ? { daysCount: record.daysCount }
+      : {}),
     ...(planningContext
       ? {
           durationDays: planningContext.durationDays,
@@ -261,5 +247,6 @@ function normalizePlanningContext(value: unknown): TripPlanningContext | null {
   if (!destination || !preferences || !originalSentence || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 60) return null
   if (dateStatus !== 'confirmed' && dateStatus !== 'unspecified' && dateStatus !== 'tentative') return null
   const datePhrase = typeof record.datePhrase === 'string' && record.datePhrase.trim() ? record.datePhrase.trim() : undefined
-  return { destination, durationDays, preferences, originalSentence, dateStatus, ...(datePhrase ? { datePhrase } : {}) }
+  return { destination, durationDays, preferences, originalSentence, dateStatus, ...(datePhrase ? { datePhrase } : {}),
+      ...(record.source === 'guide' || record.source === 'intake' ? { source: record.source } : {}) }
 }

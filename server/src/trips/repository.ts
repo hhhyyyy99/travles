@@ -150,20 +150,17 @@ export class TripRepository {
       return { ok: false, error: '保存失败', code: 'storage' }
     }
 
-    return {
-      ok: true,
-      trip: {
-        ...existing,
-        title: (nextTitle as string).trim(),
-        startDate: nextStart as string,
-        endDate: nextEnd as string,
-        ...computeDaysNights(nextStart as string, nextEnd as string),
-        updatedAt,
-        ...(nextPlanningContext
-          ? { durationDays: nextPlanningContext.durationDays, dateStatus: nextPlanningContext.dateStatus, planningContext: nextPlanningContext }
-          : {}),
-      },
-    }
+    // Use the same projection as subsequent GET/list/canvas reads, including
+    // when a new date range makes the original planned duration stale.
+    const trip = mapRowToSummary({
+      ...current,
+      title: (nextTitle as string).trim(),
+      start_date: nextStart,
+      end_date: nextEnd,
+      updated_at: updatedAt,
+      planning_context: nextPlanningContext ? JSON.stringify(nextPlanningContext) : null,
+    })
+    return trip === null ? { ok: false, error: '保存失败', code: 'storage' } : { ok: true, trip }
   }
 
   /** Delete; child tables (days/items/…) cascade via FK. */
@@ -185,15 +182,32 @@ export function mapRowToSummary(row: TripRow): TripSummary | null {
   const startDate = asText(row?.start_date)
   const endDate = asText(row?.end_date)
   const context = mapPlanningContext(row?.planning_context)
+  const schedule = computeDaysNights(startDate, endDate)
+  // Dated schedules use their actual span even when the intake duration is stale.
+  // Intake/guide drafts store empty dates and 0 days, so only those pending
+  // schedules use the validated planned duration (as formatTripSchedule does).
+  // Non-text stored dates also normalize to '', but are corrupt, not undated.
+  const daysCount = schedule.days > 0
+    ? schedule.days
+    : !startDate && !endDate &&
+        (row.start_date == null || typeof row.start_date === 'string') &&
+        (row.end_date == null || typeof row.end_date === 'string') &&
+        (context?.dateStatus === 'unspecified' || context?.dateStatus === 'tentative')
+      ? context.durationDays
+      : undefined
   return {
     id,
     title: asText(row?.title),
     startDate,
     endDate,
-    ...computeDaysNights(startDate, endDate),
+    ...schedule,
+    ...(daysCount !== undefined ? { daysCount } : {}),
     createdAt: asTimestamp(row?.created_at),
     updatedAt: asTimestamp(row?.updated_at),
-    ...(context ? { durationDays: context.durationDays, dateStatus: context.dateStatus, planningContext: context } : {}),
+    ...(typeof row.cover_image === 'string' ? { coverImage: row.cover_image } : {}),
+    ...(row.is_pinned === 0 || row.is_pinned === 1 ? { isPinned: row.is_pinned === 1 } : {}),
+    ...(typeof row.status === 'string' ? { status: row.status } : {}),
+    ...(context ? { destination: context.destination, durationDays: context.durationDays, dateStatus: context.dateStatus, planningContext: context } : {}),
   }
 }
 
@@ -209,7 +223,8 @@ function mapPlanningContext(value: unknown): TripPlanningContext | null {
     if (!destination || !originalSentence || !preferences || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 60) return null
     if (dateStatus !== 'confirmed' && dateStatus !== 'unspecified' && dateStatus !== 'tentative') return null
     const datePhrase = typeof record.datePhrase === 'string' && record.datePhrase.trim() ? record.datePhrase.trim() : undefined
-    return { destination, durationDays, preferences, originalSentence, dateStatus, ...(datePhrase ? { datePhrase } : {}) }
+    return { destination, durationDays, preferences, originalSentence, dateStatus, ...(datePhrase ? { datePhrase } : {}),
+      ...(record.source === 'guide' || record.source === 'intake' ? { source: record.source } : {}) }
   } catch {
     return null
   }

@@ -12,9 +12,12 @@
  */
 import { randomUUID } from 'node:crypto'
 import { isValidDateString } from '../trips/dates.js'
+import { projectDayIdentity } from '../days/projections.js'
+import { DayMetadataSchema, readDayMetadata } from '../days/metadata.js'
 import type { DayRow } from '../days/types.js'
 import type {
   AdminDay,
+  DayCreateInput,
   DayDeleteResult,
   DayInsert,
   DaysAdminErrorCode,
@@ -31,6 +34,20 @@ const MAX_COLOR_LENGTH = 32
 export class DaysAdminRepository {
   constructor(private readonly driver: DaysAdminStoreDriver) {}
 
+  /** Re-read the authoritative day after schedule synchronization changes idx/date. */
+  async getDay(tripId: string, dayId: string): Promise<DayWriteResult> {
+    let row: DayRow | null
+    try {
+      row = await this.driver.getDayRow(dayId)
+    } catch {
+      return { ok: false, error: '读取日程失败', code: 'storage' }
+    }
+    if (!row || asText(row.id) !== dayId || asText(row.trip_id) !== tripId) {
+      return { ok: false, error: '日程不存在', code: 'not_found' }
+    }
+    return { ok: true, day: mapAdminDay(row, tripId) }
+  }
+
   /**
    * Append a day to the trip. With no payload the new day lands after the
    * current last day (idx = max+1, date = latest date + 1 calendar day or
@@ -38,7 +55,7 @@ export class DaysAdminRepository {
    */
   async createDay(
     tripId: string,
-    input: { date?: unknown; theme?: unknown; color?: unknown } = {},
+    input: DayCreateInput = {},
   ): Promise<DayWriteResult> {
     let rows: DayRow[]
     try {
@@ -62,7 +79,11 @@ export class DaysAdminRepository {
     const colorResult = readTextField(input.color, MAX_COLOR_LENGTH, '颜色')
     if (!colorResult.ok) return colorResult
 
+    const metadata = DayMetadataSchema.safeParse(input)
+    if (!metadata.success) return { ok: false, error: '日程标题和备注必须是字符串', code: 'invalid' }
+
     const row: DayInsert = {
+      ...readDayMetadata(metadata.data),
       id: randomUUID(),
       tripId,
       idx: nextIndexAfter(rows),
@@ -75,10 +96,10 @@ export class DaysAdminRepository {
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
     }
-    return { ok: true, day: mapAdminDay(row) }
+    return { ok: true, day: mapAdminDay(row, tripId) }
   }
 
-  /** Update a day's theme and/or color. Unknown day / foreign trip → not_found. */
+  /** Update a day's metadata, theme, or color. Unknown/foreign day → not_found. */
   async updateDay(tripId: string, dayId: string, patch: DayThemeInput): Promise<DayWriteResult> {
     let row: DayRow | null
     try {
@@ -90,7 +111,9 @@ export class DaysAdminRepository {
       return { ok: false, error: '日程不存在', code: 'not_found' }
     }
 
-    const nextPatch: DayThemePatch = {}
+    const metadata = DayMetadataSchema.safeParse(patch)
+    if (!metadata.success) return { ok: false, error: '日程标题和备注必须是字符串', code: 'invalid' }
+    const nextPatch: DayThemePatch = readDayMetadata(metadata.data)
     if (patch.theme !== undefined) {
       const themeResult = readTextField(patch.theme, MAX_THEME_LENGTH, '主题')
       if (!themeResult.ok) return themeResult
@@ -101,7 +124,7 @@ export class DaysAdminRepository {
       if (!colorResult.ok) return colorResult
       nextPatch.color = colorResult.value
     }
-    if (nextPatch.theme === undefined && nextPatch.color === undefined) {
+    if (Object.keys(nextPatch).length === 0) {
       return { ok: false, error: '没有可更新的字段', code: 'invalid' }
     }
 
@@ -114,9 +137,8 @@ export class DaysAdminRepository {
       ok: true,
       day: mapAdminDay({
         ...row,
-        theme: nextPatch.theme ?? row.theme,
-        color: nextPatch.color ?? row.color,
-      }),
+        ...nextPatch,
+      }, tripId),
     }
   }
 
@@ -154,10 +176,12 @@ export class DaysAdminRepository {
 // ---------------------------------------------------------------------------
 
 /** 容错 row → AdminDay (canvas-day shape with an empty items list). */
-function mapAdminDay(row: DayInsert | DayRow): AdminDay {
+function mapAdminDay(row: DayInsert | DayRow, tripId: string): AdminDay {
   const source = row as unknown as Record<string, unknown>
   return {
     id: typeof source.id === 'string' ? source.id : '',
+    ...projectDayIdentity('tripId' in source ? source.tripId : source.trip_id, source.idx, tripId),
+    ...readDayMetadata(source),
     index: nextIndexFrom(source.idx),
     date: typeof source.date === 'string' ? source.date : '',
     theme: typeof source.theme === 'string' ? source.theme : '',

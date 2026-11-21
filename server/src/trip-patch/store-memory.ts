@@ -4,6 +4,7 @@
  * Rows are plain objects shaped like the SQLite rows (snake_case, tolerant
  * `unknown` field values) so read mapping behaves identically.
  */
+import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
 import type {
   DayRow,
   ItemRow,
@@ -102,9 +103,15 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       existing.idx = day.idx
       existing.date = day.date
       existing.theme = day.theme
+      if (day.title !== undefined) existing.title = day.title
+      if (day.note !== undefined) existing.note = day.note
       return
     }
-    this.dayRows.push({ id: day.id, trip_id: tripId, idx: day.idx, date: day.date, theme: day.theme, color: '' })
+    this.dayRows.push({
+      id: day.id, trip_id: tripId, idx: day.idx, date: day.date, theme: day.theme, color: '',
+      ...(day.title !== undefined ? { title: day.title } : {}),
+      ...(day.note !== undefined ? { note: day.note } : {}),
+    })
   }
 
   async deleteDayRow(tripId: string, dayId: string): Promise<void> {
@@ -128,6 +135,7 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
   }
 
   async upsertItemRow(tripId: string, item: TripPatchItemUpsert): Promise<void> {
+    const metadata = ActivityItemMetadataSchema.parse(item)
     const owner = await this.getItemTripId(item.id)
     if (owner !== null && owner !== tripId) throw new TripPatchIdConflictError('item', item.id, owner)
     const dayOwner = await this.getDayTripId(item.dayId)
@@ -136,11 +144,13 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
     if (existing) {
       existing.day_id = item.dayId
       existing.item_order = item.itemOrder
-      existing.type = item.type
+      existing.type = normalizeItemType(item.type) ?? item.type
       existing.title = item.title
       existing.note = item.note
       existing.poi = item.poi
       existing.pending = item.pending ? 1 : 0
+      if (metadata.timeRange !== undefined) existing.time_range = metadata.timeRange
+      if (metadata.cost !== undefined) existing.cost = metadata.cost
       return
     }
     this.itemRows.push({
@@ -148,12 +158,14 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       trip_id: tripId,
       day_id: item.dayId,
       item_order: item.itemOrder,
-      type: item.type,
+      type: normalizeItemType(item.type) ?? item.type,
       title: item.title,
       note: item.note,
       poi: item.poi,
       images: null,
       pending: item.pending ? 1 : 0,
+      time_range: metadata.timeRange ?? null,
+      cost: metadata.cost ?? null,
     })
   }
 

@@ -1,0 +1,98 @@
+{
+  "capturedAt": "2026-11-13T01:53:36.086Z",
+  "mode": "dev",
+  "baselineRevision": "7d8c15a2145b104e6539ef783498f58d1a113e9d",
+  "applicationRevision": "a10a8e55fc8edfc4710ba057d670e0323b438ae7",
+  "scenario": "Real React/Vite home screen with the same isolated empty SQLite backend, light theme and viewport. No mocked HTML, CSS, or DOM.",
+  "externalServices": "The existing deterministic backend injects model/POI responses; these home captures make no model or POI calls. External browser requests are blocked.",
+  "captures": [
+    {
+      "file": "before-home-desktop.png",
+      "revision": "7d8c15a2145b104e6539ef783498f58d1a113e9d",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "deviceScaleFactor": 1,
+      "theme": "light",
+      "state": "empty trip list; AI creation selected; blank input; no guide draft",
+      "sha256": "9e19d3583f2a40b3272b7fc8c567fda0ee8b02591c9937daa93861036ee6d2d3",
+      "pageErrors": [],
+      "rendered": {
+        "width": 1440,
+        "height": 1100,
+        "scrollWidth": 1440,
+        "colorScheme": "light",
+        "themeClasses": "",
+        "text": "草原之间\n旅行工作台 / 行程列表\n示例行程 · 呼伦贝尔指南\n\nMY TRIPS · 行程管理\n\n每一次慢慢走的出发。\n一句话开始规划\n开始规划\n行程标题\n开始日期\n结束日期\n创建行程\n选择起止日期后自动计算天数与晚数\n\n还没有行程 —— 从上面创建第一个吧。"
+      },
+      "browser": "157.0.8103.51"
+    },
+    {
+      "file": "after-home-desktop.png",
+      "revision": "a10a8e55fc8edfc4710ba057d670e0323b438ae7",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "deviceScaleFactor": 1,
+      "theme": "light",
+      "state": "empty trip list; AI creation selected; blank input; no guide draft",
+      "sha256": "334262aaf62be1e31286adea9c3ec3603f5ef1947b9c468f0a93b58c0606bf4a",
+      "pageErrors": [],
+      "rendered": {
+        "width": 1440,
+        "height": 1100,
+        "scrollWidth": 1440,
+        "colorScheme": "light",
+        "themeClasses": "",
+        "text": "草原之间\n旅行工作台 / 行程列表\n示例行程 · 呼伦贝尔指南\n\nMY TRIPS · 行程管理\n\n每一次慢慢走的出发。\nAI 创建计划\n解析攻略\n一句话开始规划\n开始规划\n行程标题\n开始日期\n结束日期\n创建行程\n选择起止日期后自动计算天数与晚数\n\n还没有行程 —— 从上面创建第一个吧。"
+      },
+      "browser": "157.0.8103.51"
+    },
+    {
+      "file": "before-home-mobile.png",
+      "revision": "7d8c15a2145b104e6539ef783498f58d1a113e9d",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "deviceScaleFactor": 1,
+      "theme": "light",
+      "state": "empty trip list; AI creation selected; blank input; no guide draft",
+      "sha256": "6efa8a9b5f5d41d0d8b72a066eec57ebc844e29baca578cb98b1d280a3d71c44",
+      "pageErrors": [],
+      "rendered": {
+        "width": 390,
+        "height": 844,
+        "scrollWidth": 390,
+        "colorScheme": "light",
+        "themeClasses": "",
+        "text": "草原之间\n示例行程 · 呼伦贝尔指南\n\nMY TRIPS · 行程管理\n\n每一次慢慢走的出发。\n一句话开始规划\n开始规划\n行程标题\n开始日期\n结束日期\n创建行程\n选择起止日期后自动计算天数与晚数\n\n还没有行程 —— 从上面创建第一个吧。"
+      },
+      "browser": "157.0.8103.51"
+    },
+    {
+      "file": "after-home-mobile.png",
+      "revision": "a10a8e55fc8edfc4710ba057d670e0323b438ae7",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "deviceScaleFactor": 1,
+      "theme": "light",
+      "state": "empty trip list; AI creation selected; blank input; no guide draft",
+      "sha256": "4817ab0c767462402f90f7b03330d7e3de2b4c09c73b708f13de66b168bf1d06",
+      "pageErrors": [],
+      "rendered": {
+        "width": 390,
+        "height": 844,
+        "scrollWidth": 390,
+        "colorScheme": "light",
+        "themeClasses": "",
+        "text": "草原之间\n示例行程 · 呼伦贝尔指南\n\nMY TRIPS · 行程管理\n\n每一次慢慢走的出发。\nAI 创建计划\n解析攻略\n一句话开始规划\n开始规划\n行程标题\n开始日期\n结束日期\n创建行程\n选择起止日期后自动计算天数与晚数\n\n还没有行程 —— 从上面创建第一个吧。"
+      },
+      "browser": "157.0.8103.51"
+    }
+  ]
+}
