@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 
 import {
   fetchChatHistory,
+  normalizeChatMeta,
   sendChatMessage,
   type ChatMessageMeta,
   type FetchLike,
@@ -142,6 +143,15 @@ test('fetchChatHistory restores meta fields on persisted assistant messages', as
   assert.equal(withoutMeta?.meta, null)
   assert.equal(withoutMeta?.think, null)
   assert.equal(withoutMeta?.sources, null)
+})
+
+test('chat metadata keeps valid geographic checks when another entry is malformed', () => {
+  const check = { from: '成都', to: '康定', durationMin: 420, source: 'model', estimated: true }
+  assert.deepEqual(normalizeChatMeta({
+    round: 'qa',
+    geographicFactCheck: [check, { ...check, durationMin: '420' }, { ...check, estimated: false }],
+  }), { round: 'qa', geographicFactCheck: [check] })
+  assert.deepEqual(normalizeChatMeta({ round: 'qa' }), { round: 'qa' })
 })
 
 // ---- parseAssistantContent (chatMarkdown) ---------------------------------

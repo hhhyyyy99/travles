@@ -92,6 +92,7 @@
  * everything else (see createMastra). Mastra saves the turn into memory; the
  * messages table stays the app-owned display history.
  */
+import type { GeographicCheck } from '@hailar/domain'
 import { streamSSE } from 'hono/streaming'
 import type { Hono } from 'hono'
 import { RequestContext } from '@mastra/core/request-context'
@@ -106,11 +107,15 @@ import type { RoundMetaPayload, RoundWarning } from './round-meta.js'
 import { readRoundFromToolArgs } from './round-meta.js'
 import { createPatchConfirmation, hashTripSnapshot } from './confirmation.js'
 import {
+  analyzeItineraryGeography,
   detectTimeConstraintConflicts,
+  dropSupersededDriveWarnings,
   isModificationRequest,
   isScheduleRequest,
-  longDriveWarnings,
+  mergeGeographicChecks,
+  reportedDriveWarnings,
   warningAsText,
+  type ItineraryGeography,
   type TimeConstraintConflict,
 } from './analysis.js'
 import {
@@ -118,6 +123,7 @@ import {
   PATCH_TURN_STATE_KEY,
   createPatchTurnState,
 } from '../trip-patch/tool.js'
+import { ROUTE_CHECKS_CONTEXT_KEY } from '../recommendations/tool.js'
 import type { TripPatchRecord, TripPatchStoreDriver } from '../trip-patch/types.js'
 import type { TripEventHub } from '../trip-events/hub.js'
 
@@ -216,6 +222,8 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
     // Ticket 08: per-turn RequestContext seeds the apply_trip_patch tool with
     // the trip id and the retry state the route owns (read back after the run).
     const requestContext = new RequestContext()
+    const routeChecks: GeographicCheck[] = []
+    requestContext.set(ROUTE_CHECKS_CONTEXT_KEY, routeChecks)
     const patchTurn = createPatchTurnState(PATCH_TURN_MAX_ATTEMPTS, allowPatchApply)
     requestContext.set(PATCH_TRIP_ID_KEY, trip.id)
     requestContext.set(PATCH_TURN_STATE_KEY, patchTurn)
@@ -334,13 +342,12 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
 
       // Keep the boundary warnings visible even when the model omitted the
       // optional fields from emit_round_meta. The itinerary itself stays on
-      // the server; only these concise warnings cross the model/UI boundary.
-      const postApplyWarnings = patchTurn.applied
-        ? await readLongDriveWarnings(options.resolveTripPatchStore, tripId)
-        : []
+      // the server; only its relevant warnings and check results are sent.
+      const geography = patchTurn.applied
+        ? await readAppliedGeography(options.resolveTripPatchStore, tripId)
+        : analysis.geography
       const boundaryWarnings = dedupeWarnings([
-        ...analysis.warnings,
-        ...postApplyWarnings,
+        ...dropSupersededDriveWarnings(geography.warnings, routeChecks),
         ...analysis.conflicts.map(conflictToWarning),
       ])
       const mustExplainPatch = forcedPatchExplain || patchTurn.blockedBeforeConfirmation
@@ -358,9 +365,6 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         meta = {
           ...current,
           round: nextRound,
-          ...(boundaryWarnings.length > 0
-            ? { warnings: dedupeWarnings([...(current.warnings ?? []), ...boundaryWarnings]) }
-            : {}),
           ...(analysis.conflicts.length > 0
             ? { conflicts: dedupeStrings([...(current.conflicts ?? []), ...analysis.conflicts.map((conflict) => conflict.message)]) }
             : {}),
@@ -374,6 +378,21 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
                 ],
               }
             : {}),
+        }
+      }
+
+      const geographicFactCheck = mergeGeographicChecks(geography.checks, meta?.geographicFactCheck ?? [], routeChecks)
+      if (geographicFactCheck.length > 0 || boundaryWarnings.length > 0) {
+        const { warnings: legacyWarnings = [], ...current } = meta ?? { round: round ?? 'qa' }
+        const warnings = dedupeWarnings([
+          ...dropSupersededDriveWarnings(legacyWarnings, geographicFactCheck),
+          ...boundaryWarnings,
+          ...reportedDriveWarnings(geographicFactCheck),
+        ])
+        meta = {
+          ...current,
+          ...(geographicFactCheck.length > 0 ? { geographicFactCheck } : {}),
+          ...(warnings.length > 0 ? { warnings } : {}),
         }
       }
 
@@ -491,12 +510,14 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
   })
 }
 
+const EMPTY_GEOGRAPHY: ItineraryGeography = { checks: [], warnings: [] }
+
 type TripTurnAnalysis = {
   hasExistingPlan: boolean
   isModification: boolean
   storeReadFailed: boolean
   snapshotHash: string | null
-  warnings: RoundWarning[]
+  geography: ItineraryGeography
   conflicts: TimeConstraintConflict[]
   planningContext?: TripPlanningContext
 }
@@ -530,7 +551,7 @@ async function analyzeTripTurn(
       isModification,
       storeReadFailed: false,
       snapshotHash: null,
-      warnings: explicitConflicts.map(conflictToWarning),
+      geography: EMPTY_GEOGRAPHY,
       conflicts: explicitConflicts,
       planningContext: trip.planningContext,
     }
@@ -550,7 +571,7 @@ async function analyzeTripTurn(
       isModification,
       storeReadFailed: false,
       snapshotHash,
-      warnings: [...longDriveWarnings(legRows, itemRows, dayRows), ...conflicts.map(conflictToWarning)],
+      geography: analyzeItineraryGeography(legRows, itemRows, dayRows),
       conflicts,
       planningContext: trip.planningContext,
     }
@@ -560,24 +581,24 @@ async function analyzeTripTurn(
       isModification,
       storeReadFailed: true,
       snapshotHash: null,
-      warnings: explicitConflicts.map(conflictToWarning),
+      geography: EMPTY_GEOGRAPHY,
       conflicts: explicitConflicts,
       planningContext: trip.planningContext,
     }
   }
 }
 
-async function readLongDriveWarnings(
+async function readAppliedGeography(
   resolveStore: (() => Promise<TripPatchStoreDriver>) | undefined,
   tripId: string,
-): Promise<RoundWarning[]> {
-  if (!resolveStore) return []
+): Promise<ItineraryGeography> {
+  if (!resolveStore) return EMPTY_GEOGRAPHY
   try {
     const store = await resolveStore()
     const { days, items, legs } = await readTripRows(store, tripId)
-    return longDriveWarnings(legs, items, days)
+    return analyzeItineraryGeography(legs, items, days)
   } catch {
-    return []
+    return EMPTY_GEOGRAPHY
   }
 }
 
@@ -594,7 +615,7 @@ function buildPlannerPrompt(content: string, analysis: TripTurnAnalysis, allowPa
       `\n[边界约束]\n${analysis.conflicts.map((conflict) => `${conflict.message} ${conflict.suggestion}`).join('\n')}\n先指出冲突，不得静默选择，也不要调用 apply_trip_patch。`,
     )
   }
-  if (analysis.warnings.some((warning) => warning.kind === 'long-drive')) {
+  if (analysis.geography.warnings.length > 0) {
     parts.push('\n[路线警示]\n当前行程有超过 6 小时的驾驶段，请在 AI 回复中给出拆分、休息或中途过夜建议。')
   }
   if (!allowPatchApply && analysis.isModification && analysis.hasExistingPlan) {

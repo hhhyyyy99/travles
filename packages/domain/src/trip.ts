@@ -22,8 +22,7 @@
  *     Activity inputs accept both vocabularies through ItemTypeInputSchema.
  *     normalizeItemType adapts them at real read/write boundaries; persisted
  *     and public read-model `type` values remain in the current vocabulary.
- *   - `geographicFactCheck` in #4 is still to be designed on top of the
- *     existing warning flow and is not part of this read model yet.
+ *   - Round-specific `geographicFactCheck` lives in the chat metadata contract.
  */
 import { z } from 'zod'
 
