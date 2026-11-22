@@ -12,6 +12,9 @@ import { createMastra } from '../src/mastra.js'
 import { createSearchStayReferenceTool } from '../src/recommendations/tool.js'
 import { TripRepository } from '../src/trips/repository.js'
 import { MemoryTripStoreDriver } from '../src/trips/driver-memory.js'
+import { createSqliteDatabase, type SqlDatabase } from '../src/db/driver.js'
+import { ensureSchema, SCHEMA_STATEMENTS } from '../src/db/schema.js'
+import { SqliteRecommendationsStoreDriver } from '../src/recommendations/driver-sqlite.js'
 
 const poi: RecommendationPoi = {
   id: 'poi-river',
@@ -123,6 +126,160 @@ test('repository drops malformed rows without throwing', async () => {
   driver.favoriteRows.set('bad-favorite', { id: 'bad-favorite', trip_id: 'trip', poi: null, created_at: '' })
   const snapshot = await new RecommendationsRepository(driver).snapshot('trip')
   assert.deepEqual(snapshot, { stash: [], favorites: [] })
+})
+
+test('recommendation HTTP snapshots expose text candidates without inventing map recommendations', async () => {
+  const { app, trip, recommendations } = await fixture()
+  await recommendations.insertStashRow(trip.id, {
+    id: 'text-http', poi: 'null', title: '  日落散步  ', note: '', category: '  灵感  ',
+    origin: 'recommend', addedAt: 'old-time', createdAt: 'saved-time',
+  })
+  const response = await app.request(`/api/trips/${trip.id}/recommendations`)
+  assert.equal(response.status, 200)
+  const payload = await response.json() as { stash: unknown[]; favorites: unknown[]; recommendations: unknown[]; pois: unknown[] }
+  assert.deepEqual(payload, {
+    stash: [{
+      id: 'text-http', poi: null, title: '  日落散步  ', note: '', category: '  灵感  ',
+      origin: 'recommend', addedAt: 'old-time', tripId: trip.id, createdAt: 'saved-time',
+    }],
+    favorites: [], recommendations: [], pois: [],
+  })
+  const legacyWrite = await app.request(`/api/trips/${trip.id}/stash`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ poi: null, title: '文本候选' }),
+  })
+  assert.equal(legacyWrite.status, 400, 'text candidates are authored through patches; the legacy POI endpoint keeps its contract')
+})
+
+for (const backend of ['memory', 'sqlite'] as const) {
+  test(`${backend} recommendation storage retains explicit text content and nullable POIs through favorite changes`, async (t) => {
+    const db = backend === 'sqlite' ? createSqliteDatabase(':memory:') : undefined
+    if (db) {
+      t.after(() => db.close())
+      await ensureSchema(db)
+      await db.run("INSERT INTO trips (id, created_at, updated_at) VALUES ('trip-content', 'date', 'date')")
+    }
+    const driver = db ? new SqliteRecommendationsStoreDriver(db) : new MemoryRecommendationsStoreDriver()
+    await driver.insertStashRow('trip-content', {
+      id: 'text', poi: 'null', title: '  晚上闲逛  ', note: '', category: '  自由安排  ',
+      origin: 'favorite', addedAt: 'legacy-date', createdAt: 'explicit-date',
+    })
+    const [raw] = await driver.listStashRows('trip-content')
+    assert.ok(raw)
+    assert.equal(raw.poi, 'null')
+    assert.equal(raw.title, '  晚上闲逛  ')
+    assert.equal(raw.note, '')
+    assert.equal(raw.category, '  自由安排  ')
+    assert.equal(raw.created_at, 'explicit-date')
+    const repository = new RecommendationsRepository(driver)
+    const [text] = (await repository.snapshot('trip-content')).stash
+    assert.deepEqual(text, {
+      id: 'text', poi: null, origin: 'favorite', addedAt: 'legacy-date', tripId: 'trip-content',
+      title: '  晚上闲逛  ', note: '', category: '  自由安排  ', createdAt: 'explicit-date',
+    })
+    const favorite = await repository.addFavorite('trip-content', poi)
+    assert.ok(favorite.ok)
+    const beforeRemoval = await repository.snapshot('trip-content')
+    assert.equal(beforeRemoval.stash.length, 2, 'a text candidate cannot deduplicate a POI stash write')
+    assert.ok((await repository.removeFavorite('trip-content', favorite.value.id)).ok)
+    assert.deepEqual((await repository.snapshot('trip-content')).stash, [text], 'unfavorite leaves the text candidate intact')
+    assert.deepEqual((await repository.snapshot('other-trip')).stash, [])
+    assert.equal((await repository.addStash('trip-content', null)).ok, false, 'legacy REST write still requires a POI')
+  })
+}
+
+const LEGACY_STASH_SQL = `CREATE TABLE stash (
+  id TEXT PRIMARY KEY,
+  trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+  poi TEXT NOT NULL,
+  origin TEXT NOT NULL DEFAULT 'recommend',
+  added_at TEXT NOT NULL
+)`
+
+async function createLegacyStashDatabase(): Promise<SqlDatabase> {
+  const db = createSqliteDatabase(':memory:')
+  await db.run(SCHEMA_STATEMENTS[0]!)
+  await db.run(LEGACY_STASH_SQL)
+  await db.run("INSERT INTO trips (id, created_at, updated_at) VALUES ('trip-old', 'date', 'date')")
+  await db.run('INSERT INTO stash (id, trip_id, poi, origin, added_at) VALUES (?, ?, ?, ?, ?)', [
+    'old', 'trip-old', JSON.stringify({ ...poi, name: '  旧名称  ', category: '  旧分类  ' }), 'recommend', '  original-date  ',
+  ])
+  return db
+}
+
+test('stash metadata migration is additive, repeatable, and leaves old POI rows untouched', async (t) => {
+  const db = await createLegacyStashDatabase()
+  t.after(() => db.close())
+  const before = (await db.run('SELECT * FROM stash')).rows[0]!
+  const root = (await db.run("SELECT rootpage FROM sqlite_schema WHERE name = 'stash'")).rows
+  await ensureSchema(db)
+  await ensureSchema(db)
+  const columns = (await db.run('PRAGMA table_info(stash)')).rows
+  for (const name of ['title', 'note', 'category', 'created_at']) {
+    const column = columns.find((entry) => entry.name === name)
+    assert.ok(column)
+    assert.equal(column.notnull, 0)
+    assert.equal(column.dflt_value, null)
+  }
+  assert.equal(columns.find((entry) => entry.name === 'poi')?.notnull, 1)
+  assert.deepEqual((await db.run("SELECT rootpage FROM sqlite_schema WHERE name = 'stash'")).rows, root)
+  assert.deepEqual((await db.run('SELECT * FROM stash')).rows[0], {
+    ...before, title: null, note: null, category: null, created_at: null,
+  })
+  const [legacy] = (await new RecommendationsRepository(new SqliteRecommendationsStoreDriver(db)).snapshot('trip-old')).stash
+  assert.equal(legacy?.title, '  旧名称  ')
+  assert.equal(legacy?.category, '  旧分类  ')
+  assert.equal(legacy?.createdAt, '  original-date  ')
+})
+
+test('partially migrated stash columns retain exact values and opaque driver rows', async (t) => {
+  const db = await createLegacyStashDatabase()
+  t.after(() => db.close())
+  await db.run('ALTER TABLE stash ADD COLUMN title TEXT')
+  await db.run('ALTER TABLE stash ADD COLUMN note TEXT')
+  await db.run("UPDATE stash SET title = '  自拟标题  ', note = ''")
+  await ensureSchema(db)
+  const driver = new SqliteRecommendationsStoreDriver(db)
+  const [row] = await driver.listStashRows('trip-old')
+  assert.equal(row?.title, '  自拟标题  ')
+  assert.equal(row?.note, '')
+  assert.equal(row?.category, null)
+  assert.equal(row?.created_at, null)
+  await db.run("UPDATE stash SET title = X'6162'")
+  const [opaque] = await driver.listStashRows('trip-old')
+  assert.deepEqual(opaque?.title, (await db.run('SELECT title FROM stash')).rows[0]?.title, 'driver returns raw metadata rather than coercing storage')
+  assert.equal(typeof opaque?.title, 'object')
+  const [decoded] = (await new RecommendationsRepository(driver).snapshot('trip-old')).stash
+  assert.equal(decoded?.title, undefined, 'invalid explicit metadata cannot fall back to the old POI alias')
+  assert.equal(decoded?.note, '')
+})
+
+test('stash migration rechecks an ALTER failure and propagates errors while the column is still missing', async (t) => {
+  const db = await createLegacyStashDatabase()
+  t.after(() => db.close())
+  const concurrent: SqlDatabase = {
+    close: () => db.close(),
+    run: async (sql, args) => {
+      if (sql === 'ALTER TABLE stash ADD COLUMN title TEXT') {
+        await db.run(sql, args)
+        throw new Error('another startup added title')
+      }
+      return db.run(sql, args)
+    },
+  }
+  await ensureSchema(concurrent)
+  assert.ok((await db.run('PRAGMA table_info(stash)')).rows.some((column) => column.name === 'title'))
+
+  const failingDb = await createLegacyStashDatabase()
+  t.after(() => failingDb.close())
+  const failing: SqlDatabase = {
+    close: () => failingDb.close(),
+    run: async (sql, args) => {
+      if (sql === 'ALTER TABLE stash ADD COLUMN note TEXT') throw new Error('stash migration unavailable')
+      return failingDb.run(sql, args)
+    },
+  }
+  await assert.rejects(ensureSchema(failing), /stash migration unavailable/)
+  assert.equal((await failingDb.run('PRAGMA table_info(stash)')).rows.some((column) => column.name === 'note'), false)
 })
 
 test('AMap POI search converts coordinates and keeps web-service rating/photos', async () => {

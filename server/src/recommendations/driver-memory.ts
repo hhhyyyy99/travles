@@ -31,6 +31,10 @@ export class MemoryRecommendationsStoreDriver implements RecommendationsStoreDri
       poi: item.poi,
       origin: item.origin,
       added_at: item.addedAt,
+      title: item.title ?? null,
+      note: item.note ?? null,
+      category: item.category ?? null,
+      created_at: item.createdAt ?? null,
     })
   }
 

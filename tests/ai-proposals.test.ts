@@ -79,6 +79,35 @@ test('proposal responses are scoped to the requested trip and carry a usable pat
   assert.deepEqual(missingPatch, { ok: false, error: '服务器返回的建议无法解析。' })
 })
 
+test('stash proposals preserve real stash references and both operations through preview and confirmed apply decoding', async () => {
+  const patch = { ops: [
+    { op: 'add_stash', stashId: 'stash-real', title: '雨天备用', note: '室内活动', poi: null },
+    { op: 'move_stash_to_day', stashId: 'stash-real', itemId: 'scheduled-real', dayId: 'day-1', pending: true },
+  ] }
+  const preview = await createAiProposal('trip-1', { kind: 'optimize' }, jsonFetch({ proposal: {
+    ...proposal, kind: 'optimize', items: undefined, patch,
+    diff: [{ action: 'move', label: '安排雨天备用', stashId: 'stash-real', itemId: 'scheduled-real', toDayId: 'day-1' }],
+  } }))
+  assert.ok(preview.ok)
+  assert.deepEqual(preview.data.patch, patch)
+  assert.equal(preview.data.diff[0]?.stashId, 'stash-real')
+  const applied = await applyAiProposal('trip-1', 'proposal-1', jsonFetch({
+    proposalId: 'proposal-1', appliedPatch: { summary: '候选已安排', patch },
+  }))
+  assert.ok(applied.ok)
+  assert.deepEqual(applied.data.appliedPatch.patch, patch)
+})
+
+test('create rejects a proposal outside the requested kind or target day', async () => {
+  const wrongKind = await createAiProposal('trip-1', { kind: 'optimize' }, jsonFetch({ proposal }))
+  assert.deepEqual(wrongKind, { ok: false, error: '服务器返回的建议无法解析。' })
+  const wrongDay = await createAiProposal('trip-1', { kind: 'day-optimize', dayId: 'day-1' }, jsonFetch({ proposal: {
+    ...proposal, kind: 'day-optimize', targetDayId: 'day-other', items: undefined,
+    patch: { ops: [{ op: 'move_item', itemId: 'item-1', dayId: 'day-other' }] },
+  } }))
+  assert.deepEqual(wrongDay, { ok: false, error: '服务器返回的建议无法解析。' })
+})
+
 test('apply rejects a response for a different proposal id', async () => {
   const result = await applyAiProposal(
     'trip-1',

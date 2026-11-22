@@ -62,7 +62,7 @@ import ConfirmDialog from './ConfirmDialog'
 import MapPanel from './MapPanel'
 import ToolsRail from './ToolsRail'
 import ToolsPanel from './ToolsPanel'
-import { recommendationCardInput, removeFromStash, type RecommendationPoi } from '../../domain/recommendations'
+import { recommendationCardInput, stashCardInput, removeFromStash, type RecommendationPoi, type StashItem } from '../../domain/recommendations'
 import { usePrint } from '../../hooks/usePrint'
 import WorkbenchPrintSheet, { type WorkbenchPrintSheetHandle } from './WorkbenchPrintSheet'
 
@@ -430,11 +430,9 @@ export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripI
     return result?.item ?? null
   })
 
-  /** Schedule a recommendation/stash item through the same card API as manual adds. */
-  const handleSchedulePoi = async (poi: RecommendationPoi, stashId?: string, dayId?: string, index?: number): Promise<boolean> => {
-    const targetDayId = dayId ?? dataRef.current?.days[0]?.id
-    if (!targetDayId) return false
-    const created = await handleCreateCard(recommendationCardInput(poi, targetDayId, index))
+  /** Manual scheduling retains the existing two-request compensation flow. */
+  const scheduleCard = async (input: WorkbenchItemCreateInput, stashId?: string): Promise<boolean> => {
+    const created = await handleCreateCard(input)
     if (!created || !stashId) return created !== null
     const removed = await removeFromStash(tripId, stashId)
     if (!removed.ok) {
@@ -456,6 +454,16 @@ export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripI
       return false
     }
     return true
+  }
+
+  const handleSchedulePoi = async (poi: RecommendationPoi, stashId?: string, dayId?: string, index?: number): Promise<boolean> => {
+    const targetDayId = dayId ?? dataRef.current?.days[0]?.id
+    return targetDayId ? scheduleCard(recommendationCardInput(poi, targetDayId, index), stashId) : false
+  }
+
+  const handleScheduleStash = async (item: StashItem, dayId?: string, index?: number): Promise<boolean> => {
+    const targetDayId = dayId ?? dataRef.current?.days[0]?.id
+    return targetDayId ? scheduleCard(stashCardInput(item, targetDayId, index), item.id) : false
   }
 
   const handleDeleteItem = (itemId: string) =>
@@ -652,7 +660,7 @@ export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripI
                     onCopyItem={handleCopyItem}
                     onDeleteItem={handleDeleteItem}
                     onAddCard={setAddCardDay}
-                    onDropStash={(stashId, poi, dayId, index) => void handleSchedulePoi(poi, stashId, dayId, index)}
+                    onDropStash={(item, dayId, index) => void handleScheduleStash(item, dayId, index)}
                     onNoteSave={handleNoteSave}
                     onImageAdd={handleImageAdd}
                     syncing={isBusy}
@@ -687,6 +695,7 @@ export default function WorkbenchPage({ tripId, onBack, initialPrompt }: { tripI
               onCollapse={() => toggle('map')}
               focus={mapFocus}
               onSchedulePoi={handleSchedulePoi}
+              onScheduleStash={handleScheduleStash}
               syncing={isBusy}
             />
           </div>

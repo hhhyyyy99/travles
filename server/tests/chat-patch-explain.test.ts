@@ -103,9 +103,10 @@ function parseSse(raw: string): { event: string; data: unknown }[] {
 
 async function makeApp(model: MastraLanguageModel, routeLegs?: RouteLegSearch) {
   const messages = new MemoryMessageStoreDriver()
-  const patchStore = new MemoryTripPatchStore()
+  const tripRepository = new TripRepository(new MemoryTripStoreDriver())
+  const patchStore = new MemoryTripPatchStore((id) => tripRepository.get(id))
   const app = await createApp({
-    tripRepository: new TripRepository(new MemoryTripStoreDriver()),
+    tripRepository,
     messageStore: messages,
     tripPatchStore: patchStore,
     plannerModel: model,

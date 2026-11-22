@@ -42,6 +42,7 @@ export const proposalChangeSchema = z.object({
   label: z.string().trim().min(1).max(120),
   detail: z.string().max(500).optional(),
   itemId: z.string().trim().min(1).max(64).optional(),
+  stashId: z.string().trim().min(1).max(64).optional(),
   dayId: z.string().trim().min(1).max(64).optional(),
   fromDayId: z.string().trim().min(1).max(64).optional(),
   toDayId: z.string().trim().min(1).max(64).optional(),

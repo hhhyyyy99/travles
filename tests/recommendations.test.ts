@@ -2,13 +2,16 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  fetchRecommendations,
   filterRecommendations,
   recommendationCardInput,
   recommendationFilterCounts,
   recommendationMatchesItem,
   recommendationTypeLabel,
   searchRecommendations,
+  stashCardInput,
   type RecommendationPoi,
+  type StashItem,
 } from '../src/domain/recommendations'
 import type { WorkbenchItem } from '../src/domain/workbench'
 
@@ -69,4 +72,44 @@ test('recommendation identity requires a non-empty provider id before matching',
   }
   assert.equal(recommendationMatchesItem(recommendation, item), false)
   assert.equal(recommendationMatchesItem(recommendation, { ...item, poi: recommendation }), true)
+})
+
+test('the client keeps explicit text stash content and drops missing or malformed POIs', async () => {
+  const text = {
+    id: 'text', poi: null, title: '  看日落  ', note: '', category: '  随意  ',
+    origin: 'recommend', addedAt: 'old-date', createdAt: 'new-date', tripId: 'trip-text',
+  }
+  const result = await fetchRecommendations('trip-text', async () => new Response(JSON.stringify({
+    stash: [
+      text,
+      { ...text, id: 'spaces', note: '  ' },
+      { ...text, id: 'missing-poi', poi: undefined },
+      { ...text, id: 'corrupt-poi', poi: {} },
+      { ...text, id: 'missing-title', title: undefined },
+      { ...text, id: 'blank-title', title: '  ' },
+      { ...text, id: 'legacy-poi', poi: pois[0], title: undefined, category: undefined, note: undefined, createdAt: undefined, tripId: undefined },
+    ],
+  })))
+  assert.ok(result.ok)
+  assert.deepEqual(result.data.stash.map((item) => item.id), ['text', 'spaces', 'legacy-poi'])
+  assert.deepEqual(result.data.stash[0], text)
+  assert.equal(result.data.stash[1]!.note, '  ')
+  for (const field of ['title', 'category', 'note', 'createdAt', 'tripId']) {
+    assert.equal(field in result.data.stash[2]!, false, `client must not fabricate ${field} for old HTTP payloads`)
+  }
+})
+
+test('manual stash card conversion keeps authored content and preserves legacy POI defaults', () => {
+  const legacy: StashItem = { id: 'old', poi: { ...pois[0]!, address: '原地址' }, origin: 'recommend', addedAt: '' }
+  assert.deepEqual(stashCardInput(legacy, 'day-1', 2), recommendationCardInput(legacy.poi!, 'day-1', 2))
+  const authored = stashCardInput({ ...legacy, title: '自拟标题', note: '', category: '自由分类' }, 'day-1')
+  assert.equal(authored.title, '自拟标题')
+  assert.equal(authored.note, '')
+  assert.equal(authored.type, 'attraction')
+  assert.equal(authored.poi?.name, pois[0]!.name)
+  assert.deepEqual(stashCardInput({
+    id: 'text', poi: null, title: '  晚上闲逛  ', note: '  ', category: '餐饮', origin: 'recommend', addedAt: '',
+  }, 'day-2', 0), {
+    dayId: 'day-2', index: 0, title: '  晚上闲逛  ', type: 'other', note: '  ', poi: null, images: [],
+  })
 })

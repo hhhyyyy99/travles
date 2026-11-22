@@ -37,7 +37,7 @@ import {
   type WorkbenchItem,
   type WorkbenchLeg,
 } from '../../domain/workbench'
-import type { RecommendationPoi, StashItem } from '../../domain/recommendations'
+import type { StashItem } from '../../domain/recommendations'
 import EditableTheme from './EditableTheme'
 import { CardMenu, DayPickerDialog, type CardMenuAction } from './CardMenu'
 import CrossDayDriveWarning from './CrossDayDriveWarning'
@@ -81,7 +81,7 @@ export type CanvasColumnProps = {
   onNoteSave?: (itemId: string, note: string) => void
   onImageAdd?: (itemId: string, url: string) => void
   /** Ticket 15: drop a pending recommendation into a day column. */
-  onDropStash?: (stashId: string, poi: RecommendationPoi, dayId: string, index: number) => void
+  onDropStash?: (stash: StashItem, dayId: string, index: number) => void
   /** A mutation or remote snapshot is rebuilding legs; keep the layout stable. */
   syncing?: boolean
 }
@@ -274,7 +274,7 @@ function DayColumn({
   onAddCard?: (dayId: string) => void
   onNoteSave?: (itemId: string, note: string) => void
   onImageAdd?: (itemId: string, url: string) => void
-  onDropStash?: (stashId: string, poi: RecommendationPoi, dayId: string, index: number) => void
+  onDropStash?: (stash: StashItem, dayId: string, index: number) => void
   draggingId: string | null
   setDraggingId: (itemId: string | null) => void
   menuFor: string | null
@@ -300,9 +300,9 @@ function DayColumn({
     if (stashPayload && onDropStash) {
       try {
         const stash = JSON.parse(stashPayload) as StashItem
-        if (stash?.id && stash.poi?.name) {
+        if (typeof stash?.id === 'string' && stash.id && (stash.poi?.name || (stash.poi === null && stash.title?.trim()))) {
           const index = targetItem === null ? day.items.length : day.items.findIndex((item) => item.id === targetItem.id)
-          onDropStash(stash.id, stash.poi, day.id, index < 0 ? day.items.length : index)
+          onDropStash(stash, day.id, index < 0 ? day.items.length : index)
           return
         }
       } catch {

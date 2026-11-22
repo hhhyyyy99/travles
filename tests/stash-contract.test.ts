@@ -7,10 +7,11 @@ import {
   RecommendationTypeSchema,
   RecommendationsApiSnapshotSchema,
   RecommendationsSnapshotSchema,
+  StashContentSchema,
   StashItemSchema,
 } from '@hailar/domain'
 import { MemoryRecommendationsStoreDriver } from '../server/src/recommendations/driver-memory.js'
-import { RecommendationsRepository } from '../server/src/recommendations/repository.js'
+import { mapStashRow, RecommendationsRepository } from '../server/src/recommendations/repository.js'
 import { fetchRecommendations } from '../src/domain/recommendations'
 
 // Deliberately use a provider ID, a relative image path, and an empty caption:
@@ -158,4 +159,76 @@ test('recommendation contracts reject malformed decoded values rather than coerc
   assert.equal(StashItemSchema.safeParse({ id: 's', poi, origin: 'legacy', addedAt: '' }).success, false)
   assert.equal(FavoriteItemSchema.safeParse({ id: 'f', poi }).success, false)
   assert.equal(RecommendationsSnapshotSchema.safeParse({ stash: [], favorites: null }).success, false)
+})
+
+test('authored stash content validates limits without trimming title, category, or notes', () => {
+  for (const note of [undefined, '', '   ', '  原始备注\n第二行  ', '字'.repeat(500)]) {
+    const content = { title: '  晚上逛街  ', category: '  自由安排  ', ...(note === undefined ? {} : { note }), poi: null }
+    assert.deepEqual(StashContentSchema.parse(content), content)
+  }
+  assert.deepEqual(StashContentSchema.parse({ title: '字'.repeat(80) }), { title: '字'.repeat(80) })
+  assert.equal(StashContentSchema.safeParse({ title: '地点候选', poi }).success, true)
+  for (const coordinates of [{ lat: 90, lng: 180 }, { lat: -90, lng: -180 }]) {
+    assert.equal(StashContentSchema.safeParse({ title: '边界坐标', poi: { ...poi, ...coordinates } }).success, true)
+  }
+  for (const content of [
+    { title: '' }, { title: '  ' }, { title: '字'.repeat(81) },
+    { title: '候选', note: '字'.repeat(501) }, { title: '候选', note: null },
+    { title: '候选', category: '  ' }, { title: '候选', category: '字'.repeat(81) },
+    { title: '候选', poi: {} },
+    { title: '候选', poi: { ...poi, lat: 90.01 } },
+    { title: '候选', poi: { ...poi, lat: -90.01 } },
+    { title: '候选', poi: { ...poi, lng: 180.01 } },
+    { title: '候选', poi: { ...poi, lng: -180.01 } },
+  ]) {
+    assert.equal(StashContentSchema.safeParse(content).success, false)
+  }
+})
+
+test('explicit stash columns take precedence and NULL columns retain the exact legacy aliases', () => {
+  const row = {
+    id: 'stash-explicit', trip_id: 'trip-real', poi: JSON.stringify({ ...poi, name: '  原始名称  ', category: '  原始分类  ' }),
+    origin: 'recommend', added_at: '  legacy-created  ',
+    title: '  自拟标题  ', note: '', category: '  自拟分类  ', created_at: '  explicit-created  ',
+  }
+  const explicit = mapStashRow(row, 'trip-real')!
+  assert.equal(explicit.title, row.title)
+  assert.equal(explicit.note, '')
+  assert.equal(explicit.category, row.category)
+  assert.equal(explicit.createdAt, row.created_at)
+  assert.equal(explicit.addedAt, 'legacy-created')
+  assert.equal(explicit.tripId, 'trip-real')
+  assert.equal(explicit.poi?.name, '原始名称')
+  assert.deepEqual(StashItemSchema.parse(explicit), explicit)
+
+  const legacy = mapStashRow({ ...row, title: null, note: null, category: null, created_at: null }, 'trip-real')!
+  assert.equal(legacy.title, '  原始名称  ')
+  assert.equal(legacy.category, '  原始分类  ')
+  assert.equal(legacy.createdAt, '  legacy-created  ')
+  assert.equal('note' in legacy, false)
+
+  const invalid = mapStashRow({ ...row, title: '  ', note: 7, category: '', created_at: false }, 'trip-other')!
+  for (const field of ['tripId', 'title', 'note', 'category', 'createdAt']) {
+    assert.equal(field in invalid, false, `invalid explicit ${field} must not be replaced by an alias`)
+  }
+})
+
+test('only explicitly stored JSON null plus a usable title decodes as a text stash candidate', () => {
+  const row = {
+    id: 'text', trip_id: 'trip-text', poi: 'null', origin: 'recommend', added_at: 'old-date',
+    title: '  看日落  ', note: '  ', created_at: 'real-created',
+  }
+  const text = mapStashRow(row, 'trip-text')!
+  assert.deepEqual(text, {
+    id: 'text', poi: null, origin: 'recommend', addedAt: 'old-date', tripId: 'trip-text',
+    title: '  看日落  ', note: '  ', createdAt: 'real-created',
+  })
+  assert.deepEqual(StashItemSchema.parse(text), text)
+  assert.equal('category' in text, false)
+  for (const rawPoi of [undefined, null, '', '{bad json', '{}', 'false', '[]']) {
+    assert.equal(mapStashRow({ ...row, poi: rawPoi }, 'trip-text'), null)
+  }
+  for (const title of [undefined, null, '', '  ', 17]) {
+    assert.equal(mapStashRow({ ...row, title }, 'trip-text'), null)
+  }
 })

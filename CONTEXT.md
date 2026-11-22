@@ -44,6 +44,12 @@ _Avoid_: Route segment, gap, transit-line
 A collection of candidate places and inspirations associated with a trip that have not yet been scheduled into a specific day.
 _Avoid_: Wishlist, inbox, backlog, pool
 
+**StashItem**:
+属于某个 Trip、尚未排入 Day 的候选地点或文字灵感，可以没有确定的位置。
+
+**Stash title / note / category**:
+候选的独立名称、可选自由备注与自由分类文字；分类文字不决定排入日程后的活动类型。
+
 **Trip Cover**:
 A curated landscape photograph and visual theme associated with a trip based on destination keywords.
 _Avoid_: Thumbnail, banner, wallpaper

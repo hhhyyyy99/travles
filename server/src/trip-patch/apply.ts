@@ -2,9 +2,9 @@
  * TripPatch validation + apply (ticket 08) — the server-side gate between
  * the model and the trip database.
  *
- * Flow: the projected end-state (current rows + ops applied in memory) is
- * validated FIRST; only a fully valid patch reaches the store, and the
- * writes then run inside the driver's transaction (all-or-nothing). A
+ * Flow: one transaction owns snapshot reads, global ownership checks,
+ * sequential projection, validation, and all writes. The projected end-state
+ * is validated before replaying the captured per-operation write plan. A
  * rejected patch returns a readable Chinese error the chat route feeds back
  * to the model as the tool result — the model retries, the user's stream
  * never fails on a first invalid patch.
@@ -33,7 +33,9 @@
  * estimated legs — never placeholder NULL rows.
  */
 import { normalizeItemType, readActivityItemMetadata } from '@hailar/domain'
-import type { ActivityItemMetadata, Day } from '@hailar/domain'
+import type { ActivityItemMetadata, Day, StashItem } from '@hailar/domain'
+import { mapStashRow } from '../recommendations/repository.js'
+import type { StashInsert } from '../recommendations/types.js'
 import { isValidDateString } from '../trips/dates.js'
 import { mapLegRow, mapPoiRef } from '../days/repository.js'
 import type { CanvasItem, CanvasLeg, ItemType, PoiRef } from '../days/types.js'
@@ -54,6 +56,7 @@ type ProjectedItem = ActivityItemMetadata & {
   title: string
   note: string
   poi: PatchPoiRef | null
+  images?: string | null
   pending: boolean
   legPending: boolean
   /** True when this row was created or rewritten by the patch being validated. */
@@ -70,8 +73,13 @@ type ProjectedDay = Pick<Day, 'title' | 'note'> & {
   removed?: boolean
 }
 
+type WriteStep = (store: TripPatchStoreDriver, stats: TripPatchStats) => Promise<void>
+
 type Projection = {
   days: Map<string, ProjectedDay>
+  stash: Map<string, StashItem>
+  /** Payloads captured at each operation, before later operations change the projection. */
+  writes: WriteStep[]
   /** Set of day ids whose adjacency changed (leg rebuild targets). */
   touchedDays: Set<string>
   /** Item ids whose POI changed; stored legs touching them cannot be reused. */
@@ -87,7 +95,15 @@ type Projection = {
 // ---------------------------------------------------------------------------
 
 async function loadProjection(store: TripPatchStoreDriver, tripId: string): Promise<Projection> {
-  const [dayRows, itemRows] = await Promise.all([store.listDayRows(tripId), store.listItemRows(tripId)])
+  const dayRows = await store.listDayRows(tripId)
+  const itemRows = await store.listItemRows(tripId)
+  const stashRows = await store.listStashRows(tripId)
+  const stash = new Map<string, StashItem>()
+  for (const row of Array.isArray(stashRows) ? stashRows : []) {
+    if (row.trip_id !== tripId) continue
+    const item = mapStashRow(row, tripId)
+    if (item) stash.set(item.id, item)
+  }
   const days = new Map<string, ProjectedDay>()
   let maxIdx = -1
   for (const row of Array.isArray(dayRows) ? dayRows : []) {
@@ -131,7 +147,7 @@ async function loadProjection(store: TripPatchStoreDriver, tripId: string): Prom
     })
   }
   return {
-    days, touchedDays: new Set(), invalidatedLegItems: new Set(), itemMetadataTouches: new Map(),
+    days, stash, writes: [], touchedDays: new Set(), invalidatedLegItems: new Set(), itemMetadataTouches: new Map(),
     maxIdx, seqCounter: seq,
   }
 }
@@ -165,9 +181,12 @@ function hasCoords(item: ProjectedItem): boolean {
   return item.poi !== null && Number.isFinite(item.poi.lat) && Number.isFinite(item.poi.lng)
 }
 
-function validateOps(projection: Projection, ops: TripPatchInput['ops']): ValidationFailure | { ok: true } {
+function validateOps(projection: Projection, ops: TripPatchInput['ops'], tripId: string): ValidationFailure | { ok: true } {
   for (let i = 0; i < ops.length; i += 1) {
     const op = ops[i] as { op: string; [key: string]: unknown }
+    const removedItemIds = op.op === 'remove_day'
+      ? projection.days.get(op.dayId as string)?.items.map((item) => item.id) ?? []
+      : []
     switch (op.op) {
       case 'add_day': {
         if (projection.days.has(op.dayId as string)) return fail(i, `天「${op.dayId}」已存在`)
@@ -176,7 +195,7 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
         projection.days.set(op.dayId as string, {
           id: op.dayId as string,
           idx: ++projection.maxIdx,
-          date: date ?? '',
+          date: date ?? nextDateAfter(projection.days.values()),
           theme: (op.theme as string | undefined) ?? '',
           ...(op.title !== undefined ? { title: op.title as string } : {}),
           ...(op.note !== undefined ? { note: op.note as string } : {}),
@@ -207,7 +226,33 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
         projection.days.delete(day.id)
         break
       }
+      case 'add_stash': {
+        const stashId = op.stashId as string
+        if (projection.stash.has(stashId)) return fail(i, `候选「${stashId}」已存在`)
+        const createdAt = new Date().toISOString()
+        const insert: StashInsert = {
+          id: stashId,
+          title: op.title as string,
+          ...(op.note !== undefined ? { note: op.note as string } : {}),
+          ...(op.category !== undefined ? { category: op.category as string } : {}),
+          poi: JSON.stringify(op.poi ?? null), origin: 'recommend', addedAt: createdAt, createdAt,
+        }
+        const item = mapStashRow({
+          id: stashId, trip_id: tripId, poi: insert.poi, origin: insert.origin, added_at: createdAt,
+          title: insert.title, note: insert.note, category: insert.category, created_at: createdAt,
+        }, tripId)
+        if (!item) return fail(i, `候选「${stashId}」内容无效`)
+        projection.stash.set(stashId, item)
+        projection.writes.push(async (store, stats) => {
+          await store.insertStashRow(tripId, insert)
+          stats.stashAdded = (stats.stashAdded ?? 0) + 1
+        })
+        break
+      }
+      case 'move_stash_to_day':
       case 'add_item': {
+        const stash = op.op === 'move_stash_to_day' ? projection.stash.get(op.stashId as string) : undefined
+        if (op.op === 'move_stash_to_day' && !stash) return fail(i, `候选「${op.stashId}」不存在或不属于当前行程`)
         const day = projection.days.get(op.dayId as string)
         if (!day) return fail(i, `天「${op.dayId}」不存在`)
         if (findItem(projection, op.itemId as string)) return fail(i, `卡片「${op.itemId}」已存在`)
@@ -216,15 +261,17 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
           dayId: day.id,
           order: 0,
           seq: projection.seqCounter++,
-          type: normalizeItemType(op.type) ?? 'other',
-          title: op.title as string,
-          note: (op.note as string | undefined) ?? '',
+          type: normalizeItemType(op.type) ?? stash?.poi?.type ?? 'other',
+          title: stash ? stash.title ?? stash.poi?.name ?? '' : op.title as string,
+          note: stash ? stash.note ?? stash.poi?.address ?? '' : (op.note as string | undefined) ?? '',
           ...readActivityItemMetadata(op),
-          poi: (op.poi as PatchPoiRef | null | undefined) ?? null,
+          poi: stash ? stash.poi : (op.poi as PatchPoiRef | null | undefined) ?? null,
+          ...(stash?.poi ? { images: JSON.stringify(stash.poi.images) } : {}),
           pending: (op.pending as boolean | undefined) ?? false,
           legPending: (op.legPending as boolean | undefined) ?? false,
           fromPatch: true,
         }
+        if (stash) projection.stash.delete(stash.id)
         projection.itemMetadataTouches.set(item.id, readActivityItemMetadata(op))
         const items = reindexItems(day)
         const requested = (op.order as number | undefined) ?? items.length
@@ -304,6 +351,52 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops']): Valida
       default:
         return fail(i, '未知操作类型')
     }
+    // Capture each operation's state now. Looking up the final projection
+    // during replay can move a card into a day that has not been inserted yet,
+    // or lose rows which a later operation removes.
+    if (op.op === 'add_day' || op.op === 'update_day') {
+      const day = projection.days.get(op.dayId as string)!
+      const payload = {
+        id: day.id, idx: day.idx, date: day.date, theme: day.theme,
+        ...(op.title !== undefined ? { title: op.title as string } : {}),
+        ...(op.note !== undefined ? { note: op.note as string } : {}),
+      }
+      const added = op.op === 'add_day'
+      projection.writes.push(async (store, stats) => {
+        await store.upsertDayRow(tripId, payload)
+        if (added) stats.daysAdded += 1
+        else stats.daysUpdated += 1
+      })
+    } else if (op.op === 'remove_day') {
+      const dayId = op.dayId as string
+      projection.writes.push(async (store, stats) => {
+        await store.deleteLegsForItems(tripId, removedItemIds)
+        await store.deleteItemsForDay(tripId, dayId)
+        await store.deleteDayRow(tripId, dayId)
+        stats.daysRemoved += 1
+      })
+    } else if (op.op === 'add_item' || op.op === 'update_item' || op.op === 'move_item' || op.op === 'move_stash_to_day') {
+      const item = findItem(projection, op.itemId as string)!.item
+      const payload = itemUpsert(item, readActivityItemMetadata(op))
+      const operation = op.op
+      const stashId = op.stashId as string
+      projection.writes.push(async (store, stats) => {
+        await store.upsertItemRow(tripId, payload)
+        if (operation === 'move_stash_to_day') {
+          if (!await store.deleteStashRow(tripId, stashId)) throw new Error('stash disappeared during transaction')
+          stats.stashMoved = (stats.stashMoved ?? 0) + 1
+          stats.itemsAdded += 1
+        } else if (operation === 'add_item') stats.itemsAdded += 1
+        else if (operation === 'update_item') stats.itemsUpdated += 1
+      })
+    } else if (op.op === 'remove_item') {
+      const itemId = op.itemId as string
+      projection.writes.push(async (store, stats) => {
+        await store.deleteLegsForItems(tripId, [itemId])
+        await store.deleteItemsById(tripId, [itemId])
+        stats.itemsRemoved += 1
+      })
+    }
   }
   return { ok: true }
 }
@@ -331,6 +424,7 @@ async function validateGlobalIds(
 ): Promise<ValidationFailure | { ok: true }> {
   const addedDayIds = new Set<string>()
   const addedItemIds = new Set<string>()
+  const addedStashIds = new Set<string>()
 
   for (let i = 0; i < ops.length; i += 1) {
     const op = ops[i]
@@ -346,7 +440,19 @@ async function validateGlobalIds(
       }
       continue
     }
-    if (op.op === 'add_item') {
+    if (op.op === 'add_stash') {
+      if (addedStashIds.has(op.stashId)) return fail(i, `候选「${op.stashId}」在同一 patch 中重复创建，id 必须全局唯一`)
+      addedStashIds.add(op.stashId)
+      const owner = await store.getStashTripId(op.stashId)
+      if (owner !== null) return fail(i, owner === tripId
+        ? `候选「${op.stashId}」已存在，add_stash 需要使用全新的 id`
+        : `候选「${op.stashId}」与其他行程冲突（该 id 已被占用），请换一个新的 stashId`)
+    }
+    if (op.op === 'move_stash_to_day' && !addedStashIds.has(op.stashId)) {
+      const owner = await store.getStashTripId(op.stashId)
+      if (owner !== null && owner !== tripId) return fail(i, `候选「${op.stashId}」不属于当前行程`)
+    }
+    if (op.op === 'add_item' || op.op === 'move_stash_to_day') {
       if (addedItemIds.has(op.itemId)) return fail(i, `卡片「${op.itemId}」在同一 patch 中重复创建，id 必须全局唯一`)
       addedItemIds.add(op.itemId)
       const owner = await store.getItemTripId(op.itemId)
@@ -453,6 +559,7 @@ function itemUpsert(item: ProjectedItem, metadata: ActivityItemMetadata | undefi
     // Canonical storage shape (same JSON the workbench read mapper expects):
     // {name, location: {lat, lng}, amapId, category, rating, introSummary}.
     poi: item.poi === null ? null : JSON.stringify(toPoiStorage(item.poi)),
+    ...(item.images !== undefined ? { images: item.images } : {}),
     pending: item.pending,
   }
 }
@@ -621,121 +728,44 @@ async function rebuildLegsForTrip(
  * raises for `storage` classification; logical problems come back as
  * {ok:false, error} so the model can retry.
  */
+export type TripPatchApplyOptions = {
+  /** Runs on the same transaction connection before snapshot reads or writes. */
+  beforeApply?: (store: TripPatchStoreDriver) => Promise<{ ok: true } | { ok: false; code: 'invalid'; error: string }>
+}
+
 export async function applyTripPatch(
   store: TripPatchStoreDriver,
   tripId: string,
   rawPatch: unknown,
+  options: TripPatchApplyOptions = {},
 ): Promise<TripPatchApplyResult> {
   const parsed = parseTripPatchInput(rawPatch)
   if (!parsed.ok) return { ok: false, error: parsed.error, code: 'invalid' }
   const ops = parsed.value.ops
 
-  let projection: Projection
-  try {
-    projection = await loadProjection(store, tripId)
-  } catch {
-    return { ok: false, error: '读取当前行程失败，请稍后重试。', code: 'storage' }
-  }
-
-  const reference = projection
-  const integrity = validateOps(reference, ops)
-  if (!integrity.ok) return { ok: false, error: integrity.error, code: 'invalid' }
-  let globalIntegrity: ValidationFailure | { ok: true }
-  try {
-    globalIntegrity = await validateGlobalIds(store, tripId, ops)
-  } catch {
-    return { ok: false, error: '读取行程 id 归属失败，请稍后重试。', code: 'storage' }
-  }
-  if (!globalIntegrity.ok) return { ok: false, error: globalIntegrity.error, code: 'invalid' }
-  for (const check of [validateDates, validateStays, validateReachability]) {
-    const result = check(reference)
-    if (!result.ok) return { ok: false, error: result.error, code: 'invalid' }
-  }
-
   const stats: TripPatchStats = {
-    daysAdded: 0,
-    daysUpdated: 0,
-    daysRemoved: 0,
-    itemsAdded: 0,
-    itemsUpdated: 0,
-    itemsRemoved: 0,
-    legsWritten: 0,
+    daysAdded: 0, daysUpdated: 0, daysRemoved: 0,
+    itemsAdded: 0, itemsUpdated: 0, itemsRemoved: 0, legsWritten: 0,
   }
-
   try {
-    await store.withTransaction(async (transactionStore) => {
-      const previousLegs = usableStoredLegs(await transactionStore.listLegRows(tripId))
-      for (const op of ops) {
-        switch (op.op) {
-          case 'add_day': {
-            const day = reference.days.get(op.dayId)
-            if (!day) throw new Error('patch projection drifted') // cannot happen post-validation
-            await transactionStore.upsertDayRow(tripId, {
-              id: day.id,
-              idx: day.idx,
-              date: day.date || nextDateAfter(reference.days.values()),
-              theme: day.theme,
-              ...(op.title !== undefined ? { title: op.title } : {}),
-              ...(op.note !== undefined ? { note: op.note } : {}),
-            })
-            stats.daysAdded += 1
-            break
-          }
-          case 'update_day': {
-            const day = reference.days.get(op.dayId)
-            if (!day) throw new Error('patch projection drifted')
-            await transactionStore.upsertDayRow(tripId, {
-              id: day.id, idx: day.idx, date: day.date, theme: day.theme,
-              // Never replay metadata from the loaded projection: another
-              // writer may have changed an omitted field before this transaction.
-              ...(op.title !== undefined ? { title: op.title } : {}),
-              ...(op.note !== undefined ? { note: op.note } : {}),
-            })
-            stats.daysUpdated += 1
-            break
-          }
-          case 'remove_day': {
-            const itemIds = (await transactionStore.listItemRows(tripId))
-              .filter((row) => typeof row?.id === 'string' && row.day_id === op.dayId)
-              .map((row) => row.id as string)
-            await transactionStore.deleteLegsForItems(tripId, itemIds)
-            await transactionStore.deleteItemsForDay(tripId, op.dayId)
-            await transactionStore.deleteDayRow(tripId, op.dayId)
-            stats.daysRemoved += 1
-            break
-          }
-          case 'add_item': {
-            const found = findItem(reference, op.itemId)
-            if (!found) throw new Error('patch projection drifted')
-            await transactionStore.upsertItemRow(tripId, itemUpsert(found.item, reference.itemMetadataTouches.get(found.item.id)))
-            stats.itemsAdded += 1
-            break
-          }
-          case 'update_item': {
-            const found = findItem(reference, op.itemId)
-            if (!found) throw new Error('patch projection drifted')
-            await transactionStore.upsertItemRow(tripId, itemUpsert(found.item, reference.itemMetadataTouches.get(found.item.id)))
-            stats.itemsUpdated += 1
-            break
-          }
-          case 'move_item': {
-            const found = findItem(reference, op.itemId)
-            if (!found) throw new Error('patch projection drifted')
-            await transactionStore.upsertItemRow(tripId, itemUpsert(found.item, reference.itemMetadataTouches.get(found.item.id)))
-            break
-          }
-          case 'remove_item': {
-            await transactionStore.deleteLegsForItems(tripId, [op.itemId])
-            await transactionStore.deleteItemsById(tripId, [op.itemId])
-            stats.itemsRemoved += 1
-            break
-          }
+    const rejected = await store.withTransaction(async (transactionStore) => {
+      const guard = await options.beforeApply?.(transactionStore)
+      if (guard && !guard.ok) return guard
+      const reference = await loadProjection(transactionStore, tripId)
+      const globalIntegrity = await validateGlobalIds(transactionStore, tripId, ops)
+      if (!globalIntegrity.ok) return { ...globalIntegrity, code: 'invalid' as const }
+      const integrity = validateOps(reference, ops, tripId)
+      if (!integrity.ok) return { ...integrity, code: 'invalid' as const }
+      if (ops.some((op) => op.op !== 'add_stash')) {
+        for (const check of [validateDates, validateStays, validateReachability]) {
+          const result = check(reference)
+          if (!result.ok) return { ...result, code: 'invalid' as const }
         }
       }
-      // Positional operations shift neighboring cards as well as the card in
-      // the op. Persist the complete final order for each touched day so the
-      // database order matches the validated projection (upsert preserves
-      // existing images in both store implementations).
+      const previousLegs = usableStoredLegs(await transactionStore.listLegRows(tripId))
+      for (const write of reference.writes) await write(transactionStore, stats)
+      // Reindex surviving siblings only after all ordered writes. Their loaded
+      // metadata/images are not operation touches and must remain untouched.
       for (const dayId of reference.touchedDays) {
         const day = reference.days.get(dayId)
         if (!day) continue
@@ -743,25 +773,25 @@ export async function applyTripPatch(
           await transactionStore.upsertItemRow(tripId, itemUpsert(item, reference.itemMetadataTouches.get(item.id)))
         }
       }
-      // Rebuild all adjacency legs whenever a card/day layout changed. A
-      // boundary can change even when its surviving endpoint cards did not.
       const layoutChanged = ops.some((op) =>
-        op.op === 'add_item' || op.op === 'move_item' || op.op === 'remove_item' || op.op === 'remove_day',
+        op.op === 'add_item' || op.op === 'move_stash_to_day' || op.op === 'move_item' || op.op === 'remove_item' || op.op === 'remove_day',
       ) || reference.touchedDays.size > 0
       if (layoutChanged) {
         await rebuildLegsForTrip(transactionStore, tripId, reference, previousLegs, reference.invalidatedLegItems, stats)
       }
+      return null
     })
+    if (rejected) return rejected
   } catch (error) {
     if (error instanceof TripPatchIdConflictError) {
-      const label = error.entity === 'day' ? '天' : error.entity === 'item' ? '卡片' : '交通段'
+      const label = error.entity === 'day' ? '天' : error.entity === 'item' ? '卡片' : error.entity === 'stash' ? '候选' : '交通段'
       return {
         ok: false,
         error: `${label}「${error.id}」与其他行程冲突（该 id 已被占用），请换一个新的 id。`,
         code: 'invalid',
       }
     }
-    return { ok: false, error: '写入行程失败，请稍后重试。', code: 'storage' }
+    return { ok: false, error: '读写行程失败，请稍后重试。', code: 'storage' }
   }
 
   const summary = buildSummary(stats)
@@ -778,5 +808,7 @@ export function buildSummary(stats: TripPatchStats): string {
   if (stats.itemsAdded > 0) parts.push(`新增 ${stats.itemsAdded} 张卡片`)
   if (stats.itemsUpdated > 0) parts.push(`更新 ${stats.itemsUpdated} 张卡片`)
   if (stats.itemsRemoved > 0) parts.push(`删除 ${stats.itemsRemoved} 张卡片`)
+  if ((stats.stashAdded ?? 0) > 0) parts.push(`新增 ${stats.stashAdded} 个候选`)
+  if ((stats.stashMoved ?? 0) > 0) parts.push(`将 ${stats.stashMoved} 个候选移入日程`)
   return parts.length > 0 ? `已写入行程：${parts.join('、')}` : '已写入行程'
 }
