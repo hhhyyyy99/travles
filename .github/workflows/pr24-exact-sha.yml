@@ -1,0 +1,53 @@
+name: PR 24 exact SHA validation
+run-name: Verify integrated PR 24 at 01aa49123f50d6bae26009ffb6f50a5e83ac26f5
+
+on:
+  push:
+    branches: [agent/verify-pr24-01aa491]
+
+permissions:
+  contents: read
+
+env:
+  REVIEW_SHA: 01aa49123f50d6bae26009ffb6f50a5e83ac26f5
+  BASE_SHA: f272614820df55704a6e0bab5256b66be1aa1af4
+  AMAP_KEY: ''
+  AMAP_WEB_KEY: ''
+  AI_API_KEY: ''
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out the exact integrated PR revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.REVIEW_SHA }}
+          persist-credentials: false
+      - name: Verify source revision and clean checkout
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEW_SHA"
+          test "$(git show -s --format=%P HEAD | awk '{print $2}')" = "$BASE_SHA"
+          test -z "$(git status --porcelain)"
+          git show -s --format='Tested source commit %H%nIntegrated parents %P%nSource tree %T' HEAD | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Verify route reconciliation and concurrent Trip edits
+        run: |
+          node --import tsx --test \
+            --test-name-pattern='leg queried before deletion|itinerary warning reconciliation|only the Trip dates|Trip title change during first-turn' \
+            server/tests/chat-patch-explain.test.ts server/tests/ai-proposals.test.ts server/tests/chat-plan-patch.test.ts
+      - run: pnpm build
+      - run: pnpm build:server
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Run Chromium tests on the integrated production build
+        env:
+          APP_MODE: preview
+        run: node --test --test-concurrency=2 tests/app/*.browser.cjs
