@@ -1,0 +1,53 @@
+name: PR 27 Chromium merge candidate
+run-name: Production Chromium for PR 27 candidate c6bb9157
+
+on:
+  push:
+    branches: [agent/verify-pr27-c6bb915]
+
+permissions:
+  contents: read
+
+env:
+  EXPECTED_CANDIDATE: c6bb9157ee3c9e1c2d5970b6faff9489301e0701
+  EXPECTED_BASE: 2e2c23d0f7e590694c2dd8cb1f88e64ac221bb15
+  EXPECTED_HEAD: c0ffd7da43db5b2f2aa0166af7ed7d489b632431
+  AMAP_KEY: ''
+  AMAP_WEB_KEY: ''
+  AI_API_KEY: ''
+
+jobs:
+  verify:
+    name: Production Chromium against the exact PR merge candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out PR 27 merge candidate
+        uses: actions/checkout@v6
+        with:
+          ref: refs/pull/27/merge
+          persist-credentials: false
+      - name: Verify candidate SHA, parents and clean checkout
+        shell: bash
+        run: |
+          actual=$(git rev-parse HEAD)
+          parents=$(git cat-file -p HEAD | sed -n '/^$/q; s/^parent //p')
+          printf 'Checked out candidate %s\nParents:\n%s\nSource tree %s\n' \
+            "$actual" "$parents" "$(git rev-parse 'HEAD^{tree}')" | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$actual" = "$EXPECTED_CANDIDATE"
+          test "$(printf '%s\n' "$parents" | sed -n '1p')" = "$EXPECTED_BASE"
+          test "$(printf '%s\n' "$parents" | sed -n '2p')" = "$EXPECTED_HEAD"
+          test -z "$(git status --porcelain)"
+          printf 'Clean checkout verified\n' | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Record Chromium version
+        run: |
+          node --input-type=module -e 'import { chromium } from "playwright"; const browser = await chromium.launch(); console.log(`Chromium ${browser.version()}`); await browser.close();'
+      - name: Run the full production browser regression
+        run: pnpm test:app:prod
