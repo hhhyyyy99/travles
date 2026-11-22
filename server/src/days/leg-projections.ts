@@ -1,4 +1,4 @@
-import type { Leg } from '@hailar/domain'
+import type { Leg, LegStatus } from '@hailar/domain'
 
 type LegMetricProjection = Pick<
   Leg,
@@ -36,6 +36,26 @@ export function projectLegMetrics(
       ? {}
       : { durationSeconds, formattedDuration: `${String(durationMin)} 分钟` }),
   }
+}
+
+/** Legacy quality can be inferred from geometry, so only recorded provider evidence can verify a leg. */
+export function projectLegStatus(
+  metrics: LegMetricProjection,
+  quality: unknown,
+  providerVerified: boolean,
+): LegStatus {
+  if (quality === 'pending') return 'pending'
+  if (
+    providerVerified &&
+    quality === 'measured' &&
+    metrics.distanceMeters !== undefined &&
+    metrics.durationSeconds !== undefined
+  ) {
+    return 'verified'
+  }
+  return (metrics.distanceMeters ?? 0) > 0 || (metrics.durationSeconds ?? 0) > 0
+    ? 'estimated'
+    : 'pending'
 }
 
 function convertMetric(value: unknown, factor: number): number | undefined {

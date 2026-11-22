@@ -295,8 +295,15 @@ function assertMetrics(canvas, label) {
       expected.metrics,
       label + ': source projections for ' + expected.id,
     )
+    const { status, ...legacyLeg } = leg
+    const hasEstimate = expected.metrics.distanceMeters > 0 || expected.metrics.durationSeconds > 0
+    assert.equal(
+      status,
+      expected.quality === 'pending' || !hasEstimate ? 'pending' : 'estimated',
+      label + ': legacy provenance for ' + expected.id,
+    )
     assert.deepEqual(
-      Object.fromEntries(Object.entries(leg).filter(([key]) => !metricFields.includes(key))),
+      Object.fromEntries(Object.entries(legacyLeg).filter(([key]) => !metricFields.includes(key))),
       {
         id: expected.id,
         fromItemId: `leg-metrics-item-${index}`,

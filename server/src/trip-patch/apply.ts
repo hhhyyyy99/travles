@@ -38,7 +38,13 @@ import { mapStashRow } from '../recommendations/repository.js'
 import type { StashInsert } from '../recommendations/types.js'
 import { isValidDateString } from '../trips/dates.js'
 import { mapLegRow, mapPoiRef } from '../days/repository.js'
-import type { CanvasItem, CanvasLeg, ItemType, PoiRef } from '../days/types.js'
+import {
+  LEG_ROUTE_KEY,
+  type CanvasItem,
+  type CanvasLeg,
+  type ItemType,
+  type PoiRef,
+} from '../days/types.js'
 import { adjacentTripPairs, recomputeTripLegs } from '../items-admin/legs.js'
 import { TripPatchIdConflictError } from './types.js'
 import type {
@@ -802,6 +808,7 @@ async function rebuildLegsForTrip(
       durationMin: leg.durationMin,
       polyline: leg.polyline === null ? null : JSON.stringify(leg.polyline),
       quality: leg.quality,
+      verifiedRouteKey: leg[LEG_ROUTE_KEY],
     })
     stats.legsWritten += 1
   }

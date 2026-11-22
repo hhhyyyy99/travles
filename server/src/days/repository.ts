@@ -8,7 +8,9 @@ import { normalizeItemType, readActivityItemMetadata } from '@hailar/domain'
 import { asText } from '../trips/dates.js'
 import { projectDayIdentity } from './projections.js'
 import { readDayMetadata } from './metadata.js'
-import { projectLegMetrics } from './leg-projections.js'
+import { projectLegMetrics, projectLegStatus } from './leg-projections.js'
+import { drivingRouteKey, readRoutePoint } from './route-identity.js'
+import { LEG_ROUTE_KEY } from './types.js'
 import type {
   CanvasDay,
   CanvasItem,
@@ -55,11 +57,11 @@ export function assembleCanvas(
   tripId?: string,
 ): TripCanvas {
   const itemsByDay = new Map<string, CanvasItem[]>()
-  const itemIds = new Set<string>()
+  const itemPois = new Map<string, unknown>()
   for (const row of itemRows) {
     const item = mapItemRow(row)
     if (item === null) continue
-    itemIds.add(item.id)
+    itemPois.set(item.id, row.poi)
     const bucket = itemsByDay.get(item.dayId)
     if (bucket) bucket.push(item)
     else itemsByDay.set(item.dayId, [item])
@@ -74,9 +76,15 @@ export function assembleCanvas(
     .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id))
 
   const legs = legRows
-    .map((row) => mapLegRow(row))
+    .map((row) =>
+      mapLegRow({
+        ...row,
+        from_poi: itemPois.get(asText(row?.from_item_id)),
+        to_poi: itemPois.get(asText(row?.to_item_id)),
+      }),
+    )
     .filter((leg): leg is CanvasLeg => leg !== null)
-    .filter((leg) => itemIds.has(leg.fromItemId) && itemIds.has(leg.toItemId))
+    .filter((leg) => itemPois.has(leg.fromItemId) && itemPois.has(leg.toItemId))
 
   return { days, legs }
 }
@@ -125,6 +133,13 @@ export function mapLegRow(row: LegRow): CanvasLeg | null {
   const distanceKm = asNonNegativeNumber(row?.distance_km)
   const durationMin = asNonNegativeNumber(row?.duration_min)
   const polyline = mapPolyline(row?.polyline)
+  const metrics = projectLegMetrics(row?.distance_km, row?.duration_min, row?.quality, polyline)
+  const routeKey = drivingRouteKey(readRoutePoint(row?.from_poi), readRoutePoint(row?.to_poi))
+  const status = projectLegStatus(
+    metrics,
+    row?.quality,
+    routeKey !== null && row?.verified_route_key === routeKey,
+  )
   return {
     id,
     fromItemId,
@@ -134,7 +149,9 @@ export function mapLegRow(row: LegRow): CanvasLeg | null {
     durationMin,
     polyline,
     quality: normalizeLegQuality(row?.quality, distanceKm, durationMin, polyline),
-    ...projectLegMetrics(row?.distance_km, row?.duration_min, row?.quality, polyline),
+    ...metrics,
+    status,
+    ...(status === 'verified' && routeKey ? { [LEG_ROUTE_KEY]: routeKey } : {}),
   }
 }
 

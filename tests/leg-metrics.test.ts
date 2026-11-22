@@ -298,6 +298,9 @@ void test('client optional fields fail independently and old servers never acqui
     return result.data.legs[0]!
   }
   assert.deepEqual(metrics(await decode(old)), {})
+  assert.equal((await decode({ ...old, quality: 'measured' })).status, undefined)
+  assert.equal((await decode({ ...old, status: 'verified' })).status, 'verified')
+  assert.equal((await decode({ ...old, status: 'measured' })).status, undefined)
   for (const invalid of [null, '5', false, -1, NaN, Infinity, {}]) {
     const leg = await decode({
       ...old,
@@ -393,6 +396,10 @@ void test('route refresh, patch and schedule/event refetch preserve the aliases 
   assert.ok(refreshed.ok)
   assert.deepEqual(metrics(refreshed.data.legs[0]!), expected(1.25, 2.5))
   assert.deepEqual(refreshed.data.legs, (await f.read()).legs)
+  assert.deepEqual(
+    refreshed.data.legs.map(({ status }) => status),
+    ['verified', 'verified'],
+  )
   const observed: Array<ReturnType<typeof f.read>> = []
   void t.after(f.events.subscribe('trip', () => observed.push(f.read())))
   const changed = await f.app.request('/api/trips/trip/items/a', {
@@ -410,8 +417,13 @@ void test('route refresh, patch and schedule/event refetch preserve the aliases 
   const final = await f.read()
   assert.deepEqual(metrics(final.legs[0]!), expected(1.25, 2.5))
   assert.deepEqual(
-    [final.legs[0]!.distanceKm, final.legs[0]!.durationMin, final.legs[0]!.quality],
-    [1.25, 2.5, 'measured'],
+    [
+      final.legs[0]!.distanceKm,
+      final.legs[0]!.durationMin,
+      final.legs[0]!.quality,
+      final.legs[0]!.status,
+    ],
+    [1.25, 2.5, 'measured', 'verified'],
   )
   assert.deepEqual([final.days[0]!.title, final.days[0]!.note], ['独立名称', '整日备注'])
 })
@@ -442,6 +454,13 @@ void test('current nullable provider metrics stay absent through HTTP/client ref
       assert.equal(calls, 2)
       for (const leg of immediate.legs) {
         assert.deepEqual(metrics(leg), projection)
+        const status =
+          distanceKm !== null && durationMin !== null
+            ? 'verified'
+            : (distanceKm ?? 0) > 0 || (durationMin ?? 0) > 0
+              ? 'estimated'
+              : 'pending'
+        assert.equal(leg.status, status)
         assert.deepEqual(
           [leg.distanceKm, leg.durationMin, leg.quality],
           [distanceKm ?? 0, durationMin ?? 0, 'measured'],
@@ -468,12 +487,161 @@ void test('current nullable provider metrics stay absent through HTTP/client ref
   }
 })
 
+void test('legacy geometry stays estimated across SQLite migration and itinerary edits', async (t) => {
+  const f = await fixture(t)
+  await f.write(12.5, 22, null)
+  await f.db.run("UPDATE legs SET polyline = '[[104.06,30.6],[104.06,30.7]]' WHERE id = 'leg-a-b'")
+  await f.db.run('ALTER TABLE legs DROP COLUMN verified_route_key')
+  await ensureSchema(f.db)
+  await ensureSchema(f.db)
+  const initial = (await f.read()).legs[0]!
+  assert.equal(initial.quality, 'measured')
+  assert.equal(initial.status, 'estimated')
+  const move = await f.app.request('/api/trips/trip/items/c/move', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dayId: 'day', index: 2 }),
+  })
+  assert.ok(move.ok)
+  assert.equal((await f.read()).legs.find(({ id }) => id === 'leg-a-b')?.status, 'estimated')
+  assert.equal(
+    (await f.db.run("SELECT verified_route_key FROM legs WHERE id = 'leg-a-b'")).rows[0]
+      ?.verified_route_key,
+    null,
+  )
+})
+
+void test('verified status survives rebuilding an unchanged pair and clears on endpoint changes', async (t) => {
+  const f = await fixture(t)
+  assert.ok((await refreshWorkbenchLegs('trip', f.fetchLike)).ok)
+  const moved = await f.app.request('/api/trips/trip/items/c/move', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dayId: 'day', index: 2 }),
+  })
+  assert.ok(moved.ok)
+  assert.equal((await f.read()).legs.find(({ id }) => id === 'leg-a-b')?.status, 'verified')
+  const changed = await applyTripPatch(f.patchStore, 'trip', {
+    ops: [{ op: 'update_item', itemId: 'b', poi: { name: '换址', lat: 32, lng: 104.06 } }],
+  })
+  assert.ok(changed.ok)
+  assert.deepEqual(
+    (await f.read()).legs.map(({ status }) => status),
+    ['estimated', 'estimated'],
+  )
+  await f.db.run("UPDATE items SET type = 'stay' WHERE id = 'b'")
+  const refreshed = await refreshTripLegs(f.items, 'trip', async () => ({
+    status: 'ok',
+    source: 'amap',
+    distanceKm: 1.25,
+    durationMin: 2.5,
+    polyline: null,
+  }))
+  assert.ok(refreshed.ok)
+  assert.deepEqual(
+    (await f.read()).legs.map(({ status }) => status),
+    ['verified', 'verified'],
+  )
+  const stay = await f.app.request('/api/trips/trip/items/b', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ poi: { name: '新住宿', lat: 31, lng: 104.06 } }),
+  })
+  assert.ok(stay.ok)
+  assert.deepEqual(
+    (await f.read()).legs.map(({ status }) => status),
+    ['estimated', 'estimated'],
+  )
+})
+
+void test('move responses read route provenance after a concurrent endpoint edit', async (t) => {
+  const f = await fixture(t)
+  assert.ok((await refreshWorkbenchLegs('trip', f.fetchLike)).ok)
+  const transact = f.items.withTransaction.bind(f.items)
+  f.items.withTransaction = async (work) => {
+    await f.db.run('UPDATE items SET poi = ? WHERE id = ?', [
+      JSON.stringify({ name: 'b', lat: 31, lng: 104.06 }),
+      'b',
+    ])
+    return transact(work)
+  }
+  const response = await f.app.request('/api/trips/trip/items/c/move', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dayId: 'day', index: 2 }),
+  })
+  assert.equal(response.status, 200)
+  const { legs } = (await response.json()) as { legs: Leg[] }
+  assert.deepEqual(legs, (await f.read()).legs)
+  assert.deepEqual(
+    legs.map(({ status }) => status),
+    ['estimated', 'estimated'],
+  )
+})
+
+void test('missing legacy POI latitude cannot be replaced with zero for verification', async (t) => {
+  let calls = 0
+  const f = await fixture(t, async () => {
+    calls += 1
+    return { status: 'ok', source: 'amap', distanceKm: 1.25, durationMin: 2.5, polyline: null }
+  })
+  await f.db.run('UPDATE items SET poi = ? WHERE id = ?', [
+    JSON.stringify({ name: 'b', lng: 104.06 }),
+    'b',
+  ])
+  const refreshed = await refreshWorkbenchLegs('trip', f.fetchLike)
+  assert.ok(refreshed.ok)
+  assert.equal(calls, 0)
+  assert.ok(refreshed.data.legs.every(({ status }) => status !== 'verified'))
+})
+
+void test('route refresh rejects results calculated before a concurrent itinerary move', async (t) => {
+  const f = await fixture(t)
+  const lookupStarted = Promise.withResolvers<void>()
+  const lookup = Promise.withResolvers<Awaited<ReturnType<RouteLegSearch>>>()
+  const refreshing = refreshTripLegs(f.items, 'trip', () => {
+    lookupStarted.resolve()
+    return lookup.promise
+  })
+  try {
+    await lookupStarted.promise
+    const move = await f.app.request('/api/trips/trip/items/b/move', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dayId: 'day', index: 0 }),
+    })
+    assert.ok(move.ok)
+  } finally {
+    lookup.resolve({
+      status: 'ok',
+      source: 'amap',
+      distanceKm: 1.25,
+      durationMin: 2.5,
+      polyline: null,
+    })
+  }
+  assert.deepEqual(await refreshing, { ok: false, error: '行程地点或顺序已更新，请重新查询路线。' })
+  assert.deepEqual(
+    (await f.read()).legs.map(({ id, status }) => [id, status]),
+    [
+      ['leg-b-a', 'estimated'],
+      ['leg-a-c', 'estimated'],
+    ],
+  )
+})
+
 void test('AMap precision remains the existing rounded km/min precision before projection', () => {
   const route = parseAmapRoute({
     status: '1',
     route: { paths: [{ distance: '12345', duration: '125', steps: [] }] },
   })
   assert.equal(route.status, 'ok')
+  for (const duration of [null, '', ' ', false]) {
+    assert.equal(
+      parseAmapRoute({ status: '1', route: { paths: [{ distance: '12345', duration }] } }).status,
+      'pending',
+    )
+  }
   assert.deepEqual([route.distanceKm, route.durationMin], [12.3, 2])
   assert.deepEqual(metrics(mapLegRow(raw(route.distanceKm, route.durationMin))!), expected(12.3, 2))
 })

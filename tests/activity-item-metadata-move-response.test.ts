@@ -276,6 +276,7 @@ function expectedCanvas(
         durationMin: 0,
         polyline: null,
         quality: 'pending',
+        status: 'pending',
       }
     )
   })

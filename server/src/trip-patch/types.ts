@@ -108,6 +108,7 @@ export interface TripPatchLegUpsert {
   durationMin: number | null
   polyline: string | null
   quality?: LegQuality
+  verifiedRouteKey?: string
 }
 
 /**

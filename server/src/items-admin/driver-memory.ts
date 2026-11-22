@@ -5,7 +5,7 @@
  * `nextWriteError` simulates storage failures.
  */
 import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
-import type { DayRow, ItemRow, LegRow } from '../days/types.js'
+import { LEG_ROUTE_KEY, type DayRow, type ItemRow, type LegRow } from '../days/types.js'
 import { normalizeLegQuality } from '../days/repository.js'
 import type { ItemFullUpsert, ItemOrderPatch, ItemsAdminStoreDriver } from './types.js'
 import type { PlannedLeg } from './legs.js'
@@ -34,7 +34,13 @@ export class MemoryItemsAdminStoreDriver implements ItemsAdminStoreDriver {
   }
 
   async listLegRows(tripId: string): Promise<LegRow[]> {
-    return [...this.legRows.values()].filter((row) => row.trip_id === tripId)
+    return [...this.legRows.values()]
+      .filter((row) => row.trip_id === tripId)
+      .map((row) => ({
+        ...row,
+        from_poi: this.itemRows.get(String(row.from_item_id))?.poi,
+        to_poi: this.itemRows.get(String(row.to_item_id))?.poi,
+      }))
   }
 
   async dayExists(tripId: string, dayId: string): Promise<boolean> {
@@ -120,6 +126,7 @@ export class MemoryItemsAdminStoreDriver implements ItemsAdminStoreDriver {
         duration_min: leg.durationMin,
         polyline: leg.polyline === null ? null : JSON.stringify(leg.polyline),
         quality: normalizeLegQuality(leg.quality, leg.distanceKm, leg.durationMin, leg.polyline),
+        verified_route_key: leg[LEG_ROUTE_KEY] ?? null,
       })
     }
   }

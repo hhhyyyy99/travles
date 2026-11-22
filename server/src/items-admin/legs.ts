@@ -25,7 +25,8 @@
  * The recompute never throws: corrupt inputs are filtered by the callers'
  * tolerant row mapping before they reach this module.
  */
-import type { CanvasItem, CanvasLeg, PoiRef } from '../days/types.js'
+import { LEG_ROUTE_KEY, type CanvasItem, type CanvasLeg, type PoiRef } from '../days/types.js'
+import { drivingRouteKey } from '../days/route-identity.js'
 import { normalizeLegQuality } from '../days/repository.js'
 import { projectLegMetrics } from '../days/leg-projections.js'
 
@@ -60,7 +61,7 @@ export function recomputeTripLegs(
   const byPair = new Map<string, CanvasLeg>()
   for (const leg of previousLegs) {
     if (!leg.fromItemId || !leg.toItemId) continue
-    const key = `${leg.fromItemId}|${leg.toItemId}`
+    const key = JSON.stringify([leg.fromItemId, leg.toItemId])
     if (!byPair.has(key)) byPair.set(key, leg)
   }
 
@@ -127,8 +128,9 @@ function plannedLegFor(
   byPair: Map<string, CanvasLeg>,
 ): CanvasLeg {
   const id = `leg-${from.id}-${to.id}`
-  const same = byPair.get(`${from.id}|${to.id}`)
-  if (same) {
+  const same = byPair.get(JSON.stringify([from.id, to.id]))
+  const verifiedKey = same?.[LEG_ROUTE_KEY]
+  if (same && (verifiedKey === undefined || verifiedKey === drivingRouteKey(from.poi, to.poi))) {
     return {
       // Preserve projections AND their absence; legacy metrics may be fallbacks.
       ...same,
@@ -152,6 +154,7 @@ function plannedLegFor(
       ...estimate,
       polyline: null,
       quality: 'estimate',
+      status: 'estimated',
       ...projectLegMetrics(estimate.distanceKm, estimate.durationMin, 'estimate', null),
     }
   }
@@ -164,6 +167,7 @@ function plannedLegFor(
     durationMin: 0,
     polyline: null,
     quality: 'pending',
+    status: 'pending',
   }
 }
 

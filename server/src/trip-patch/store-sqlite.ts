@@ -4,6 +4,7 @@
  * `withTransaction` uses the libSQL transaction connection
  * when available, so a failed patch apply leaves no partial writes behind.
  */
+import { readSqliteLegRows } from '../days/driver-sqlite.js'
 import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
@@ -47,11 +48,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
   }
 
   async listLegRows(tripId: string): Promise<LegRow[]> {
-    const { rows } = await this.db.run(
-      'SELECT id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality FROM legs WHERE trip_id = ?',
-      [tripId],
-    )
-    return rows as unknown as LegRow[]
+    return readSqliteLegRows(this.db, tripId)
   }
 
   async getDayTripId(dayId: string): Promise<string | null> {
@@ -209,12 +206,12 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
     await this.assertNoForeignOwner('items', leg.fromItemId, 'item', tripId)
     await this.assertNoForeignOwner('items', leg.toItemId, 'item', tripId)
     await this.db.run(
-      `INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality, verified_route_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          from_item_id = excluded.from_item_id, to_item_id = excluded.to_item_id, mode = excluded.mode,
          distance_km = excluded.distance_km, duration_min = excluded.duration_min, polyline = excluded.polyline,
-         quality = excluded.quality
+         quality = excluded.quality, verified_route_key = excluded.verified_route_key
        WHERE legs.trip_id = excluded.trip_id`,
       [
         leg.id,
@@ -226,6 +223,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
         leg.durationMin,
         leg.polyline,
         legQualityForWrite(leg.quality, leg.distanceKm, leg.durationMin, leg.polyline),
+        leg.verifiedRouteKey ?? null,
       ] as SqlValue[],
     )
     await this.assertCurrentOwner('legs', leg.id, 'leg', tripId)

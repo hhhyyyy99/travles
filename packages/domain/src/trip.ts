@@ -123,6 +123,9 @@ export function normalizeItemType(value: unknown): ItemType | undefined {
 export const LegQualitySchema = z.enum(['reference', 'estimate', 'measured', 'pending'])
 export type LegQuality = z.infer<typeof LegQualitySchema>
 
+export const LegStatusSchema = z.enum(['verified', 'estimated', 'pending'])
+export type LegStatus = z.infer<typeof LegStatusSchema>
+
 export const PoiRefSchema = z.object({
   amapId: z.string(),
   name: z.string(),
@@ -206,6 +209,7 @@ export const LegSchema = z.object({
   formattedDuration: z.string().optional(),
   polyline: z.array(z.tuple([z.number(), z.number()])).nullable(),
   quality: LegQualitySchema.optional(),
+  status: LegStatusSchema.optional(),
 })
 export type Leg = z.infer<typeof LegSchema>
 

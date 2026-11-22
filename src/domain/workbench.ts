@@ -865,6 +865,7 @@ function normalizeLeg(value: unknown): WorkbenchLeg | null {
   const distanceKm = finiteNumber(record.distanceKm)
   const durationMin = finiteNumber(record.durationMin)
   const polyline = normalizePolyline(record.polyline)
+  const status = LegSchema.shape.status.safeParse(record.status)
   return {
     id: typeof record.id === 'string' ? record.id : '',
     fromItemId,
@@ -876,6 +877,7 @@ function normalizeLeg(value: unknown): WorkbenchLeg | null {
     quality: normalizeWorkbenchLegQuality(record.quality, distanceKm, durationMin, polyline),
     // Keep only explicitly supplied valid fields; never infer from old fallbacks.
     ...normalizeLegMetricProjection(record),
+    ...(status.success && status.data !== undefined ? { status: status.data } : {}),
   }
 }
 

@@ -71,7 +71,16 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
   }
 
   async listLegRows(tripId: string): Promise<LegRow[]> {
-    return this.legRows.filter((row) => row.trip_id === tripId)
+    const items = new Map(
+      this.itemRows.filter((row) => row.trip_id === tripId).map((row) => [row.id, row.poi]),
+    )
+    return this.legRows
+      .filter((row) => row.trip_id === tripId)
+      .map((row) => ({
+        ...row,
+        from_poi: items.get(row.from_item_id),
+        to_poi: items.get(row.to_item_id),
+      }))
   }
 
   async getDayTripId(dayId: string): Promise<string | null> {
@@ -250,6 +259,7 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
         leg.durationMin,
         leg.polyline,
       )
+      existing.verified_route_key = leg.verifiedRouteKey ?? null
       return
     }
     this.legRows.push({
@@ -262,6 +272,7 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       duration_min: leg.durationMin,
       polyline: leg.polyline,
       quality: legQualityForWrite(leg.quality, leg.distanceKm, leg.durationMin, leg.polyline),
+      verified_route_key: leg.verifiedRouteKey ?? null,
     })
   }
 

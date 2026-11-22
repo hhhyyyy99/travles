@@ -206,6 +206,7 @@ void test('recomputeTripLegs estimates unknown pairs (haversine × 1.2, ~60 km/h
     durationMin: 0,
     polyline: null,
     quality: 'pending',
+    status: 'pending',
   })
 })
 

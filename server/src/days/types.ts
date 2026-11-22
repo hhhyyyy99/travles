@@ -28,9 +28,14 @@ export type {
   ItemImage,
   ActivityItem as CanvasItem,
   Day as CanvasDay,
-  Leg as CanvasLeg,
   TripCanvas,
 } from '@hailar/domain'
+
+import type { Leg } from '@hailar/domain'
+
+/** Internal proof carried by server-side reuse and omitted from JSON. */
+export const LEG_ROUTE_KEY = Symbol('verified route endpoints')
+export type CanvasLeg = Leg & { [LEG_ROUTE_KEY]?: string }
 
 import type { DayMetadataInput } from './metadata.js'
 
@@ -72,6 +77,9 @@ export interface LegRow {
   duration_min: unknown
   polyline: unknown
   quality?: unknown
+  verified_route_key?: unknown
+  from_poi?: unknown
+  to_poi?: unknown
 }
 
 /** Read-only driver seam (SQLite in production, in-memory in tests). */

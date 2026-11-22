@@ -73,7 +73,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     distance_km REAL,
     duration_min REAL,
     polyline TEXT,
-    quality TEXT
+    quality TEXT,
+    verified_route_key TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
@@ -227,6 +228,8 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
   } catch {
     // The column already exists on fresh databases or after a prior run.
   }
+  // Older quality values can reflect inferred geometry. Leave their provider source unknown.
+  await ensureColumn(db, 'legs', 'verified_route_key', 'TEXT')
 }
 
 /** Identifiers come only from the fixed migration declarations above. */

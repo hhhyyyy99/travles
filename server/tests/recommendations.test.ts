@@ -558,7 +558,7 @@ void test('route refresh replaces estimate rows with real metrics and preserves 
   const refreshed = await refreshTripLegs(store, 'trip-route', async () => real)
   assert.equal(refreshed.ok, true)
   if (refreshed.ok)
-    assert.deepEqual(refreshed.legs[0], {
+    assert.deepEqual(JSON.parse(JSON.stringify(refreshed.legs[0])) as unknown, {
       id: 'leg-item-a-item-b',
       fromItemId: 'item-a',
       toItemId: 'item-b',
@@ -567,6 +567,7 @@ void test('route refresh replaces estimate rows with real metrics and preserves 
       durationMin: 28,
       polyline: real.polyline,
       quality: 'measured',
+      status: 'verified',
       distanceMeters: 21400,
       durationSeconds: 1680,
       formattedDistance: '21.4 千米',
