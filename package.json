@@ -18,7 +18,11 @@
     "test": "pnpm run build:domain && node --import tsx --test tests/*.test.ts && pnpm --filter @hailar/server test",
     "test:browser": "node --test --test-concurrency=4 tests/app/*.browser.cjs",
     "test:app": "node --test --test-concurrency=4 tests/app/*.browser.cjs",
-    "test:app:prod": "pnpm run build && APP_MODE=preview node --test --test-concurrency=4 tests/app/*.browser.cjs"
+    "test:app:prod": "pnpm run build && APP_MODE=preview node --test --test-concurrency=4 tests/app/*.browser.cjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "quality:changed": "node scripts/check-changed-quality.mjs"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
@@ -30,13 +34,17 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
     "@types/leaflet": "^1.9.16",
+    "@types/node": "24.13.4",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.0",
+    "eslint": "10.11.0",
     "playwright": "~1.62.1",
+    "prettier": "3.9.6",
     "tailwindcss": "^4.3.0",
     "tsx": "^4.20.0",
     "typescript": "~5.9.0",
+    "typescript-eslint": "8.72.2",
     "vite": "^8.2.0"
   },
   "packageManager": "pnpm@11.17.0"
