@@ -126,6 +126,18 @@ export function recommendationCardInput(poi: RecommendationPoi, dayId: string, i
   }
 }
 
+/** Preserve authored stash content when using the existing manual card flow. */
+export function stashCardInput(stash: StashItem, dayId: string, index?: number): WorkbenchItemCreateInput {
+  const input = stash.poi
+    ? recommendationCardInput(stash.poi, dayId, index)
+    : { dayId, title: '', type: 'other' as const, note: '', poi: null, images: [], ...(index === undefined ? {} : { index }) }
+  return {
+    ...input,
+    title: stash.title ?? input.title,
+    note: stash.note ?? input.note,
+  }
+}
+
 export function poiRefFromRecommendation(poi: RecommendationPoi): PoiRef {
   return {
     amapId: poi.amapId || poi.id,
@@ -167,18 +179,21 @@ function normalizeStash(value: unknown, expectedTripId: string): StashItem | nul
   if (value === null || typeof value !== 'object') return null
   const record = value as Record<string, unknown>
   const poi = normalizePoi(record.poi)
-  if (!poi || typeof record.id !== 'string' || !record.id) return null
+  const fields = readStashFields({
+    tripId: record.tripId,
+    title: record.title,
+    note: record.note,
+    category: record.category,
+    createdAt: record.createdAt,
+  }, expectedTripId)
+  if (typeof record.id !== 'string' || !record.id) return null
+  if (!poi && !(record.poi === null && fields.title !== undefined)) return null
   return {
     id: record.id,
     poi,
     origin: record.origin === 'favorite' ? 'favorite' : 'recommend',
     addedAt: typeof record.addedAt === 'string' ? record.addedAt : '',
-    ...readStashFields({
-      tripId: record.tripId,
-      title: record.title,
-      category: record.category,
-      createdAt: record.createdAt,
-    }, expectedTripId),
+    ...fields,
   }
 }
 

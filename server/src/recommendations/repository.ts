@@ -38,7 +38,7 @@ export class RecommendationsRepository {
     if (!poi) return { ok: false, error: '推荐点位数据无效', code: 'invalid' }
     const origin: RecommendationOrigin = requestedOrigin === 'favorite' ? 'favorite' : 'recommend'
     const current = await this.snapshot(tripId)
-    const existing = current.stash.find((item) => poiKey(item.poi) === poiKey(poi))
+    const existing = current.stash.find((item) => item.poi !== null && poiKey(item.poi) === poiKey(poi))
     if (existing) return { ok: true, value: existing }
     const item: StashItem = {
       id: randomUUID(),
@@ -125,7 +125,7 @@ export class RecommendationsRepository {
       const removed = await this.driver.deleteFavoriteRow(tripId, favoriteId)
       if (!removed) return { ok: false, error: '收藏点位不存在', code: 'not_found' }
       if (favorite) {
-        const stash = current.stash.find((entry) => poiKey(entry.poi) === poiKey(favorite!.poi))
+        const stash = current.stash.find((entry) => entry.poi !== null && poiKey(entry.poi) === poiKey(favorite!.poi))
         if (stash?.origin === 'favorite') {
           try {
             await this.driver.deleteStashRow(tripId, stash.id)
@@ -201,17 +201,28 @@ export function normalizePoi(value: unknown): RecommendationPoi | null {
   }
 }
 
-function mapStashRow(row: StashRow, tripId: string): StashItem | null {
+/** Shared by repository reads, patch projection, and the model snapshot. */
+export function mapStashRow(row: StashRow, tripId: string): StashItem | null {
   const id = text(row?.id, 160)
   const decoded = parsePoiWithSource(row?.poi)
   if (!id || !decoded) return null
   const { poi, source } = decoded
+  const fields = readStashFields({
+    tripId: row?.trip_id,
+    title: row?.title ?? source?.name,
+    note: row?.note,
+    category: row?.category ?? source?.category,
+    createdAt: row?.created_at ?? row?.added_at,
+  }, tripId)
+  // Only JSON null deliberately represents a text candidate. A malformed or
+  // missing POI remains corrupt, even when some explicit content is readable.
+  if (poi === null && fields.title === undefined) return null
   return {
     id,
     poi,
     origin: row?.origin === 'favorite' ? 'favorite' : 'recommend',
     addedAt: text(row?.added_at, 80),
-    ...readStashFields({ tripId: row?.trip_id, title: source.name, category: source.category, createdAt: row?.added_at }, tripId),
+    ...fields,
   }
 }
 
@@ -226,10 +237,11 @@ function parsePoi(value: unknown): RecommendationPoi | null {
   return parsePoiWithSource(value)?.poi ?? null
 }
 
-function parsePoiWithSource(value: unknown): { poi: RecommendationPoi; source: Record<string, unknown> } | null {
+function parsePoiWithSource(value: unknown): { poi: RecommendationPoi | null; source: Record<string, unknown> | null } | null {
   if (typeof value !== 'string' || value.trim() === '') return null
   try {
     const source: unknown = JSON.parse(value)
+    if (source === null) return { poi: null, source: null }
     const poi = normalizePoi(source)
     return poi ? { poi, source: source as Record<string, unknown> } : null
   } catch {

@@ -94,6 +94,28 @@ test('patch preserves all seven operations, nullable clearing, unknown-field str
   assert.equal(tripPatchInputSchema.safeParse({ ops: [{ op: 'add_item', itemId: 'i', dayId: 'd', type: 'food', title: '餐饮', note: null }] }).success, false)
 })
 
+test('stash patch operations share strict authored content, raw notes, metadata and compatible target types', () => {
+  const patch = {
+    ops: [
+      { op: 'add_stash', stashId: ' candidate ', title: '  自由活动  ', note: '  备注\n ', category: '  任意分类  ', poi: null, createdAt: 'ignored' },
+      { op: 'move_stash_to_day', stashId: ' candidate ', itemId: ' scheduled ', dayId: ' day ', order: 0, type: 'transit', pending: false, legPending: true, timeRange: ' 午后 ', cost: '' },
+    ],
+  }
+  const parsed = TripPatchSchema.parse(patch)
+  assert.deepEqual(parsed.ops[0], { op: 'add_stash', stashId: 'candidate', title: '  自由活动  ', note: '  备注\n ', category: '  任意分类  ', poi: null })
+  assert.equal(parsed.ops[1]?.op, 'move_stash_to_day')
+  assert.deepEqual(parseTripPatchInput(patch), { ok: true, value: { ops: [parsed.ops[0], { ...parsed.ops[1], type: 'traffic' }] } })
+  assert.equal(TripPatchSchema.safeParse({ ops: [{ op: 'add_stash', stashId: 's', title: '候选' }] }).success, true)
+  assert.equal(TripPatchSchema.safeParse({ ops: [{ op: 'add_stash', stashId: 's', title: 'x'.repeat(80), category: 'x'.repeat(80), note: 'x'.repeat(500) }] }).success, true)
+  for (const fields of [
+    { title: ' ' }, { title: 'x'.repeat(81) }, { note: null }, { note: 'x'.repeat(501) },
+    { category: ' ' }, { category: 'x'.repeat(81) }, { poi: { name: 'fake' } },
+  ]) assert.equal(TripPatchSchema.safeParse({ ops: [{ op: 'add_stash', stashId: 's', title: '候选', ...fields }] }).success, false)
+  for (const fields of [{ order: -1 }, { order: 0.5 }, { type: 'hotel' }, { timeRange: null }, { cost: null }, { itemId: ' ' }, { stashId: 'x'.repeat(65) }]) {
+    assert.equal(TripPatchSchema.safeParse({ ops: [{ op: 'move_stash_to_day', stashId: 's', itemId: 'i', dayId: 'd', ...fields }] }).success, false)
+  }
+})
+
 test('patch keeps operation count, identifier and order limits while accepting compatible activity names', () => {
   const op = { op: 'remove_item', itemId: 'x'.repeat(64) }
   assert.equal(tripPatchInputSchema.safeParse({ ops: Array(200).fill(op) }).success, true)

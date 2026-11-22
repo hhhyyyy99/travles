@@ -2,7 +2,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { LegRow, DayRow, ItemRow } from '../days/types.js'
 import type { TripSummary } from '../trips/types.js'
-import type { PatchConfirmationRecord } from '../trip-patch/types.js'
+import type { PatchConfirmationRecord, TripPatchStoreDriver } from '../trip-patch/types.js'
+import type { StashRow } from '../recommendations/types.js'
 
 export function createPatchConfirmation(snapshotHash: string, choices: string[]): PatchConfirmationRecord {
   return {
@@ -13,20 +14,39 @@ export function createPatchConfirmation(snapshotHash: string, choices: string[])
   }
 }
 
-/** Hash only fields that describe the current itinerary, with stable row order. */
+/** Raw storage rows stay authoritative even when a tolerant view drops bad data. */
+export type TripSnapshotRows = { days: DayRow[]; items: ItemRow[]; legs: LegRow[]; stash: StashRow[] }
+
+export async function readTripSnapshotRows(store: TripPatchStoreDriver, tripId: string): Promise<TripSnapshotRows> {
+  const [days, items, legs, stash] = await Promise.all([
+    store.listDayRows(tripId), store.listItemRows(tripId), store.listLegRows(tripId), store.listStashRows(tripId),
+  ])
+  if (![days, items, legs, stash].every(Array.isArray)) throw new Error('invalid trip snapshot rows')
+  return { days, items, legs, stash }
+}
+
+/** Hash every raw itinerary/stash field, including invalid JSON, metadata and blobs. */
 export function hashTripSnapshot(
   trip: Pick<TripSummary, 'id' | 'title' | 'startDate' | 'endDate' | 'days' | 'nights'>,
   dayRows: DayRow[],
   itemRows: ItemRow[],
   legRows: LegRow[],
+  stashRows: StashRow[] = [],
 ): string {
-  const payload = {
-    trip: stableValue(trip),
-    days: stableRows(dayRows),
-    items: stableRows(itemRows),
-    legs: stableRows(legRows),
-  }
-  return createHash('sha256').update(JSON.stringify(payload)).digest('hex')
+  return hashValue({ trip: stableValue(trip), ...snapshotPayload(dayRows, itemRows, legRows, stashRows) })
+}
+
+/** Proposal previews bind to the exact rows returned by their snapshot tool. */
+export function hashTripSnapshotRows(rows: TripSnapshotRows): string {
+  return hashValue(snapshotPayload(rows.days, rows.items, rows.legs, rows.stash))
+}
+
+function snapshotPayload(days: DayRow[], items: ItemRow[], legs: LegRow[], stash: StashRow[]) {
+  return { days: stableRows(days), items: stableRows(items), legs: stableRows(legs), stash: stableRows(stash) }
+}
+
+function hashValue(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
 function stableRows(rows: unknown): unknown[] {

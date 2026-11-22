@@ -8,11 +8,12 @@ export type RecommendationMarker = RecommendationPoi & { saved?: boolean }
 
 export function renderRecommendationPois(
   handle: RouteMapHandle,
-  pois: RecommendationMarker[],
+  pois: Array<RecommendationMarker | null>,
   onPoiClick: (id: string) => void,
 ): void {
   handle.workbenchRecommendationLayer.clearLayers()
   for (const poi of pois) {
+    if (poi === null) continue
     const marker = L.marker([poi.lat, poi.lng], {
       icon: L.divIcon({
         className: `wb-recommendation-marker${poi.saved ? ' wb-recommendation-marker-saved' : ''}`,

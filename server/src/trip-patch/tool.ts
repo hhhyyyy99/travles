@@ -23,6 +23,7 @@
  */
 import { createTool } from '@mastra/core/tools'
 import { applyTripPatch } from './apply.js'
+import type { TripPatchApplyOptions } from './apply.js'
 import { tripPatchInputSchema } from './schema.js'
 import type { TripPatchRecord, TripPatchStoreDriver } from './types.js'
 
@@ -42,6 +43,8 @@ export type PatchTurnState = {
   allowApply: boolean
   /** A model tried to write before confirmation; keep the turn non-fatal. */
   blockedBeforeConfirmation: boolean
+  /** Snapshot guard rechecked on the patch's transaction connection. */
+  beforeApply?: TripPatchApplyOptions['beforeApply']
 }
 
 export function createPatchTurnState(maxAttempts = 3, allowApply = true): PatchTurnState {
@@ -92,10 +95,13 @@ export function createApplyTripPatchTool(options: ApplyTripPatchToolOptions = {}
       } catch {
         return { ok: false, retryable: false, error: '行程存储不可用，请稍后重试。' }
       }
-      const result = await applyTripPatch(store, tripId, input)
+      const result = await applyTripPatch(store, tripId, input, { beforeApply: state.beforeApply })
       if (result.ok) {
         state.applied = { summary: result.summary, stats: result.stats, patch: result.patch }
         return { ok: true, summary: result.summary, stats: result.stats }
+      }
+      if (!state.allowApply) {
+        return { ok: false, retryable: false, pendingConfirmation: true, error: result.error }
       }
       if (state.attempts >= state.maxAttempts) {
         state.exhausted = true
