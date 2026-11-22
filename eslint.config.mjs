@@ -1,4 +1,5 @@
 import { defineConfig, globalIgnores } from 'eslint/config'
+import reactHooks from 'eslint-plugin-react-hooks'
 import tseslint from 'typescript-eslint'
 
 export default defineConfig([
@@ -18,7 +19,11 @@ export default defineConfig([
   {
     files: ['**/*.{js,cjs,mjs,jsx,ts,tsx,mts,cts}'],
     rules: {
+      eqeqeq: ['error', 'always', { null: 'ignore' }],
+      'no-var': 'error',
+      'prefer-const': 'error',
       'no-debugger': 'error',
+      'no-fallthrough': 'error',
       'no-unreachable': 'error',
     },
   },
@@ -27,7 +32,19 @@ export default defineConfig([
     languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
   },
   {
+    files: ['src/**/*.{js,jsx,ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks },
+    rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'error',
+    },
+  },
+  {
     files: ['**/*.{ts,tsx,mts,cts}'],
+    plugins: { '@typescript-eslint': tseslint.plugin },
+    rules: {
+      '@typescript-eslint/consistent-type-imports': 'error',
+    },
     languageOptions: {
       parser: tseslint.parser,
     },
@@ -40,7 +57,6 @@ export default defineConfig([
       'packages/domain/src/**/*.{ts,tsx,mts,cts}',
       'vite.config.ts',
     ],
-    plugins: { '@typescript-eslint': tseslint.plugin },
     languageOptions: {
       parserOptions: {
         project: [
@@ -54,6 +70,7 @@ export default defineConfig([
     rules: {
       '@typescript-eslint/await-thenable': 'error',
       '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/switch-exhaustiveness-check': 'error',
       '@typescript-eslint/no-misused-promises': [
         'error',
         { checksVoidReturn: { attributes: false } },
