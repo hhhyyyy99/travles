@@ -9,7 +9,12 @@ import assert from 'node:assert/strict'
 
 import { MemoryItemsAdminStoreDriver } from '../src/items-admin/driver-memory.js'
 import { ItemsAdminRepository } from '../src/items-admin/repository.js'
-import { adjacentTripPairs, estimateLeg, haversineKm, recomputeTripLegs } from '../src/items-admin/legs.js'
+import {
+  adjacentTripPairs,
+  estimateLeg,
+  haversineKm,
+  recomputeTripLegs,
+} from '../src/items-admin/legs.js'
 import type { CanvasItem, CanvasLeg, ItemRow, LegRow, PoiRef } from '../src/days/types.js'
 
 const TRIP = 't1'
@@ -18,7 +23,12 @@ function poi(lng: number, lat: number, name = '点'): PoiRef {
   return { amapId: '', name, lat, lng, category: '', rating: 0, introSummary: '' }
 }
 
-function item(id: string, dayId: string, order: number, extra: Partial<CanvasItem> = {}): CanvasItem {
+function item(
+  id: string,
+  dayId: string,
+  order: number,
+  extra: Partial<CanvasItem> = {},
+): CanvasItem {
   return {
     id,
     dayId,
@@ -51,9 +61,26 @@ function legRow(id: string, from: string, to: string, extra: Partial<LegRow> = {
 }
 
 /** Two days: day-1 = [i1 (POI 49.2/119.7), i2 (POI 49.42/119.85), i3], day-2 = [i4, i5]. */
-function seedDriver(driver: MemoryItemsAdminStoreDriver, legs: LegRow[] = [legRow('leg-seed', 'i1', 'i2')]): void {
-  driver.dayRows.set('day-1', { id: 'day-1', trip_id: TRIP, idx: 0, date: '2026-10-02', theme: '抵达', color: '' })
-  driver.dayRows.set('day-2', { id: 'day-2', trip_id: TRIP, idx: 1, date: '2026-10-03', theme: '草原', color: '' })
+function seedDriver(
+  driver: MemoryItemsAdminStoreDriver,
+  legs: LegRow[] = [legRow('leg-seed', 'i1', 'i2')],
+): void {
+  driver.dayRows.set('day-1', {
+    id: 'day-1',
+    trip_id: TRIP,
+    idx: 0,
+    date: '2026-10-02',
+    theme: '抵达',
+    color: '',
+  })
+  driver.dayRows.set('day-2', {
+    id: 'day-2',
+    trip_id: TRIP,
+    idx: 1,
+    date: '2026-10-03',
+    theme: '草原',
+    color: '',
+  })
   const rows: ItemRow[] = [
     itemRow('i1', 'day-1', 0, poi(119.7, 49.2)),
     itemRow('i2', 'day-1', 1, poi(119.85, 49.42)),
@@ -65,7 +92,12 @@ function seedDriver(driver: MemoryItemsAdminStoreDriver, legs: LegRow[] = [legRo
   for (const leg of legs) driver.legRows.set(leg.id as string, leg)
 }
 
-function itemRow(id: string, dayId: string, order: number, poiValue: PoiRef | null = null): ItemRow {
+function itemRow(
+  id: string,
+  dayId: string,
+  order: number,
+  poiValue: PoiRef | null = null,
+): ItemRow {
   return {
     id,
     trip_id: TRIP,
@@ -101,7 +133,7 @@ function driverItems(driver: MemoryItemsAdminStoreDriver): CanvasItem[] {
 // Pure legs recompute
 // ---------------------------------------------------------------------------
 
-test('recomputeTripLegs reuses a stored same-direction pair verbatim', () => {
+void test('recomputeTripLegs reuses a stored same-direction pair verbatim', () => {
   const stored: CanvasLeg[] = [
     {
       id: 'leg-old',
@@ -127,7 +159,7 @@ test('recomputeTripLegs reuses a stored same-direction pair verbatim', () => {
   ])
 })
 
-test('recomputeTripLegs estimates a reversed pair instead of replaying one-way geometry', () => {
+void test('recomputeTripLegs estimates a reversed pair instead of replaying one-way geometry', () => {
   const stored: CanvasLeg[] = [
     {
       id: 'leg-old',
@@ -143,21 +175,24 @@ test('recomputeTripLegs estimates a reversed pair instead of replaying one-way g
       ],
     },
   ]
-  const legs = recomputeTripLegs([
-    item('a', 'd', 0, { poi: poi(119.7, 49.2) }),
-    item('b', 'd', 1, { poi: poi(119.85, 49.42) }),
-  ], stored)
+  const legs = recomputeTripLegs(
+    [item('a', 'd', 0, { poi: poi(119.7, 49.2) }), item('b', 'd', 1, { poi: poi(119.85, 49.42) })],
+    stored,
+  )
   assert.equal(legs.length, 1)
   assert.equal(legs[0]!.distanceKm, 32.1, 'the ordered pair gets a straight-line estimate')
   assert.equal(legs[0]!.durationMin, 32)
   assert.equal(legs[0]!.polyline, null, 'one-way geometry is never reversed into the new direction')
 })
 
-test('recomputeTripLegs estimates unknown pairs (haversine × 1.2, ~60 km/h) and empties impossible ones', () => {
+void test('recomputeTripLegs estimates unknown pairs (haversine × 1.2, ~60 km/h) and empties impossible ones', () => {
   // ~29 km straight line between the two seed POIs → × 1.2 road factor.
   const estimated = estimateLeg(poi(119.7, 49.2), poi(119.85, 49.42))
   assert.ok(estimated !== null)
-  assert.ok(estimated.distanceKm > 25 && estimated.distanceKm < 40, `unexpected estimate ${estimated.distanceKm}`)
+  assert.ok(
+    estimated.distanceKm > 25 && estimated.distanceKm < 40,
+    `unexpected estimate ${estimated.distanceKm}`,
+  )
   assert.equal(estimated.durationMin, Math.max(1, Math.round(estimated.distanceKm)))
 
   // No coordinates on either side → the empty leg the UI hides.
@@ -174,12 +209,12 @@ test('recomputeTripLegs estimates unknown pairs (haversine × 1.2, ~60 km/h) and
   })
 })
 
-test('haversineKm matches the known Hailar–Ergun distance ballpark', () => {
+void test('haversineKm matches the known Hailar–Ergun distance ballpark', () => {
   const km = haversineKm([119.766, 49.212], [120.183, 50.243])
   assert.ok(km > 110 && km < 130, `unexpected distance ${km}`)
 })
 
-test('recomputeTripLegs keeps callers without day order on same-day pairs', () => {
+void test('recomputeTripLegs keeps callers without day order on same-day pairs', () => {
   const legs = recomputeTripLegs(
     [item('a', 'd1', 0), item('b', 'd1', 1), item('c', 'd2', 0, { poi: poi(119.7, 49.2) })],
     [],
@@ -189,13 +224,8 @@ test('recomputeTripLegs keeps callers without day order on same-day pairs', () =
   assert.equal(legs[0]!.toItemId, 'b')
 })
 
-test('authoritative day order adds exact bridges and skips empty-day gaps', () => {
-  const items = [
-    item('a', 'd1', 0),
-    item('b', 'd1', 1),
-    item('c', 'd3', 0),
-    item('d', 'd4', 0),
-  ]
+void test('authoritative day order adds exact bridges and skips empty-day gaps', () => {
+  const items = [item('a', 'd1', 0), item('b', 'd1', 1), item('c', 'd3', 0), item('d', 'd4', 0)]
   const dayOrder = [
     { id: 'd1', index: 0 },
     { id: 'd2', index: 1 },
@@ -203,10 +233,19 @@ test('authoritative day order adds exact bridges and skips empty-day gaps', () =
     { id: 'd4', index: 3 },
   ]
   const pairs = adjacentTripPairs(items, dayOrder)
-  assert.deepEqual(pairs.map((pair) => [pair.from.id, pair.to.id]), [['a', 'b'], ['c', 'd']])
+  assert.deepEqual(
+    pairs.map((pair) => [pair.from.id, pair.to.id]),
+    [
+      ['a', 'b'],
+      ['c', 'd'],
+    ],
+  )
   assert.deepEqual(
     recomputeTripLegs(items, [], dayOrder).map((leg) => [leg.fromItemId, leg.toItemId]),
-    [['a', 'b'], ['c', 'd']],
+    [
+      ['a', 'b'],
+      ['c', 'd'],
+    ],
   )
 })
 
@@ -214,7 +253,7 @@ test('authoritative day order adds exact bridges and skips empty-day gaps', () =
 // Repository coverage (memory driver)
 // ---------------------------------------------------------------------------
 
-test('moveItem reorders within a day: renumbers orders and recomputes legs with reuse', async () => {
+void test('moveItem reorders within a day: renumbers orders and recomputes legs with reuse', async () => {
   const driver = new MemoryItemsAdminStoreDriver()
   seedDriver(driver)
   const repo = new ItemsAdminRepository(driver)
@@ -246,10 +285,13 @@ test('moveItem reorders within a day: renumbers orders and recomputes legs with 
   assert.ok(tail)
   assert.equal(tail.distanceKm, 0)
   assert.equal(tail.polyline, null)
-  assert.equal(result.legs.find((leg) => leg.fromItemId === 'i3' && leg.toItemId === 'i4')?.quality, 'pending')
+  assert.equal(
+    result.legs.find((leg) => leg.fromItemId === 'i3' && leg.toItemId === 'i4')?.quality,
+    'pending',
+  )
 })
 
-test('moveItem crosses days, renumbers both, and estimates the new adjacent pairs', async () => {
+void test('moveItem crosses days, renumbers both, and estimates the new adjacent pairs', async () => {
   const driver = new MemoryItemsAdminStoreDriver()
   seedDriver(driver)
   const repo = new ItemsAdminRepository(driver)
@@ -277,7 +319,7 @@ test('moveItem crosses days, renumbers both, and estimates the new adjacent pair
   assert.equal(result.item.order, 0, 'the response carries the moved item with its new order')
 })
 
-test('moveItem rejects unknown items and days; a missing index appends at the end', async () => {
+void test('moveItem rejects unknown items and days; a missing index appends at the end', async () => {
   const driver = new MemoryItemsAdminStoreDriver()
   seedDriver(driver)
   const repo = new ItemsAdminRepository(driver)
@@ -294,7 +336,7 @@ test('moveItem rejects unknown items and days; a missing index appends at the en
   assert.equal(day1[day1.length - 1]!.id, 'i1')
 })
 
-test('copyItem duplicates the card with a fresh id, POI and images intact', async () => {
+void test('copyItem duplicates the card with a fresh id, POI and images intact', async () => {
   const driver = new MemoryItemsAdminStoreDriver()
   seedDriver(driver)
   driver.itemRows.set('i1', {
@@ -322,12 +364,16 @@ test('copyItem duplicates the card with a fresh id, POI and images intact', asyn
   )
 })
 
-test('createItem adds a free-text or POI card at the requested index', async () => {
+void test('createItem adds a free-text or POI card at the requested index', async () => {
   const driver = new MemoryItemsAdminStoreDriver()
   seedDriver(driver)
   const repo = new ItemsAdminRepository(driver)
 
-  const freeText = await repo.createItem(TRIP, { dayId: 'day-2', title: '  自由活动  ', note: '草原骑马' })
+  const freeText = await repo.createItem(TRIP, {
+    dayId: 'day-2',
+    title: '  自由活动  ',
+    note: '草原骑马',
+  })
   assert.ok(freeText.ok)
   if (freeText.ok) {
     assert.equal(freeText.item.poi, null, 'free-text cards carry no POI')
@@ -365,7 +411,7 @@ test('createItem adds a free-text or POI card at the requested index', async () 
   assert.equal(badImages.ok, false)
 })
 
-test('updateItem edits note/images in place and leaves positions untouched', async () => {
+void test('updateItem edits note/images in place and leaves positions untouched', async () => {
   const driver = new MemoryItemsAdminStoreDriver()
   seedDriver(driver)
   const repo = new ItemsAdminRepository(driver)
@@ -392,7 +438,7 @@ test('updateItem edits note/images in place and leaves positions untouched', asy
   assert.deepEqual(ghost, { ok: false, error: '卡片不存在', code: 'not_found' })
 })
 
-test('deleteItem removes the card, closes the gap, and recomputes legs', async () => {
+void test('deleteItem removes the card, closes the gap, and recomputes legs', async () => {
   const driver = new MemoryItemsAdminStoreDriver()
   seedDriver(driver)
   const repo = new ItemsAdminRepository(driver)
@@ -418,7 +464,7 @@ test('deleteItem removes the card, closes the gap, and recomputes legs', async (
   assert.deepEqual(ghost, { ok: false, error: '卡片不存在', code: 'not_found' })
 })
 
-test('driver write failures surface as storage errors instead of throwing', async () => {
+void test('driver write failures surface as storage errors instead of throwing', async () => {
   const driver = new MemoryItemsAdminStoreDriver()
   seedDriver(driver)
   const repo = new ItemsAdminRepository(driver)
@@ -440,7 +486,7 @@ test('driver write failures surface as storage errors instead of throwing', asyn
   if (!del.ok) assert.equal(del.error, '删除失败')
 })
 
-test('layout writes roll back cards and orders when the legs write fails late', async () => {
+void test('layout writes roll back cards and orders when the legs write fails late', async () => {
   class FailLegReplacementDriver extends MemoryItemsAdminStoreDriver {
     override async replaceLegs(): Promise<void> {
       throw new Error('route write failed')

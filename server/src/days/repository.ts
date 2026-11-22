@@ -24,7 +24,10 @@ import type {
 } from './types.js'
 
 /** Tolerant whole-trip canvas read; a failing driver → empty canvas. */
-export async function readTripCanvas(driver: WorkbenchStoreDriver, tripId: string): Promise<TripCanvas> {
+export async function readTripCanvas(
+  driver: WorkbenchStoreDriver,
+  tripId: string,
+): Promise<TripCanvas> {
   let dayRows: DayRow[]
   let itemRows: ItemRow[]
   let legRows: LegRow[]
@@ -45,7 +48,12 @@ export async function readTripCanvas(driver: WorkbenchStoreDriver, tripId: strin
  * items under their day, and sorts days by idx / items by order. Legs that
  * reference unknown items are dropped.
  */
-export function assembleCanvas(dayRows: DayRow[], itemRows: ItemRow[], legRows: LegRow[], tripId?: string): TripCanvas {
+export function assembleCanvas(
+  dayRows: DayRow[],
+  itemRows: ItemRow[],
+  legRows: LegRow[],
+  tripId?: string,
+): TripCanvas {
   const itemsByDay = new Map<string, CanvasItem[]>()
   const itemIds = new Set<string>()
   for (const row of itemRows) {
@@ -137,7 +145,8 @@ export function normalizeLegQuality(
   durationMin: number,
   polyline: [number, number][] | null,
 ): LegQuality {
-  if (value === 'reference' || value === 'estimate' || value === 'measured' || value === 'pending') return value
+  if (value === 'reference' || value === 'estimate' || value === 'measured' || value === 'pending')
+    return value
   if (distanceKm <= 0 && durationMin <= 0) return 'pending'
   return polyline === null ? 'estimate' : 'measured'
 }
@@ -159,13 +168,15 @@ export function mapPoiRef(value: unknown): PoiRef | null {
   const record = parsed as Record<string, unknown>
   const name = asText(record.name)
   if (!name) return null
-  const location = record.location !== null && typeof record.location === 'object'
-    ? (record.location as Record<string, unknown>)
-    : {}
+  const location =
+    record.location !== null && typeof record.location === 'object'
+      ? (record.location as Record<string, unknown>)
+      : {}
   const accommodationBaseId = asText(record.accommodationBaseId)
-  const accommodationType = record.accommodationType === 'area' || record.accommodationType === 'hotel'
-    ? record.accommodationType
-    : undefined
+  const accommodationType =
+    record.accommodationType === 'area' || record.accommodationType === 'hotel'
+      ? record.accommodationType
+      : undefined
   const accommodationNotes = asText(record.accommodationNotes)
   const migrationVersion = Number(record.accommodationMigrationVersion)
   return {
@@ -180,7 +191,9 @@ export function mapPoiRef(value: unknown): PoiRef | null {
     ...(accommodationBaseId ? { accommodationBaseId } : {}),
     ...(accommodationType ? { accommodationType } : {}),
     ...(accommodationNotes ? { accommodationNotes } : {}),
-    ...(Number.isInteger(migrationVersion) && migrationVersion > 0 ? { accommodationMigrationVersion: migrationVersion } : {}),
+    ...(Number.isInteger(migrationVersion) && migrationVersion > 0
+      ? { accommodationMigrationVersion: migrationVersion }
+      : {}),
     category: asText(record.category),
     rating: asFiniteNumber(record.rating),
     introSummary: asText(record.introSummary),

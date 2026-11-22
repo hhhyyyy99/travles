@@ -35,7 +35,9 @@ export type RouteRefreshOptions = {
 type CachedRoute = { result: RouteLegResult; expiresAt: number }
 
 /** Internal read metadata, separate from the provider's legacy metric shape. */
-type NormalizedRouteResult = RouteLegResult & { metricProjection: ReturnType<typeof projectLegMetrics> }
+type NormalizedRouteResult = RouteLegResult & {
+  metricProjection: ReturnType<typeof projectLegMetrics>
+}
 
 /** Small TTL/LRU-ish cache for successful ordered route pairs. */
 export class RouteLookupCache {
@@ -101,9 +103,12 @@ export const routeAmapLeg: RouteLegSearch = async (input) => {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), DEFAULT_LOOKUP_TIMEOUT_MS)
     try {
-      const response = await fetch(`https://restapi.amap.com/v3/direction/driving?${params.toString()}`, {
-        signal: controller.signal,
-      })
+      const response = await fetch(
+        `https://restapi.amap.com/v3/direction/driving?${params.toString()}`,
+        {
+          signal: controller.signal,
+        },
+      )
       if (!response.ok) return pendingRoute('路线服务暂不可用。')
       const payload = (await response.json()) as unknown
       return parseAmapRoute(payload)
@@ -130,7 +135,8 @@ export function parseAmapRoute(payload: unknown): RouteLegResult {
     return pendingRoute('路线服务未返回可用路线。')
   }
   const routeValue = Array.isArray(record.route) ? (record.route as unknown[])[0] : record.route
-  if (routeValue === null || typeof routeValue !== 'object') return pendingRoute('路线服务未返回可用路线。')
+  if (routeValue === null || typeof routeValue !== 'object')
+    return pendingRoute('路线服务未返回可用路线。')
   const route = routeValue as Record<string, unknown>
   const paths = Array.isArray(route.paths) ? route.paths : []
   const path = paths[0]
@@ -138,7 +144,12 @@ export function parseAmapRoute(payload: unknown): RouteLegResult {
 
   const distanceMeters = finiteNumber((path as Record<string, unknown>).distance)
   const durationSeconds = finiteNumber((path as Record<string, unknown>).duration)
-  if (distanceMeters === null || durationSeconds === null || distanceMeters < 0 || durationSeconds < 0) {
+  if (
+    distanceMeters === null ||
+    durationSeconds === null ||
+    distanceMeters < 0 ||
+    durationSeconds < 0
+  ) {
     return pendingRoute('路线服务未返回完整距离和时间。')
   }
   const polyline = parsePolyline(path as Record<string, unknown>)
@@ -181,7 +192,10 @@ function parsePolyline(path: Record<string, unknown>): Array<[number, number]> |
 }
 
 /** Compare ordered WGS-84 endpoints without rounding or using display names. */
-export function drivingRouteKey(from: RoutePoint | undefined, to: RoutePoint | undefined): string | null {
+export function drivingRouteKey(
+  from: RoutePoint | undefined,
+  to: RoutePoint | undefined,
+): string | null {
   const start = from && validPoint(from)
   const end = to && validPoint(to)
   return start && end ? JSON.stringify([start.lat, start.lng, end.lat, end.lng]) : null
@@ -221,7 +235,9 @@ export async function refreshTripLegs(
   tripId: string,
   provider: RouteLegSearch = routeAmapLeg,
   options: RouteRefreshOptions = {},
-): Promise<{ ok: true; legs: CanvasLeg[]; summary: RouteRefreshSummary } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; legs: CanvasLeg[]; summary: RouteRefreshSummary } | { ok: false; error: string }
+> {
   let dayRows: Awaited<ReturnType<ItemsAdminStoreDriver['listDayRows']>>
   let itemRows: Awaited<ReturnType<ItemsAdminStoreDriver['listItemRows']>>
   let legRows: Awaited<ReturnType<ItemsAdminStoreDriver['listLegRows']>>
@@ -244,7 +260,9 @@ export async function refreshTripLegs(
   const byPair = new Map(previous.map((leg) => [`${leg.fromItemId}|${leg.toItemId}`, leg]))
   const dayOrder: LegDayOrder[] = (Array.isArray(dayRows) ? dayRows : [])
     .map((row) => ({ id: typeof row?.id === 'string' ? row.id : '', index: Number(row?.idx) }))
-    .filter((day): day is LegDayOrder => day.id !== '' && Number.isInteger(day.index) && day.index >= 0)
+    .filter(
+      (day): day is LegDayOrder => day.id !== '' && Number.isInteger(day.index) && day.index >= 0,
+    )
   const pairs = adjacentTripPairs(items, dayOrder).map((pair) => ({
     ...pair,
     old: byPair.get(`${pair.from.id}|${pair.to.id}`),
@@ -256,7 +274,10 @@ export async function refreshTripLegs(
   const lookupTimeoutMs = clampPositiveInt(options.lookupTimeoutMs, DEFAULT_LOOKUP_TIMEOUT_MS)
   const maxDurationMs = clampPositiveInt(options.maxDurationMs, DEFAULT_REFRESH_BUDGET_MS)
   const deadline = now() + maxDurationMs
-  const resolved: Array<NormalizedRouteResult | null> = Array.from({ length: pairs.length }, () => null)
+  const resolved: Array<NormalizedRouteResult | null> = Array.from(
+    { length: pairs.length },
+    () => null,
+  )
   let cursor = 0
 
   const worker = async (): Promise<void> => {
@@ -317,7 +338,9 @@ export async function refreshTripLegs(
       pending,
       truncated:
         pairs.some((_, index) => resolved[index] === null) ||
-        resolved.some((route) => route?.reason === '路线刷新超时。' || route?.reason === '路线查询超时。'),
+        resolved.some(
+          (route) => route?.reason === '路线刷新超时。' || route?.reason === '路线查询超时。',
+        ),
     },
   }
 }
@@ -350,7 +373,9 @@ function fallbackLeg(from: CanvasItem, to: CanvasItem, old: CanvasLeg | undefine
     durationMin: estimate?.durationMin ?? 0,
     polyline: null,
     quality: estimate ? 'estimate' : 'pending',
-    ...(estimate ? projectLegMetrics(estimate.distanceKm, estimate.durationMin, 'estimate', null) : {}),
+    ...(estimate
+      ? projectLegMetrics(estimate.distanceKm, estimate.durationMin, 'estimate', null)
+      : {}),
   }
 }
 
@@ -358,9 +383,15 @@ async function lookupRoute(
   provider: RouteLegSearch,
   from: CanvasItem,
   to: CanvasItem,
-  options: { cache: RouteLookupCache; lookupTimeoutMs: number; deadline: number; now: () => number },
+  options: {
+    cache: RouteLookupCache
+    lookupTimeoutMs: number
+    deadline: number
+    now: () => number
+  },
 ): Promise<NormalizedRouteResult> {
-  if (!usablePoi(from) || !usablePoi(to)) return normalizeRouteResult(pendingRoute('起点或终点没有可用坐标。'))
+  if (!usablePoi(from) || !usablePoi(to))
+    return normalizeRouteResult(pendingRoute('起点或终点没有可用坐标。'))
   const key = routeCacheKey(from, to)
   const cached = options.cache.get(key, options.now())
   if (cached) return normalizeRouteResult(cached)
@@ -383,18 +414,24 @@ async function lookupRoute(
     if (normalized.status === 'ok') {
       // Cache the available source scalars, not the old null→0 coercion. A hit
       // must retain the same per-metric omission as the first response.
-      options.cache.set(key, {
-        status: normalized.status,
-        source: normalized.source,
-        distanceKm: result.distanceKm,
-        durationMin: result.durationMin,
-        polyline: normalized.polyline,
-      }, options.now())
+      options.cache.set(
+        key,
+        {
+          status: normalized.status,
+          source: normalized.source,
+          distanceKm: result.distanceKm,
+          durationMin: result.durationMin,
+          polyline: normalized.polyline,
+        },
+        options.now(),
+      )
     }
     return normalized
   } catch {
     if (timedOut) {
-      return normalizeRouteResult(pendingRoute(options.now() >= options.deadline ? '路线刷新超时。' : '路线查询超时。'))
+      return normalizeRouteResult(
+        pendingRoute(options.now() >= options.deadline ? '路线刷新超时。' : '路线查询超时。'),
+      )
     }
     return normalizeRouteResult(pendingRoute('路线服务暂不可用。'))
   }
@@ -402,10 +439,13 @@ async function lookupRoute(
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => void): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      onTimeout()
-      reject(new Error('route lookup timed out'))
-    }, Math.max(1, timeoutMs))
+    const timeout = setTimeout(
+      () => {
+        onTimeout()
+        reject(new Error('route lookup timed out'))
+      },
+      Math.max(1, timeoutMs),
+    )
     promise.then(
       (value) => {
         clearTimeout(timeout)
@@ -420,7 +460,8 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () =>
 }
 
 function normalizeRouteResult(value: RouteLegResult): NormalizedRouteResult {
-  if (value?.status !== 'ok') return { ...pendingRoute(value?.reason || '路线服务未返回可用路线。'), metricProjection: {} }
+  if (value?.status !== 'ok')
+    return { ...pendingRoute(value?.reason || '路线服务未返回可用路线。'), metricProjection: {} }
   // Capture strict source validity before legacy coercion turns NULL into 0.
   const metricProjection = projectLegMetrics(value.distanceKm, value.durationMin, 'measured', null)
   const distanceKm = finiteNumber(value.distanceKm)
@@ -430,7 +471,13 @@ function normalizeRouteResult(value: RouteLegResult): NormalizedRouteResult {
   }
   const polyline = Array.isArray(value.polyline)
     ? value.polyline
-        .filter((point): point is [number, number] => Array.isArray(point) && point.length >= 2 && Number.isFinite(point[0]) && Number.isFinite(point[1]))
+        .filter(
+          (point): point is [number, number] =>
+            Array.isArray(point) &&
+            point.length >= 2 &&
+            Number.isFinite(point[0]) &&
+            Number.isFinite(point[1]),
+        )
         .map((point) => [point[0], point[1]] as [number, number])
     : null
   return {
@@ -462,5 +509,10 @@ function clampPositiveInt(value: number | undefined, fallback: number): number {
 
 function usablePoi(item: CanvasItem): boolean {
   const poi = item.poi
-  return poi !== null && Number.isFinite(poi.lat) && Number.isFinite(poi.lng) && !(poi.lat === 0 && poi.lng === 0)
+  return (
+    poi !== null &&
+    Number.isFinite(poi.lat) &&
+    Number.isFinite(poi.lng) &&
+    !(poi.lat === 0 && poi.lng === 0)
+  )
 }

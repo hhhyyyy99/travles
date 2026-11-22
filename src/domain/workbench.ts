@@ -14,7 +14,12 @@
  *   Leg  { id, fromItemId, toItemId, mode, distanceKm, durationMin, polyline }
  */
 
-import { LegSchema, normalizeItemType, readActivityItemMetadata, type ItemTypeInput } from '@hailar/domain'
+import {
+  LegSchema,
+  normalizeItemType,
+  readActivityItemMetadata,
+  type ItemTypeInput,
+} from '@hailar/domain'
 import type { ApiResult, FetchLike, TripSummary } from './tripList'
 import { defaultFetch, normalizeTrip } from './tripList'
 
@@ -58,7 +63,9 @@ export const CANVAS_NETWORK_ERROR = '无法连接服务器，请确认后端服�
 // ---------------------------------------------------------------------------
 
 /** Optional day fields; omitted metadata stays absent. */
-export type WorkbenchDayInput = Partial<Pick<WorkbenchDay, 'date' | 'theme' | 'color' | 'title' | 'note'>>
+export type WorkbenchDayInput = Partial<
+  Pick<WorkbenchDay, 'date' | 'theme' | 'color' | 'title' | 'note'>
+>
 
 /** Omitted fields preserve existing values; empty metadata strings clear them. */
 export type WorkbenchDayPatch = Partial<Pick<WorkbenchDay, 'theme' | 'color' | 'title' | 'note'>>
@@ -77,10 +84,15 @@ async function dayRequest(
   }
   if (!response.ok) {
     const message = ((await response.json().catch(() => null)) as { error?: unknown } | null)?.error
-    return { ok: false, error: typeof message === 'string' && message ? message : `请求失败（HTTP ${response.status}）` }
+    return {
+      ok: false,
+      error:
+        typeof message === 'string' && message ? message : `请求失败（HTTP ${response.status}）`,
+    }
   }
   const payload = (await response.json().catch(() => null)) as unknown
-  if (payload === null || typeof payload !== 'object') return { ok: false, error: '服务器返回的数据无法解析。' }
+  if (payload === null || typeof payload !== 'object')
+    return { ok: false, error: '服务器返回的数据无法解析。' }
   return { ok: true, data: payload }
 }
 
@@ -162,11 +174,17 @@ export async function fetchTripCanvas(
   }
   if (!response.ok) {
     const message = ((await response.json().catch(() => null)) as { error?: unknown } | null)?.error
-    return { ok: false, error: typeof message === 'string' && message ? message : `请求失败（HTTP ${response.status}）` }
+    return {
+      ok: false,
+      error:
+        typeof message === 'string' && message ? message : `请求失败（HTTP ${response.status}）`,
+    }
   }
-  const payload = (await response.json().catch(() => null)) as
-    | { trip?: unknown; days?: unknown; legs?: unknown }
-    | null
+  const payload = (await response.json().catch(() => null)) as {
+    trip?: unknown
+    days?: unknown
+    legs?: unknown
+  } | null
   if (!payload) return { ok: false, error: '服务器返回的数据无法解析。' }
   const trip = normalizeTrip(payload.trip)
   if (trip === null) return { ok: false, error: '服务器返回的行程数据无法解析。' }
@@ -241,7 +259,12 @@ export function formatLegLabel(leg: WorkbenchLeg | null): string {
 /** Normalize legacy payloads where quality was inferred from geometry. */
 export function legQuality(leg: WorkbenchLeg | null): LegQuality {
   if (!leg) return 'pending'
-  if (leg.quality === 'reference' || leg.quality === 'estimate' || leg.quality === 'measured' || leg.quality === 'pending') {
+  if (
+    leg.quality === 'reference' ||
+    leg.quality === 'estimate' ||
+    leg.quality === 'measured' ||
+    leg.quality === 'pending'
+  ) {
     return leg.quality
   }
   if (leg.distanceKm <= 0 && leg.durationMin <= 0) return 'pending'
@@ -315,7 +338,7 @@ export function crossDayTransfer(
     distanceKm: estimate?.distanceKm ?? 0,
     durationMin: estimate?.durationMin ?? 0,
     polyline: null,
-    quality: estimate ? 'estimate' as const : 'pending' as const,
+    quality: estimate ? ('estimate' as const) : ('pending' as const),
   }
   return {
     id: `cross-day-${from.id}-${to.id}`,
@@ -333,9 +356,13 @@ export function crossDayTransfer(
   }
 }
 
-function estimateCrossDayLeg(from: WorkbenchItem, to: WorkbenchItem): { distanceKm: number; durationMin: number } | null {
+function estimateCrossDayLeg(
+  from: WorkbenchItem,
+  to: WorkbenchItem,
+): { distanceKm: number; durationMin: number } | null {
   if (!hasUsablePoi(from) || !hasUsablePoi(to)) return null
-  const distanceKm = Math.round(haversineKm([from.poi.lng, from.poi.lat], [to.poi.lng, to.poi.lat]) * 1.2 * 10) / 10
+  const distanceKm =
+    Math.round(haversineKm([from.poi.lng, from.poi.lat], [to.poi.lng, to.poi.lat]) * 1.2 * 10) / 10
   return distanceKm > 0 ? { distanceKm, durationMin: Math.max(1, Math.round(distanceKm)) } : null
 }
 
@@ -362,9 +389,19 @@ export function crossDayDriveWarnings(days: WorkbenchDay[]): CrossDayDriveWarnin
 }
 
 /** All visible incoming bridges, including short cross-day transfers. */
-export function crossDayTransfers(days: WorkbenchDay[], legs: WorkbenchLeg[] = []): CrossDayTransfer[] {
+export function crossDayTransfers(
+  days: WorkbenchDay[],
+  legs: WorkbenchLeg[] = [],
+): CrossDayTransfer[] {
   const orderedDays = (Array.isArray(days) ? days : [])
-    .filter((day) => day && typeof day.id === 'string' && day.id !== '' && Number.isInteger(day.index) && day.index >= 0)
+    .filter(
+      (day) =>
+        day &&
+        typeof day.id === 'string' &&
+        day.id !== '' &&
+        Number.isInteger(day.index) &&
+        day.index >= 0,
+    )
     .slice()
     .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id))
   const transfers: CrossDayTransfer[] = []
@@ -382,7 +419,12 @@ type UsablePoiItem = WorkbenchItem & { poi: NonNullable<WorkbenchItem['poi']> }
 
 function hasUsablePoi(item: WorkbenchItem): item is UsablePoiItem {
   const poi = item.poi
-  return poi !== null && Number.isFinite(poi.lat) && Number.isFinite(poi.lng) && !(poi.lat === 0 && poi.lng === 0)
+  return (
+    poi !== null &&
+    Number.isFinite(poi.lat) &&
+    Number.isFinite(poi.lng) &&
+    !(poi.lat === 0 && poi.lng === 0)
+  )
 }
 
 function orderedItems(day: WorkbenchDay): WorkbenchItem[] {
@@ -419,6 +461,7 @@ export function cardVisual(type: ItemType): 'traffic' | 'stay' | 'attraction' | 
     case 'attraction':
     case 'food':
       return 'attraction'
+    case 'other':
     default:
       return 'other'
   }
@@ -455,10 +498,14 @@ export type WorkbenchItemCreateInput = {
 } & Pick<WorkbenchItem, 'timeRange' | 'cost'>
 
 /** API input also accepts specification names; optimistic UI items stay canonical. */
-export type WorkbenchItemCreateRequest = Omit<WorkbenchItemCreateInput, 'type'> & { type?: ItemTypeInput }
+export type WorkbenchItemCreateRequest = Omit<WorkbenchItemCreateInput, 'type'> & {
+  type?: ItemTypeInput
+}
 
 /** Field-edit patch for an existing card. */
-export type WorkbenchItemPatch = Partial<Pick<WorkbenchItem, 'title' | 'note' | 'images' | 'poi' | 'timeRange' | 'cost'>>
+export type WorkbenchItemPatch = Partial<
+  Pick<WorkbenchItem, 'title' | 'note' | 'images' | 'poi' | 'timeRange' | 'cost'>
+>
 
 /** Move/copy target: dayId omitted keeps the day; index omitted appends. */
 export type WorkbenchItemTarget = { dayId?: string; index?: number }
@@ -469,7 +516,9 @@ function parseItemMutation(data: unknown): ApiResult<ItemMutationData> {
   const record = (data ?? {}) as { item?: unknown; legs?: unknown }
   const item = normalizeItem(record.item)
   if (item === null) return { ok: false, error: '服务器返回的卡片数据无法解析。' }
-  const legs = Array.isArray(record.legs) ? record.legs.map(normalizeLeg).filter((leg): leg is WorkbenchLeg => leg !== null) : []
+  const legs = Array.isArray(record.legs)
+    ? record.legs.map(normalizeLeg).filter((leg): leg is WorkbenchLeg => leg !== null)
+    : []
   return { ok: true, data: { item, legs } }
 }
 
@@ -567,7 +616,9 @@ export async function deleteWorkbenchItem(
   )
   if (!result.ok) return result
   const legs = Array.isArray((result.data as { legs?: unknown }).legs)
-    ? ((result.data as { legs: unknown[] }).legs.map(normalizeLeg).filter((leg): leg is WorkbenchLeg => leg !== null))
+    ? (result.data as { legs: unknown[] }).legs
+        .map(normalizeLeg)
+        .filter((leg): leg is WorkbenchLeg => leg !== null)
     : []
   return { ok: true, data: { legs } }
 }
@@ -582,7 +633,12 @@ export async function deleteWorkbenchItem(
  * removal, clamped) and renumber the affected days 0..n-1. Returns the same
  * array reference when nothing matched.
  */
-export function applyItemMove(days: WorkbenchDay[], itemId: string, toDayId: string, toIndex: number): WorkbenchDay[] {
+export function applyItemMove(
+  days: WorkbenchDay[],
+  itemId: string,
+  toDayId: string,
+  toIndex: number,
+): WorkbenchDay[] {
   const moving = days.flatMap((day) => day.items).find((item) => item.id === itemId)
   if (!moving) return days
   return days.map((day) => {
@@ -592,8 +648,15 @@ export function applyItemMove(days: WorkbenchDay[], itemId: string, toDayId: str
         ? day
         : { ...day, items: without.map((item, order) => ({ ...item, order })) }
     }
-    const index = Math.max(0, Math.min(without.length, Number.isInteger(toIndex) ? toIndex : without.length))
-    const items = [...without.slice(0, index), { ...moving, dayId: toDayId }, ...without.slice(index)]
+    const index = Math.max(
+      0,
+      Math.min(without.length, Number.isInteger(toIndex) ? toIndex : without.length),
+    )
+    const items = [
+      ...without.slice(0, index),
+      { ...moving, dayId: toDayId },
+      ...without.slice(index),
+    ]
     return { ...day, items: items.map((item, order) => ({ ...item, order })) }
   })
 }
@@ -629,7 +692,11 @@ export function applyItemRemove(days: WorkbenchDay[], itemId: string): Workbench
 }
 
 /** Pure: patch one item's fields in place (note / images / title / identity swap). */
-export function applyItemPatch(days: WorkbenchDay[], itemId: string, patch: Partial<WorkbenchItem>): WorkbenchDay[] {
+export function applyItemPatch(
+  days: WorkbenchDay[],
+  itemId: string,
+  patch: Partial<WorkbenchItem>,
+): WorkbenchDay[] {
   const exists = days.some((day) => day.items.some((item) => item.id === itemId))
   if (!exists) return days
   return days.map((day) => ({
@@ -639,7 +706,11 @@ export function applyItemPatch(days: WorkbenchDay[], itemId: string, patch: Part
 }
 
 /** Pure: reconcile an optimistic item with server fields, keeping its local layout. */
-export function applyItemReplace(days: WorkbenchDay[], tempId: string, serverItem: WorkbenchItem): WorkbenchDay[] {
+export function applyItemReplace(
+  days: WorkbenchDay[],
+  tempId: string,
+  serverItem: WorkbenchItem,
+): WorkbenchDay[] {
   if (!days.some((day) => day.items.some((item) => item.id === tempId))) return days
   return days.map((day) => ({
     ...day,
@@ -686,7 +757,9 @@ export function poiFromPlace(place: {
     name,
     lat: Number.isFinite(lat) ? lat : 0,
     lng: Number.isFinite(lng) ? lng : 0,
-    ...(typeof place.address === 'string' && place.address.trim() ? { address: place.address.trim() } : {}),
+    ...(typeof place.address === 'string' && place.address.trim()
+      ? { address: place.address.trim() }
+      : {}),
     category: typeof place.city === 'string' ? place.city : '',
     rating: 0,
     introSummary: typeof place.address === 'string' ? place.address : '',
@@ -712,13 +785,19 @@ function normalizeDay(value: unknown): WorkbenchDay | null {
     id,
     // Preserve explicit projections independently; never derive them from layout.
     ...(typeof record.tripId === 'string' ? { tripId: record.tripId } : {}),
-    ...(typeof record.dayNumber === 'number' && Number.isSafeInteger(record.dayNumber) && record.dayNumber > 0
+    ...(typeof record.dayNumber === 'number' &&
+    Number.isSafeInteger(record.dayNumber) &&
+    record.dayNumber > 0
       ? { dayNumber: record.dayNumber }
       : {}),
     index: finiteNumber(record.index),
     date: typeof record.date === 'string' ? record.date : '',
-    ...(Object.hasOwn(record, 'title') && typeof record.title === 'string' ? { title: record.title } : {}),
-    ...(Object.hasOwn(record, 'note') && typeof record.note === 'string' ? { note: record.note } : {}),
+    ...(Object.hasOwn(record, 'title') && typeof record.title === 'string'
+      ? { title: record.title }
+      : {}),
+    ...(Object.hasOwn(record, 'note') && typeof record.note === 'string'
+      ? { note: record.note }
+      : {}),
     theme: typeof record.theme === 'string' ? record.theme : '',
     color: typeof record.color === 'string' ? record.color : '',
     items: items.map(normalizeItem).filter((item): item is WorkbenchItem => item !== null),
@@ -755,7 +834,9 @@ function normalizePoi(value: unknown): PoiRef | null {
     name,
     lat: finiteNumber(record.lat),
     lng: finiteNumber(record.lng),
-    ...(typeof record.address === 'string' && record.address.trim() ? { address: record.address.trim() } : {}),
+    ...(typeof record.address === 'string' && record.address.trim()
+      ? { address: record.address.trim() }
+      : {}),
     ...(typeof record.accommodationBaseId === 'string' && record.accommodationBaseId.trim()
       ? { accommodationBaseId: record.accommodationBaseId.trim() }
       : {}),
@@ -765,7 +846,8 @@ function normalizePoi(value: unknown): PoiRef | null {
     ...(typeof record.accommodationNotes === 'string' && record.accommodationNotes.trim()
       ? { accommodationNotes: record.accommodationNotes.trim() }
       : {}),
-    ...(Number.isInteger(Number(record.accommodationMigrationVersion)) && Number(record.accommodationMigrationVersion) > 0
+    ...(Number.isInteger(Number(record.accommodationMigrationVersion)) &&
+    Number(record.accommodationMigrationVersion) > 0
       ? { accommodationMigrationVersion: Number(record.accommodationMigrationVersion) }
       : {}),
     category: typeof record.category === 'string' ? record.category : '',
@@ -797,16 +879,26 @@ function normalizeLeg(value: unknown): WorkbenchLeg | null {
   }
 }
 
-function normalizeLegMetricProjection(record: Record<string, unknown>): Pick<WorkbenchLeg, 'distanceMeters' | 'durationSeconds' | 'formattedDistance' | 'formattedDuration'> {
-  const result: Pick<WorkbenchLeg, 'distanceMeters' | 'durationSeconds' | 'formattedDistance' | 'formattedDuration'> = {}
+function normalizeLegMetricProjection(
+  record: Record<string, unknown>,
+): Pick<
+  WorkbenchLeg,
+  'distanceMeters' | 'durationSeconds' | 'formattedDistance' | 'formattedDuration'
+> {
+  const result: Pick<
+    WorkbenchLeg,
+    'distanceMeters' | 'durationSeconds' | 'formattedDistance' | 'formattedDuration'
+  > = {}
   const distance = LegSchema.shape.distanceMeters.safeParse(record.distanceMeters)
   const duration = LegSchema.shape.durationSeconds.safeParse(record.durationSeconds)
   const distanceText = LegSchema.shape.formattedDistance.safeParse(record.formattedDistance)
   const durationText = LegSchema.shape.formattedDuration.safeParse(record.formattedDuration)
   if (distance.success && distance.data !== undefined) result.distanceMeters = distance.data
   if (duration.success && duration.data !== undefined) result.durationSeconds = duration.data
-  if (distanceText.success && distanceText.data !== undefined) result.formattedDistance = distanceText.data
-  if (durationText.success && durationText.data !== undefined) result.formattedDuration = durationText.data
+  if (distanceText.success && distanceText.data !== undefined)
+    result.formattedDistance = distanceText.data
+  if (durationText.success && durationText.data !== undefined)
+    result.formattedDuration = durationText.data
   return result
 }
 
@@ -816,7 +908,8 @@ function normalizeWorkbenchLegQuality(
   durationMin: number,
   polyline: [number, number][] | null,
 ): LegQuality {
-  if (value === 'reference' || value === 'estimate' || value === 'measured' || value === 'pending') return value
+  if (value === 'reference' || value === 'estimate' || value === 'measured' || value === 'pending')
+    return value
   if (distanceKm <= 0 && durationMin <= 0) return 'pending'
   return polyline === null ? 'estimate' : 'measured'
 }

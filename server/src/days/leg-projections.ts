@@ -1,6 +1,9 @@
 import type { Leg } from '@hailar/domain'
 
-type LegMetricProjection = Pick<Leg, 'distanceMeters' | 'durationSeconds' | 'formattedDistance' | 'formattedDuration'>
+type LegMetricProjection = Pick<
+  Leg,
+  'distanceMeters' | 'durationSeconds' | 'formattedDistance' | 'formattedDuration'
+>
 
 /**
  * Aliases of the currently available legacy scalars, not recovered provider
@@ -16,13 +19,22 @@ export function projectLegMetrics(
 ): LegMetricProjection {
   // Known empty constructions, including historical rows without provenance.
   const quantified = quality === 'reference' || quality === 'estimate' || quality === 'measured'
-  if (distanceKm === 0 && durationMin === 0 && (quality === 'pending' || (!quantified && polyline === null))) return {}
+  if (
+    distanceKm === 0 &&
+    durationMin === 0 &&
+    (quality === 'pending' || (!quantified && polyline === null))
+  )
+    return {}
 
   const distanceMeters = convertMetric(distanceKm, 1000)
   const durationSeconds = convertMetric(durationMin, 60)
   return {
-    ...(distanceMeters === undefined ? {} : { distanceMeters, formattedDistance: `${String(distanceKm)} 千米` }),
-    ...(durationSeconds === undefined ? {} : { durationSeconds, formattedDuration: `${String(durationMin)} 分钟` }),
+    ...(distanceMeters === undefined
+      ? {}
+      : { distanceMeters, formattedDistance: `${String(distanceKm)} 千米` }),
+    ...(durationSeconds === undefined
+      ? {}
+      : { durationSeconds, formattedDuration: `${String(durationMin)} 分钟` }),
   }
 }
 

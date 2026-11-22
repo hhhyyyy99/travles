@@ -84,7 +84,13 @@ export const ItemTypeSchema = z.enum(['traffic', 'stay', 'attraction', 'food', '
 export type ItemType = z.infer<typeof ItemTypeSchema>
 
 /** The activity vocabulary named by the universal planner specification. */
-export const ActivityTypeSchema = z.enum(['attraction', 'transit', 'dining', 'accommodation', 'note'])
+export const ActivityTypeSchema = z.enum([
+  'attraction',
+  'transit',
+  'dining',
+  'accommodation',
+  'note',
+])
 export type ActivityType = z.infer<typeof ActivityTypeSchema>
 
 /** Both input vocabularies, without transforms so AI tools can expose JSON Schema. */

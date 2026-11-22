@@ -185,7 +185,12 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
   }
   // Ticket 12: provider capability state is persisted so a restart keeps the
   // last successful probe and the explicit JSON-text fallback notice.
-  for (const column of ['capabilities TEXT', 'last_tested_at TEXT', 'last_error TEXT', "thinking TEXT NOT NULL DEFAULT 'off'"]) {
+  for (const column of [
+    'capabilities TEXT',
+    'last_tested_at TEXT',
+    'last_error TEXT',
+    "thinking TEXT NOT NULL DEFAULT 'off'",
+  ]) {
     try {
       await db.run(`ALTER TABLE ai_providers ADD COLUMN ${column}`)
     } catch {
@@ -199,7 +204,11 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
   }
   // Optional metadata stays NULL on old rows, with no backfill or table rebuild.
   // Inspect and recheck so concurrent startup is safe and real failures propagate.
-  for (const [name, type] of [['cover_image', 'TEXT'], ['is_pinned', 'INTEGER'], ['status', 'TEXT']] as const) {
+  for (const [name, type] of [
+    ['cover_image', 'TEXT'],
+    ['is_pinned', 'INTEGER'],
+    ['status', 'TEXT'],
+  ] as const) {
     await ensureColumn(db, 'trips', name, type)
   }
   for (const name of ['title', 'note']) {
@@ -221,7 +230,12 @@ export async function ensureSchema(db: SqlDatabase): Promise<void> {
 }
 
 /** Identifiers come only from the fixed migration declarations above. */
-async function ensureColumn(db: SqlDatabase, table: string, name: string, type: string): Promise<void> {
+async function ensureColumn(
+  db: SqlDatabase,
+  table: string,
+  name: string,
+  type: string,
+): Promise<void> {
   const { rows: columns } = await db.run(`PRAGMA table_info(${table})`)
   if (columns.some((column) => column.name === name)) return
   try {

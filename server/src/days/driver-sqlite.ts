@@ -10,9 +10,10 @@ export class SqliteWorkbenchStoreDriver implements WorkbenchStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
 
   async listDayRows(tripId: string): Promise<DayRow[]> {
-    const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ?', [
-      tripId,
-    ])
+    const { rows } = await this.db.run(
+      'SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ?',
+      [tripId],
+    )
     return rows as unknown as DayRow[]
   }
 
