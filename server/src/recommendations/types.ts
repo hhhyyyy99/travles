@@ -6,7 +6,7 @@
  * rows cannot take the workbench down.
  */
 
-import type { RecommendationOrigin, RecommendationPoi } from '@hailar/domain'
+import type { GeographicCheck, RecommendationOrigin, RecommendationPoi } from '@hailar/domain'
 export type {
   FavoriteItem,
   RecommendationOrigin,
@@ -72,6 +72,11 @@ export type RoutePoint = {
   name?: string
   lat: number
   lng: number
+}
+
+export type DrivingRouteCheck = {
+  routeKey: string
+  value: GeographicCheck
 }
 
 export type RouteLegResult = {

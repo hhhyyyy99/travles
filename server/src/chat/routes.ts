@@ -92,7 +92,6 @@
  * everything else (see createMastra). Mastra saves the turn into memory; the
  * messages table stays the app-owned display history.
  */
-import type { GeographicCheck } from '@hailar/domain'
 import { streamSSE } from 'hono/streaming'
 import type { Hono } from 'hono'
 import { RequestContext } from '@mastra/core/request-context'
@@ -109,7 +108,7 @@ import { createPatchConfirmation, hashTripSnapshot } from './confirmation.js'
 import {
   analyzeItineraryGeography,
   detectTimeConstraintConflicts,
-  dropSupersededDriveWarnings,
+  dropSupersededModelDriveWarnings,
   isModificationRequest,
   isScheduleRequest,
   mergeGeographicChecks,
@@ -124,6 +123,7 @@ import {
   createPatchTurnState,
 } from '../trip-patch/tool.js'
 import { ROUTE_CHECKS_CONTEXT_KEY } from '../recommendations/tool.js'
+import type { DrivingRouteCheck } from '../recommendations/types.js'
 import type { TripPatchRecord, TripPatchStoreDriver } from '../trip-patch/types.js'
 import type { TripEventHub } from '../trip-events/hub.js'
 
@@ -222,7 +222,7 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
     // Ticket 08: per-turn RequestContext seeds the apply_trip_patch tool with
     // the trip id and the retry state the route owns (read back after the run).
     const requestContext = new RequestContext()
-    const routeChecks: GeographicCheck[] = []
+    const routeChecks: DrivingRouteCheck[] = []
     requestContext.set(ROUTE_CHECKS_CONTEXT_KEY, routeChecks)
     const patchTurn = createPatchTurnState(PATCH_TURN_MAX_ATTEMPTS, allowPatchApply)
     requestContext.set(PATCH_TRIP_ID_KEY, trip.id)
@@ -346,8 +346,12 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
       const geography = patchTurn.applied
         ? await readAppliedGeography(options.resolveTripPatchStore, tripId)
         : analysis.geography
+      const applicableRouteChecks = patchTurn.applied
+        ? routeChecks.filter(({ routeKey }) => geography.routeKeys.has(routeKey))
+        : routeChecks
+      const replacedRouteKeys = new Set(applicableRouteChecks.map(({ routeKey }) => routeKey))
       const boundaryWarnings = dedupeWarnings([
-        ...dropSupersededDriveWarnings(geography.warnings, routeChecks),
+        ...geography.warnings.flatMap(({ routeKey, value }) => routeKey && replacedRouteKeys.has(routeKey) ? [] : [value]),
         ...analysis.conflicts.map(conflictToWarning),
       ])
       const mustExplainPatch = forcedPatchExplain || patchTurn.blockedBeforeConfirmation
@@ -381,11 +385,14 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         }
       }
 
-      const geographicFactCheck = mergeGeographicChecks(geography.checks, meta?.geographicFactCheck ?? [], routeChecks)
-      if (geographicFactCheck.length > 0 || boundaryWarnings.length > 0) {
-        const { warnings: legacyWarnings = [], ...current } = meta ?? { round: round ?? 'qa' }
+      const { warnings: legacyWarnings = [], geographicFactCheck: modelChecks = [], ...current } = meta ?? { round: round ?? 'qa' }
+      // Model summaries carry names only, so they cannot establish that a drive survived a patch.
+      const geographicFactCheck = mergeGeographicChecks(geography.checks, patchTurn.applied ? [] : modelChecks, applicableRouteChecks)
+      if (meta !== null || geographicFactCheck.length > 0 || boundaryWarnings.length > 0) {
         const warnings = dedupeWarnings([
-          ...dropSupersededDriveWarnings(legacyWarnings, geographicFactCheck),
+          ...(patchTurn.applied
+            ? legacyWarnings.filter(({ kind }) => kind !== 'long-drive')
+            : dropSupersededModelDriveWarnings(legacyWarnings, geographicFactCheck)),
           ...boundaryWarnings,
           ...reportedDriveWarnings(geographicFactCheck),
         ])
@@ -510,7 +517,7 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
   })
 }
 
-const EMPTY_GEOGRAPHY: ItineraryGeography = { checks: [], warnings: [] }
+const EMPTY_GEOGRAPHY: ItineraryGeography = { checks: [], warnings: [], routeKeys: new Set() }
 
 type TripTurnAnalysis = {
   hasExistingPlan: boolean
