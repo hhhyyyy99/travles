@@ -1,8 +1,7 @@
 /**
  * SQLite TripPatchStoreDriver (ticket 08) — patch writes over the days/
- * items/legs tables that ticket 02's schema already created. Additive by
- * design: no schema changes, no imports from the trips module beyond the
- * date validator. `withTransaction` uses the libSQL transaction connection
+ * items/legs tables that ticket 02's schema already created.
+ * `withTransaction` uses the libSQL transaction connection
  * when available, so a failed patch apply leaves no partial writes behind.
  */
 import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
@@ -19,9 +18,17 @@ import type {
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 import { SqliteRecommendationsStoreDriver } from '../recommendations/driver-sqlite.js'
 import type { StashInsert, StashRow } from '../recommendations/types.js'
+import { SqliteTripStoreDriver } from '../trips/driver-sqlite.js'
+import { mapRowToSummary } from '../trips/repository.js'
+import type { TripSummary } from '../trips/types.js'
 
 export class SqliteTripPatchStore implements TripPatchStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
+
+  async getTripSummary(tripId: string): Promise<TripSummary | null> {
+    const row = await new SqliteTripStoreDriver(this.db).getTripRow(tripId)
+    return row === null ? null : mapRowToSummary(row)
+  }
 
   async listDayRows(tripId: string): Promise<DayRow[]> {
     const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ?', [

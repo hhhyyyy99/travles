@@ -587,9 +587,10 @@ test('probe marks successful connectivity with normal text as function-calling d
 
 test('degraded provider still carries metadata and TripPatch tool calls through JSON text fallback', async () => {
   const store = new MemoryAiProviderStoreDriver()
-  const patchStore = new MemoryTripPatchStore()
+  const tripRepository = new TripRepository(new MemoryTripStoreDriver())
+  const patchStore = new MemoryTripPatchStore((id) => tripRepository.get(id))
   const app = await createApp({
-    tripRepository: new TripRepository(new MemoryTripStoreDriver()),
+    tripRepository,
     aiProviderStore: store,
     tripPatchStore: patchStore,
     messageStore: new MemoryMessageStoreDriver(),

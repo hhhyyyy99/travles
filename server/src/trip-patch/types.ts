@@ -36,6 +36,7 @@ import type { ActivityItemMetadata, Day } from '@hailar/domain'
 import type { DayRow, ItemRow, LegQuality, LegRow } from '../days/types.js'
 import type { DayScheduleUpdate } from '../trip-events/schedule.js'
 import type { StashInsert, StashRow } from '../recommendations/types.js'
+import type { TripSummary } from '../trips/types.js'
 
 /** One POI reference on a card, derived from the shared patch validator. */
 export type { PatchPoiRef } from '@hailar/domain'
@@ -116,6 +117,8 @@ export interface TripPatchLegUpsert {
  * take fully validated payloads.
  */
 export interface TripPatchStoreDriver {
+  /** Read the current Trip through this driver, including on a transaction-scoped instance. */
+  getTripSummary?(tripId: string): Promise<TripSummary | null>
   listDayRows(tripId: string): Promise<DayRow[]>
   listItemRows(tripId: string): Promise<ItemRow[]>
   listLegRows(tripId: string): Promise<LegRow[]>

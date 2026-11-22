@@ -537,6 +537,30 @@ test('stash changes during a confirmed model turn are rejected inside the patch 
   assert.match(JSON.stringify(prompts), /已经过期/)
 })
 
+test('a confirmed patch expires when only the Trip dates change during generation', async (t) => {
+  const patch = { ops: [{ op: 'update_day', dayId: 'stash-day', theme: '过期安排' }] }
+  const scripted = stashExplainingModel({ patch, onConfirmed: async () => {
+    const updated = await app.request(`/api/trips/${trip.id}`, request('PATCH', {
+      startDate: '2026-10-04', endDate: '2026-10-05',
+    }))
+    assert.equal(updated.status, 200)
+  } })
+  const { app, store, trip, repository } = await sqliteProposalApp(t, scripted.model)
+  const before = await store.listDayRows(trip.id)
+  const explain = await app.request(`/api/trips/${trip.id}/messages`, request('POST', { content: '帮我重新安排候选活动' }))
+  assert.equal(explain.status, 200)
+  assert.match(await explain.text(), /patch-explain/)
+  assert.ok((await store.getPatchConfirmation(trip.id))?.choices.includes(STASH_CHOICE))
+
+  const confirmed = await app.request(`/api/trips/${trip.id}/messages`, request('POST', { content: STASH_CHOICE }))
+  assert.equal(confirmed.status, 200)
+  const stream = await confirmed.text()
+  assert.doesNotMatch(stream, /event: applied_patch/)
+  assert.equal((await repository.get(trip.id))?.startDate, '2026-10-04')
+  assert.match(stream, /confirmation_stale.*重新分析/)
+  assert.deepEqual(await store.listDayRows(trip.id), before)
+})
+
 test('global stash optimization exposes real candidate IDs to the model and writes only on explicit apply', async (t) => {
   const input = {
     kind: 'optimize', title: '候选进入日程', summary: '把已有候选与一项文字备选安排到当天。',

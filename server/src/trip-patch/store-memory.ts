@@ -64,6 +64,8 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
   readonly patchConfirmations = new Map<string, StoredPatchConfirmation>()
   private transactionTail: Promise<void> = Promise.resolve()
 
+  constructor(readonly getTripSummary?: TripPatchStoreDriver['getTripSummary']) {}
+
   async listDayRows(tripId: string): Promise<DayRow[]> {
     return this.dayRows.filter((row) => row.trip_id === tripId)
   }

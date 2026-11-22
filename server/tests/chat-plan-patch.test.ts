@@ -174,9 +174,10 @@ async function makeInjectedApp(model: MastraLanguageModel): Promise<{
   patchStore: MemoryTripPatchStore
 }> {
   const messageStore = new MemoryMessageStoreDriver()
-  const patchStore = new MemoryTripPatchStore()
+  const tripRepository = new TripRepository(new MemoryTripStoreDriver())
+  const patchStore = new MemoryTripPatchStore((id) => tripRepository.get(id))
   const app = await createApp({
-    tripRepository: new TripRepository(new MemoryTripStoreDriver()),
+    tripRepository,
     messageStore,
     tripPatchStore: patchStore,
     plannerModel: model,
@@ -307,6 +308,50 @@ test('a candidate saved during first-turn planning is explained before it can be
   assert.ok(confirmed.some(({ event }) => event === 'applied_patch'))
   assert.deepEqual(await patchStore.listStashRows(trip.id), [])
   assert.equal((await patchStore.listItemRows(trip.id))[0]?.title, '雨天备选')
+})
+
+test('a Trip title change during first-turn planning requires confirmation even with an empty itinerary', async (t) => {
+  const sqlite = await createSqliteTripRepository(':memory:')
+  t.after(() => sqlite.close())
+  const created = await sqlite.repository.create({ title: '周末游', startDate: '2026-10-02', endDate: '2026-10-03' })
+  assert.ok(created.ok)
+  const { trip } = created
+  const patchStore = new SqliteTripPatchStore(sqlite.db)
+  const choice = '确认方案：按新主题安排行程'
+  const firstPatch = { toolName: 'apply_trip_patch', input: { ops: [{ op: 'add_day', dayId: 'stale-day' }] } }
+  const model = fakeScriptedModel([
+    {
+      beforeStream: async () => {
+        const renamed = await app.request(`/api/trips/${trip.id}`, jsonRequest('PATCH', { title: '博物馆之旅' }))
+        assert.equal(renamed.status, 200)
+      },
+      toolCalls: [{ toolName: 'emit_round_meta', input: PLAN_META }, firstPatch],
+    },
+    { toolCalls: [{ toolName: 'read_trip_snapshot', input: {} }] },
+    { toolCalls: [{ toolName: 'emit_round_meta', input: {
+      round: 'patch-explain', impacts: ['按博物馆之旅安排第一天'], chips: [{ label: '确认安排', value: choice }],
+    } }] },
+    { text: '行程已改名为博物馆之旅，请确认新的安排。' },
+    { toolCalls: [{ toolName: 'apply_trip_patch', input: { ops: [{ op: 'add_day', dayId: 'confirmed-day' }] } }] },
+    { text: '已写入确认后的安排。' },
+  ])
+  const app = await createApp({
+    tripRepository: sqlite.repository, tripPatchStore: patchStore, messageStore: new MemoryMessageStoreDriver(),
+    plannerModel: model, plannerMemory: new MockMemory({ storage: new InMemoryStore(), enableMessageHistory: true }),
+  })
+
+  const events = await sendAndParse(app, trip.id, '帮我规划一天行程')
+  assert.equal((await sqlite.repository.get(trip.id))?.title, '博物馆之旅')
+  assert.ok(!events.some(({ event }) => event === 'applied_patch'))
+  assert.deepEqual(await patchStore.listDayRows(trip.id), [])
+  assert.match(model.prompts[1] ?? '', /博物馆之旅/)
+  const meta = events.find(({ event }) => event === 'meta')?.data as { round: string; chips: { value: string }[] }
+  assert.equal(meta.round, 'patch-explain')
+  assert.equal(meta.chips[0]?.value, choice)
+
+  const confirmed = await sendAndParse(app, trip.id, choice)
+  assert.ok(confirmed.some(({ event }) => event === 'applied_patch'))
+  assert.deepEqual((await patchStore.listDayRows(trip.id)).map((row) => row.id), ['confirmed-day'])
 })
 
 test('intake context reaches the first planner turn and successful QA gets next-step chips', async () => {
