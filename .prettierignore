@@ -1,0 +1,15 @@
+# Generated and local-only files
+pnpm-lock.yaml
+**/dist/
+**/coverage/
+**/test-results/
+**/playwright-report/
+.pnpm-store/
+.scratch/
+.workbuddy/
+server/data/
+amap-config.js
+amap-config.local.js
+.env
+.env.*
+!.env.example
