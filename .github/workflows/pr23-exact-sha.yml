@@ -1,0 +1,54 @@
+name: PR 23 exact SHA validation
+run-name: Validate PR 23 at 1d4ec564e9799514840c1445b55d9507f41383ea
+
+on:
+  push:
+    branches:
+      - agent/verify-pr23-1d4ec56
+
+permissions:
+  contents: read
+
+env:
+  REVIEW_SHA: 1d4ec564e9799514840c1445b55d9507f41383ea
+  AMAP_KEY: ''
+  AMAP_WEB_KEY: ''
+  AI_API_KEY: ''
+
+jobs:
+  verify:
+    name: Verify PR 23 source and browser regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out the exact PR source commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.REVIEW_SHA }}
+          persist-credentials: false
+      - name: Verify source revision
+        run: |
+          actual=$(git rev-parse HEAD)
+          test "$actual" = "$REVIEW_SHA"
+          git diff --exit-code
+          git show -s --format='Tested source commit %H%nSource tree %T' HEAD | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Verify concurrent date and title edits with SQLite
+        run: |
+          node --import tsx --test \
+            --test-name-pattern='only the Trip dates|Trip title change during first-turn' \
+            server/tests/ai-proposals.test.ts server/tests/chat-plan-patch.test.ts
+      - run: pnpm build
+      - run: pnpm build:server
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Run all Chromium tests against the production build
+        env:
+          APP_MODE: preview
+        run: node --test --test-concurrency=2 tests/app/*.browser.cjs
