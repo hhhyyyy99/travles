@@ -16,11 +16,13 @@
  *   clamped to [0, count]. Cross-day drops renumber both days 0..n-1.
  */
 import { randomUUID } from 'node:crypto'
-import { ActivityItemMetadataSchema, normalizeItemType, readActivityItemMetadata, type ActivityItemMetadata } from '@hailar/domain'
 import {
-  mapItemRow,
-  mapLegRow,
-} from '../days/repository.js'
+  ActivityItemMetadataSchema,
+  normalizeItemType,
+  readActivityItemMetadata,
+  type ActivityItemMetadata,
+} from '@hailar/domain'
+import { mapItemRow, mapLegRow } from '../days/repository.js'
 import type { CanvasItem, CanvasLeg, ItemImage, ItemRow, PoiRef } from '../days/types.js'
 import { recomputeTripLegs, type LegDayOrder } from './legs.js'
 import type {
@@ -67,14 +69,19 @@ export class ItemsAdminRepository {
    * Move a card within its day or across days (drag, 上移/下移, 移动到 all
    * land here). Legs between adjacent items are recomputed for the trip.
    */
-  async moveItem(tripId: string, itemId: string, input: ItemMoveInput = {}): Promise<ItemMutationResult> {
+  async moveItem(
+    tripId: string,
+    itemId: string,
+    input: ItemMoveInput = {},
+  ): Promise<ItemMutationResult> {
     const loaded = await this.loadItems(tripId)
     if (!loaded.ok) return loaded
-    const { items, legs: previousLegs, dayOrder } = loaded
+    const { items } = loaded
     const moving = items.find((item) => item.id === itemId)
     if (!moving) return { ok: false, error: '卡片不存在', code: 'not_found' }
 
-    const targetDayId = typeof input.dayId === 'string' && input.dayId.trim() ? input.dayId.trim() : moving.dayId
+    const targetDayId =
+      typeof input.dayId === 'string' && input.dayId.trim() ? input.dayId.trim() : moving.dayId
     if (!(await this.dayExistsSafe(tripId, targetDayId))) {
       return { ok: false, error: '日程不存在', code: 'not_found' }
     }
@@ -88,21 +95,32 @@ export class ItemsAdminRepository {
 
     // A move only rewrites positions (order patches keep poi/images columns
     // untouched); copies and creates also upsert their new full row.
-    return this.persistLayout(tripId, nextItems, previousLegs, dayOrder, [moving.dayId, targetDayId], insertedItem(nextItems, moved.id), false)
+    return this.persistLayout(
+      tripId,
+      nextItems,
+      [moving.dayId, targetDayId],
+      insertedItem(nextItems, moved.id),
+      false,
+    )
   }
 
   /**
    * Copy a card to a (possibly different) day with a fresh id. Title, note,
    * POI and images carry over; the copy lands at `index` (default: end).
    */
-  async copyItem(tripId: string, itemId: string, input: ItemMoveInput = {}): Promise<ItemMutationResult> {
+  async copyItem(
+    tripId: string,
+    itemId: string,
+    input: ItemMoveInput = {},
+  ): Promise<ItemMutationResult> {
     const loaded = await this.loadItems(tripId)
     if (!loaded.ok) return loaded
-    const { items, legs: previousLegs, dayOrder } = loaded
+    const { items } = loaded
     const source = items.find((item) => item.id === itemId)
     if (!source) return { ok: false, error: '卡片不存在', code: 'not_found' }
 
-    const targetDayId = typeof input.dayId === 'string' && input.dayId.trim() ? input.dayId.trim() : source.dayId
+    const targetDayId =
+      typeof input.dayId === 'string' && input.dayId.trim() ? input.dayId.trim() : source.dayId
     if (!(await this.dayExistsSafe(tripId, targetDayId))) {
       return { ok: false, error: '日程不存在', code: 'not_found' }
     }
@@ -114,10 +132,17 @@ export class ItemsAdminRepository {
       pending: false,
     }
     const targetList = items.filter((item) => item.dayId === targetDayId)
-    const index = input.index === undefined ? targetList.length : clampIndex(input.index, targetList.length)
+    const index =
+      input.index === undefined ? targetList.length : clampIndex(input.index, targetList.length)
     const nextItems = insertIntoList(items, targetList, index, copy)
 
-    return this.persistLayout(tripId, nextItems, previousLegs, dayOrder, [targetDayId], insertedItem(nextItems, copy.id), true)
+    return this.persistLayout(
+      tripId,
+      nextItems,
+      [targetDayId],
+      insertedItem(nextItems, copy.id),
+      true,
+    )
   }
 
   /**
@@ -133,7 +158,7 @@ export class ItemsAdminRepository {
     }
     const loaded = await this.loadItems(tripId)
     if (!loaded.ok) return loaded
-    const { items, legs: previousLegs, dayOrder } = loaded
+    const { items } = loaded
 
     const dayId = typeof input.dayId === 'string' && input.dayId.trim() ? input.dayId.trim() : ''
     if (!dayId) return { ok: false, error: '缺少目标日程', code: 'invalid' }
@@ -164,17 +189,22 @@ export class ItemsAdminRepository {
       pending: false,
     }
     const targetList = items.filter((item) => item.dayId === dayId)
-    const index = input.index === undefined ? targetList.length : clampIndex(input.index, targetList.length)
+    const index =
+      input.index === undefined ? targetList.length : clampIndex(input.index, targetList.length)
     const nextItems = insertIntoList(items, targetList, index, created)
 
-    return this.persistLayout(tripId, nextItems, previousLegs, dayOrder, [dayId], insertedItem(nextItems, created.id), true)
+    return this.persistLayout(tripId, nextItems, [dayId], insertedItem(nextItems, created.id), true)
   }
 
   /**
    * Edit a card's fields (one-line note, image URLs, title). Positions and
    * legs are unaffected — no reorder, no leg recompute.
    */
-  async updateItem(tripId: string, itemId: string, patch: ItemPatchInput): Promise<ItemUpdateResult> {
+  async updateItem(
+    tripId: string,
+    itemId: string,
+    patch: ItemPatchInput,
+  ): Promise<ItemUpdateResult> {
     let metadata: ActivityItemMetadata
     try {
       metadata = readActivityItemMetadata(ActivityItemMetadataSchema.parse(patch))
@@ -213,7 +243,8 @@ export class ItemsAdminRepository {
     }
     let poi = current.poi
     if (patch.poi !== undefined) {
-      if (current.type !== 'stay') return { ok: false, error: '只有住宿卡片可以编辑住宿位置', code: 'invalid' }
+      if (current.type !== 'stay')
+        return { ok: false, error: '只有住宿卡片可以编辑住宿位置', code: 'invalid' }
       const next = readPoiInput(patch.poi)
       if (next === false) return { ok: false, error: '住宿位置数据无效', code: 'invalid' }
       poi = next === null ? null : preserveAccommodationMetadata(current.poi, next)
@@ -235,58 +266,41 @@ export class ItemsAdminRepository {
   async deleteItem(tripId: string, itemId: string): Promise<ItemDeleteResult> {
     const loaded = await this.loadItems(tripId)
     if (!loaded.ok) return { ok: false, error: loaded.error, code: loaded.code }
-    const { items, legs: previousLegs } = loaded
+    const { items } = loaded
     const removing = items.find((item) => item.id === itemId)
     if (!removing) return { ok: false, error: '卡片不存在', code: 'not_found' }
 
     const nextItems = items.filter((item) => item.id !== itemId)
-    const legs = renumberAndRecompute(nextItems, [removing.dayId], previousLegs, loaded.dayOrder)
     try {
-      await this.driver.withTransaction(async (transactionDriver) => {
+      const legs = await this.driver.withTransaction(async (transactionDriver) => {
         await transactionDriver.deleteItemRow(tripId, itemId)
-        await transactionDriver.updateItemOrders(tripId, orderPatchesForDay(nextItems, removing.dayId))
-        await transactionDriver.replaceLegs(tripId, legs)
+        await transactionDriver.updateItemOrders(
+          tripId,
+          orderPatchesForDay(nextItems, removing.dayId),
+        )
+        return rebuildStoredLegs(transactionDriver, tripId)
       })
+      return { ok: true, legs }
     } catch {
       return { ok: false, error: '删除失败', code: 'storage' }
     }
-    return { ok: true, legs }
   }
 
   // -------------------------------------------------------------------------
   // Shared plumbing
   // -------------------------------------------------------------------------
 
-  /** Tolerant read of the trip's items + legs; driver failure → storage error. */
+  /** Tolerant read for planning item order; the transaction reads the final route inputs. */
   private async loadItems(
     tripId: string,
-  ): Promise<{ ok: true; items: CanvasItem[]; legs: CanvasLeg[]; dayOrder: LegDayOrder[] } | { ok: false; error: string; code: ItemsAdminErrorCode }> {
-    let dayRows: Awaited<ReturnType<ItemsAdminStoreDriver['listDayRows']>>
-    let itemRows: ItemRow[]
-    let legRows: Awaited<ReturnType<ItemsAdminStoreDriver['listLegRows']>>
+  ): Promise<
+    { ok: true; items: CanvasItem[] } | { ok: false; error: string; code: ItemsAdminErrorCode }
+  > {
     try {
-      ;[dayRows, itemRows, legRows] = await Promise.all([
-        this.driver.listDayRows(tripId),
-        this.driver.listItemRows(tripId),
-        this.driver.listLegRows(tripId),
-      ])
+      return { ok: true, items: decodeItems(await this.driver.listItemRows(tripId)) }
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
     }
-    const items = (Array.isArray(itemRows) ? itemRows : [])
-      .map(mapItemRow)
-      .filter((item): item is CanvasItem => item !== null)
-      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
-    const legs = (Array.isArray(legRows) ? legRows : [])
-      .map(mapLegRow)
-      .filter((leg): leg is CanvasLeg => leg !== null)
-    const dayOrder = (Array.isArray(dayRows) ? dayRows : [])
-      .map((row) => ({
-        id: typeof row?.id === 'string' ? row.id : '',
-        index: Number(row?.idx),
-      }))
-      .filter((day): day is LegDayOrder => day.id !== '' && Number.isInteger(day.index) && day.index >= 0)
-    return { ok: true, items, legs, dayOrder }
   }
 
   private async dayExistsSafe(tripId: string, dayId: string): Promise<boolean> {
@@ -305,24 +319,25 @@ export class ItemsAdminRepository {
   private async persistLayout(
     tripId: string,
     nextItems: CanvasItem[],
-    previousLegs: CanvasLeg[],
-    dayOrder: LegDayOrder[],
     affectedDayIds: string[],
     affectedItem: CanvasItem,
     upsertAffectedItem: boolean,
   ): Promise<ItemMutationResult> {
     const normalizedItems = renumberItems(nextItems, affectedDayIds)
     const finalItem = normalizedItems.find((item) => item.id === affectedItem.id) ?? affectedItem
-    const nextLegs = recomputeTripLegs(normalizedItems, previousLegs, dayOrder)
     const orders = affectedDayIds.flatMap((dayId) => orderPatchesForDay(normalizedItems, dayId))
     try {
-      const responseItem = await this.driver.withTransaction(async (transactionDriver) => {
-        if (upsertAffectedItem) await transactionDriver.upsertItemFull(tripId, itemToUpsert(finalItem))
-        await transactionDriver.updateItemOrders(tripId, orders)
-        await transactionDriver.replaceLegs(tripId, nextLegs)
-        return withPersistedItemMetadata(transactionDriver, tripId, finalItem)
-      })
-      return { ok: true, item: responseItem, legs: nextLegs }
+      const { responseItem, legs } = await this.driver.withTransaction(
+        async (transactionDriver) => {
+          if (upsertAffectedItem)
+            await transactionDriver.upsertItemFull(tripId, itemToUpsert(finalItem))
+          await transactionDriver.updateItemOrders(tripId, orders)
+          const legs = await rebuildStoredLegs(transactionDriver, tripId)
+          const responseItem = await withPersistedItemMetadata(transactionDriver, tripId, finalItem)
+          return { responseItem, legs }
+        },
+      )
+      return { ok: true, item: responseItem, legs }
     } catch {
       return { ok: false, error: '保存失败', code: 'storage' }
     }
@@ -344,7 +359,10 @@ async function withPersistedItemMetadata(
   const responseItem = { ...item }
   delete responseItem.timeRange
   delete responseItem.cost
-  return { ...responseItem, ...readActivityItemMetadata({ timeRange: saved.time_range, cost: saved.cost }) }
+  return {
+    ...responseItem,
+    ...readActivityItemMetadata({ timeRange: saved.time_range, cost: saved.cost }),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -361,14 +379,34 @@ function renumberItems(items: CanvasItem[], affectedDayIds: string[]): CanvasIte
   })
 }
 
-/** Renumber the affected days, then recompute the trip's legs. */
-function renumberAndRecompute(
-  items: CanvasItem[],
-  affectedDayIds: string[],
-  previousLegs: CanvasLeg[],
-  dayOrder: LegDayOrder[],
-): CanvasLeg[] {
-  return recomputeTripLegs(renumberItems(items, affectedDayIds), previousLegs, dayOrder)
+function decodeItems(rows: ItemRow[]): CanvasItem[] {
+  return (Array.isArray(rows) ? rows : [])
+    .map(mapItemRow)
+    .filter((item): item is CanvasItem => item !== null)
+    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+}
+
+/** Use the current POIs and route proof after the layout writes in the same transaction. */
+async function rebuildStoredLegs(
+  driver: ItemsAdminStoreDriver,
+  tripId: string,
+): Promise<CanvasLeg[]> {
+  const [dayRows, itemRows, legRows] = await Promise.all([
+    driver.listDayRows(tripId),
+    driver.listItemRows(tripId),
+    driver.listLegRows(tripId),
+  ])
+  const previous = (Array.isArray(legRows) ? legRows : [])
+    .map(mapLegRow)
+    .filter((leg): leg is CanvasLeg => leg !== null)
+  const dayOrder: LegDayOrder[] = (Array.isArray(dayRows) ? dayRows : [])
+    .map((row) => ({ id: typeof row?.id === 'string' ? row.id : '', index: Number(row?.idx) }))
+    .filter(
+      (day): day is LegDayOrder => day.id !== '' && Number.isInteger(day.index) && day.index >= 0,
+    )
+  const legs = recomputeTripLegs(decodeItems(itemRows), previous, dayOrder)
+  await driver.replaceLegs(tripId, legs)
+  return legs
 }
 
 /** Order patches (0..n-1) for one day's items after a layout change. */
@@ -379,7 +417,12 @@ function orderPatchesForDay(items: CanvasItem[], dayId: string): ItemOrderPatch[
 }
 
 /** Insert `item` into the full list at `index` within `targetList`'s frame. */
-function insertIntoList(items: CanvasItem[], targetList: CanvasItem[], index: number, item: CanvasItem): CanvasItem[] {
+function insertIntoList(
+  items: CanvasItem[],
+  targetList: CanvasItem[],
+  index: number,
+  item: CanvasItem,
+): CanvasItem[] {
   if (targetList.length === 0) return [...items, item]
   const anchor = targetList[Math.min(index, targetList.length - 1)]!
   const anchorPosition = items.findIndex((entry) => entry.id === anchor.id)
@@ -444,12 +487,17 @@ function readPoiInput(value: unknown): PoiRef | null | false {
     lat: asFiniteNumber(record.lat),
     lng: asFiniteNumber(record.lng),
     ...(address ? { address } : {}),
-    ...(asText(record.accommodationBaseId) ? { accommodationBaseId: asText(record.accommodationBaseId) } : {}),
+    ...(asText(record.accommodationBaseId)
+      ? { accommodationBaseId: asText(record.accommodationBaseId) }
+      : {}),
     ...(record.accommodationType === 'area' || record.accommodationType === 'hotel'
       ? { accommodationType: record.accommodationType }
       : {}),
-    ...(asText(record.accommodationNotes) ? { accommodationNotes: asText(record.accommodationNotes) } : {}),
-    ...(Number.isInteger(Number(record.accommodationMigrationVersion)) && Number(record.accommodationMigrationVersion) > 0
+    ...(asText(record.accommodationNotes)
+      ? { accommodationNotes: asText(record.accommodationNotes) }
+      : {}),
+    ...(Number.isInteger(Number(record.accommodationMigrationVersion)) &&
+    Number(record.accommodationMigrationVersion) > 0
       ? { accommodationMigrationVersion: Number(record.accommodationMigrationVersion) }
       : {}),
     category: asText(record.category),
@@ -472,7 +520,8 @@ function preserveAccommodationMetadata(current: PoiRef | null, next: PoiRef): Po
     ...(next.accommodationNotes === undefined && current.accommodationNotes !== undefined
       ? { accommodationNotes: current.accommodationNotes }
       : {}),
-    ...(next.accommodationMigrationVersion === undefined && current.accommodationMigrationVersion !== undefined
+    ...(next.accommodationMigrationVersion === undefined &&
+    current.accommodationMigrationVersion !== undefined
       ? { accommodationMigrationVersion: current.accommodationMigrationVersion }
       : {}),
   }

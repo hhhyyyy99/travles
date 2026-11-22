@@ -5,36 +5,37 @@
  * touch the poi/images columns (position-only updates), and the leg
  * replacement is one DELETE + INSERT batch over the trip's rows.
  */
+import { readSqliteLegRows } from '../days/driver-sqlite.js'
 import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
-import type { DayRow, ItemRow, LegRow } from '../days/types.js'
+import { LEG_ROUTE_KEY, type DayRow, type ItemRow, type LegRow } from '../days/types.js'
 import { normalizeLegQuality } from '../days/repository.js'
 import type { PlannedLeg } from './legs.js'
 import type { ItemFullUpsert, ItemOrderPatch, ItemsAdminStoreDriver } from './types.js'
 
-const ITEM_COLUMNS = 'id, trip_id, day_id, item_order, type, title, note, time_range, cost, poi, images, pending'
+const ITEM_COLUMNS =
+  'id, trip_id, day_id, item_order, type, title, note, time_range, cost, poi, images, pending'
 
 export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
 
   async listDayRows(tripId: string): Promise<DayRow[]> {
-    const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ?', [
-      tripId,
-    ])
+    const { rows } = await this.db.run(
+      'SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ?',
+      [tripId],
+    )
     return rows as unknown as DayRow[]
   }
 
   async listItemRows(tripId: string): Promise<ItemRow[]> {
-    const { rows } = await this.db.run(`SELECT ${ITEM_COLUMNS} FROM items WHERE trip_id = ?`, [tripId])
+    const { rows } = await this.db.run(`SELECT ${ITEM_COLUMNS} FROM items WHERE trip_id = ?`, [
+      tripId,
+    ])
     return rows as unknown as ItemRow[]
   }
 
   async listLegRows(tripId: string): Promise<LegRow[]> {
-    const { rows } = await this.db.run(
-      'SELECT id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality FROM legs WHERE trip_id = ?',
-      [tripId],
-    )
-    return rows as unknown as LegRow[]
+    return readSqliteLegRows(this.db, tripId)
   }
 
   async dayExists(tripId: string, dayId: string): Promise<boolean> {
@@ -50,7 +51,9 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
 
   async withTransaction<T>(fn: (store: ItemsAdminStoreDriver) => Promise<T>): Promise<T> {
     if (this.db.withTransaction) {
-      return this.db.withTransaction(async (transactionDb) => fn(new SqliteItemsAdminStoreDriver(transactionDb)))
+      return this.db.withTransaction(async (transactionDb) =>
+        fn(new SqliteItemsAdminStoreDriver(transactionDb)),
+      )
     }
     await this.db.run('BEGIN IMMEDIATE')
     try {
@@ -105,24 +108,25 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
 
   async updateItemOrders(tripId: string, orders: ItemOrderPatch[]): Promise<void> {
     for (const patch of orders) {
-      await this.db.run('UPDATE items SET day_id = ?, item_order = ? WHERE id = ? AND trip_id = ?', [
-        patch.dayId,
-        patch.itemOrder,
-        patch.id,
-        tripId,
-      ] as SqlValue[])
+      await this.db.run(
+        'UPDATE items SET day_id = ?, item_order = ? WHERE id = ? AND trip_id = ?',
+        [patch.dayId, patch.itemOrder, patch.id, tripId] as SqlValue[],
+      )
     }
   }
 
   async deleteItemRow(tripId: string, itemId: string): Promise<void> {
-    await this.db.run('DELETE FROM items WHERE id = ? AND trip_id = ?', [itemId, tripId] as SqlValue[])
+    await this.db.run('DELETE FROM items WHERE id = ? AND trip_id = ?', [
+      itemId,
+      tripId,
+    ] as SqlValue[])
   }
 
   async replaceLegs(tripId: string, legs: PlannedLeg[]): Promise<void> {
     await this.db.run('DELETE FROM legs WHERE trip_id = ?', [tripId])
     for (const leg of legs) {
       await this.db.run(
-        'INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality, verified_route_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
           leg.id,
           tripId,
@@ -133,6 +137,7 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
           leg.durationMin,
           leg.polyline === null ? null : JSON.stringify(leg.polyline),
           normalizeLegQuality(leg.quality, leg.distanceKm, leg.durationMin, leg.polyline),
+          leg[LEG_ROUTE_KEY] ?? null,
         ] as SqlValue[],
       )
     }

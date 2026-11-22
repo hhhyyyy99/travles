@@ -4,6 +4,7 @@
  * `withTransaction` uses the libSQL transaction connection
  * when available, so a failed patch apply leaves no partial writes behind.
  */
+import { readSqliteLegRows } from '../days/driver-sqlite.js'
 import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import type { DayRow, ItemRow, LegRow } from '../days/types.js'
@@ -31,9 +32,10 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
   }
 
   async listDayRows(tripId: string): Promise<DayRow[]> {
-    const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ?', [
-      tripId,
-    ])
+    const { rows } = await this.db.run(
+      'SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ?',
+      [tripId],
+    )
     return rows as unknown as DayRow[]
   }
 
@@ -46,11 +48,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
   }
 
   async listLegRows(tripId: string): Promise<LegRow[]> {
-    const { rows } = await this.db.run(
-      'SELECT id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality FROM legs WHERE trip_id = ?',
-      [tripId],
-    )
-    return rows as unknown as LegRow[]
+    return readSqliteLegRows(this.db, tripId)
   }
 
   async getDayTripId(dayId: string): Promise<string | null> {
@@ -80,7 +78,9 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
 
   async withTransaction<T>(fn: (store: TripPatchStoreDriver) => Promise<T>): Promise<T> {
     if (this.db.withTransaction) {
-      return this.db.withTransaction(async (transactionDb) => fn(new SqliteTripPatchStore(transactionDb)))
+      return this.db.withTransaction(async (transactionDb) =>
+        fn(new SqliteTripPatchStore(transactionDb)),
+      )
     }
     await this.db.run('BEGIN IMMEDIATE')
     try {
@@ -103,23 +103,41 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
     // omitting a column here also preserves a newer concurrent stored value.
     const metadata = (['title', 'note'] as const).filter((key) => day[key] !== undefined)
     const columns = ['id', 'trip_id', 'idx', 'date', 'theme', 'color', ...metadata]
-    const updates = ['idx = excluded.idx', 'date = excluded.date', 'theme = excluded.theme',
-      ...metadata.map((key) => `${key} = excluded.${key}`)]
+    const updates = [
+      'idx = excluded.idx',
+      'date = excluded.date',
+      'theme = excluded.theme',
+      ...metadata.map((key) => `${key} = excluded.${key}`),
+    ]
     await this.db.run(
       `INSERT INTO days (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})
        ON CONFLICT(id) DO UPDATE SET ${updates.join(', ')}
        WHERE days.trip_id = excluded.trip_id`,
-      [day.id, tripId, day.idx, day.date, day.theme, '', ...metadata.map((key) => day[key]!)] as SqlValue[],
+      [
+        day.id,
+        tripId,
+        day.idx,
+        day.date,
+        day.theme,
+        '',
+        ...metadata.map((key) => day[key]!),
+      ] as SqlValue[],
     )
     await this.assertCurrentOwner('days', day.id, 'day', tripId)
   }
 
   async deleteDayRow(tripId: string, dayId: string): Promise<void> {
-    await this.db.run('DELETE FROM days WHERE id = ? AND trip_id = ?', [dayId, tripId] as SqlValue[])
+    await this.db.run('DELETE FROM days WHERE id = ? AND trip_id = ?', [
+      dayId,
+      tripId,
+    ] as SqlValue[])
   }
 
   async deleteItemsForDay(tripId: string, dayId: string): Promise<void> {
-    await this.db.run('DELETE FROM items WHERE trip_id = ? AND day_id = ?', [tripId, dayId] as SqlValue[])
+    await this.db.run('DELETE FROM items WHERE trip_id = ? AND day_id = ?', [
+      tripId,
+      dayId,
+    ] as SqlValue[])
   }
 
   async deleteItemsById(tripId: string, itemIds: string[]): Promise<void> {
@@ -135,13 +153,30 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
     // Direct trusted callers share the strict write boundary with patch ops.
     const metadata = ActivityItemMetadataSchema.parse(item)
     const fields = (['timeRange', 'cost'] as const).filter((key) => metadata[key] !== undefined)
-    const metadataColumns = fields.map((key) => key === 'timeRange' ? 'time_range' : 'cost')
+    const metadataColumns = fields.map((key) => (key === 'timeRange' ? 'time_range' : 'cost'))
     await this.assertNoForeignOwner('items', item.id, 'item', tripId)
     await this.assertNoForeignOwner('days', item.dayId, 'day', tripId)
-    const columns = ['id', 'trip_id', 'day_id', 'item_order', 'type', 'title', 'note', 'poi', 'images', 'pending', ...metadataColumns]
+    const columns = [
+      'id',
+      'trip_id',
+      'day_id',
+      'item_order',
+      'type',
+      'title',
+      'note',
+      'poi',
+      'images',
+      'pending',
+      ...metadataColumns,
+    ]
     const updates = [
-      'day_id = excluded.day_id', 'item_order = excluded.item_order', 'type = excluded.type',
-      'title = excluded.title', 'note = excluded.note', 'poi = excluded.poi', 'pending = excluded.pending',
+      'day_id = excluded.day_id',
+      'item_order = excluded.item_order',
+      'type = excluded.type',
+      'title = excluded.title',
+      'note = excluded.note',
+      'poi = excluded.poi',
+      'pending = excluded.pending',
       ...(item.images !== undefined ? ['images = excluded.images'] : []),
       ...metadataColumns.map((column) => `${column} = excluded.${column}`),
     ]
@@ -171,12 +206,12 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
     await this.assertNoForeignOwner('items', leg.fromItemId, 'item', tripId)
     await this.assertNoForeignOwner('items', leg.toItemId, 'item', tripId)
     await this.db.run(
-      `INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO legs (id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality, verified_route_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          from_item_id = excluded.from_item_id, to_item_id = excluded.to_item_id, mode = excluded.mode,
          distance_km = excluded.distance_km, duration_min = excluded.duration_min, polyline = excluded.polyline,
-         quality = excluded.quality
+         quality = excluded.quality, verified_route_key = excluded.verified_route_key
        WHERE legs.trip_id = excluded.trip_id`,
       [
         leg.id,
@@ -188,6 +223,7 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
         leg.durationMin,
         leg.polyline,
         legQualityForWrite(leg.quality, leg.distanceKm, leg.durationMin, leg.polyline),
+        leg.verifiedRouteKey ?? null,
       ] as SqlValue[],
     )
     await this.assertCurrentOwner('legs', leg.id, 'leg', tripId)
@@ -219,7 +255,12 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
       [tripId],
     )
     const row = rows[0]
-    if (!row || typeof row.token !== 'string' || typeof row.snapshot_hash !== 'string' || typeof row.created_at !== 'string') {
+    if (
+      !row ||
+      typeof row.token !== 'string' ||
+      typeof row.snapshot_hash !== 'string' ||
+      typeof row.created_at !== 'string'
+    ) {
       return null
     }
     let choices: unknown
@@ -229,7 +270,9 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
       return null
     }
     if (!Array.isArray(choices)) return null
-    const normalized = choices.filter((choice): choice is string => typeof choice === 'string' && choice.trim() !== '')
+    const normalized = choices.filter(
+      (choice): choice is string => typeof choice === 'string' && choice.trim() !== '',
+    )
     if (normalized.length === 0) return null
     return {
       token: row.token,
@@ -249,11 +292,21 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
          choices = excluded.choices,
          created_at = excluded.created_at,
          consumed_at = NULL`,
-      [tripId, record.token, record.snapshotHash, JSON.stringify(record.choices), record.createdAt] as SqlValue[],
+      [
+        tripId,
+        record.token,
+        record.snapshotHash,
+        JSON.stringify(record.choices),
+        record.createdAt,
+      ] as SqlValue[],
     )
   }
 
-  async consumePatchConfirmation(tripId: string, token: string, snapshotHash: string): Promise<boolean> {
+  async consumePatchConfirmation(
+    tripId: string,
+    token: string,
+    snapshotHash: string,
+  ): Promise<boolean> {
     const result = await this.db.run(
       'UPDATE patch_confirmations SET consumed_at = ? WHERE trip_id = ? AND token = ? AND snapshot_hash = ? AND consumed_at IS NULL',
       [new Date().toISOString(), tripId, token, snapshotHash] as SqlValue[],
@@ -261,7 +314,10 @@ export class SqliteTripPatchStore implements TripPatchStoreDriver {
     return result.rowsAffected > 0
   }
 
-  private async ownerTripId(table: 'days' | 'items' | 'legs' | 'stash', id: string): Promise<string | null> {
+  private async ownerTripId(
+    table: 'days' | 'items' | 'legs' | 'stash',
+    id: string,
+  ): Promise<string | null> {
     const { rows } = await this.db.run(`SELECT trip_id FROM ${table} WHERE id = ?`, [id])
     const owner = rows[0]?.trip_id
     return typeof owner === 'string' ? owner : null

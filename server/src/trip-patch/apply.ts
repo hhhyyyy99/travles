@@ -38,10 +38,22 @@ import { mapStashRow } from '../recommendations/repository.js'
 import type { StashInsert } from '../recommendations/types.js'
 import { isValidDateString } from '../trips/dates.js'
 import { mapLegRow, mapPoiRef } from '../days/repository.js'
-import type { CanvasItem, CanvasLeg, ItemType, PoiRef } from '../days/types.js'
+import {
+  LEG_ROUTE_KEY,
+  type CanvasItem,
+  type CanvasLeg,
+  type ItemType,
+  type PoiRef,
+} from '../days/types.js'
 import { adjacentTripPairs, recomputeTripLegs } from '../items-admin/legs.js'
 import { TripPatchIdConflictError } from './types.js'
-import type { PatchPoiRef, TripPatchApplyResult, TripPatchItemUpsert, TripPatchStats, TripPatchStoreDriver } from './types.js'
+import type {
+  PatchPoiRef,
+  TripPatchApplyResult,
+  TripPatchItemUpsert,
+  TripPatchStats,
+  TripPatchStoreDriver,
+} from './types.js'
 import type { TripPatchInput } from './schema.js'
 import { normalizeTripPatchTypes, parseTripPatchInput } from './schema.js'
 
@@ -130,7 +142,9 @@ async function loadProjection(store: TripPatchStoreDriver, tripId: string): Prom
     const day = days.get(dayId)
     if (!day) continue // orphan row — out of scope for patch validation
     const order = Number(row?.item_order)
-    const type = normalizeItemType(row?.type) ?? (typeof row?.type === 'string' ? (row.type as ItemType) : 'other')
+    const type =
+      normalizeItemType(row?.type) ??
+      (typeof row?.type === 'string' ? (row.type as ItemType) : 'other')
     day.items.push({
       id,
       dayId,
@@ -147,8 +161,14 @@ async function loadProjection(store: TripPatchStoreDriver, tripId: string): Prom
     })
   }
   return {
-    days, stash, writes: [], touchedDays: new Set(), invalidatedLegItems: new Set(), itemMetadataTouches: new Map(),
-    maxIdx, seqCounter: seq,
+    days,
+    stash,
+    writes: [],
+    touchedDays: new Set(),
+    invalidatedLegItems: new Set(),
+    itemMetadataTouches: new Map(),
+    maxIdx,
+    seqCounter: seq,
   }
 }
 
@@ -181,17 +201,23 @@ function hasCoords(item: ProjectedItem): boolean {
   return item.poi !== null && Number.isFinite(item.poi.lat) && Number.isFinite(item.poi.lng)
 }
 
-function validateOps(projection: Projection, ops: TripPatchInput['ops'], tripId: string): ValidationFailure | { ok: true } {
+function validateOps(
+  projection: Projection,
+  ops: TripPatchInput['ops'],
+  tripId: string,
+): ValidationFailure | { ok: true } {
   for (let i = 0; i < ops.length; i += 1) {
     const op = ops[i] as { op: string; [key: string]: unknown }
-    const removedItemIds = op.op === 'remove_day'
-      ? projection.days.get(op.dayId as string)?.items.map((item) => item.id) ?? []
-      : []
+    const removedItemIds =
+      op.op === 'remove_day'
+        ? (projection.days.get(op.dayId as string)?.items.map((item) => item.id) ?? [])
+        : []
     switch (op.op) {
       case 'add_day': {
         if (projection.days.has(op.dayId as string)) return fail(i, `天「${op.dayId}」已存在`)
         const date = op.date as string | undefined
-        if (date !== undefined && !isValidDateString(date)) return fail(i, '日期格式无效（需要 YYYY-MM-DD）')
+        if (date !== undefined && !isValidDateString(date))
+          return fail(i, '日期格式无效（需要 YYYY-MM-DD）')
         projection.days.set(op.dayId as string, {
           id: op.dayId as string,
           idx: ++projection.maxIdx,
@@ -235,12 +261,25 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops'], tripId:
           title: op.title as string,
           ...(op.note !== undefined ? { note: op.note as string } : {}),
           ...(op.category !== undefined ? { category: op.category as string } : {}),
-          poi: JSON.stringify(op.poi ?? null), origin: 'recommend', addedAt: createdAt, createdAt,
+          poi: JSON.stringify(op.poi ?? null),
+          origin: 'recommend',
+          addedAt: createdAt,
+          createdAt,
         }
-        const item = mapStashRow({
-          id: stashId, trip_id: tripId, poi: insert.poi, origin: insert.origin, added_at: createdAt,
-          title: insert.title, note: insert.note, category: insert.category, created_at: createdAt,
-        }, tripId)
+        const item = mapStashRow(
+          {
+            id: stashId,
+            trip_id: tripId,
+            poi: insert.poi,
+            origin: insert.origin,
+            added_at: createdAt,
+            title: insert.title,
+            note: insert.note,
+            category: insert.category,
+            created_at: createdAt,
+          },
+          tripId,
+        )
         if (!item) return fail(i, `候选「${stashId}」内容无效`)
         projection.stash.set(stashId, item)
         projection.writes.push(async (store, stats) => {
@@ -251,8 +290,10 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops'], tripId:
       }
       case 'move_stash_to_day':
       case 'add_item': {
-        const stash = op.op === 'move_stash_to_day' ? projection.stash.get(op.stashId as string) : undefined
-        if (op.op === 'move_stash_to_day' && !stash) return fail(i, `候选「${op.stashId}」不存在或不属于当前行程`)
+        const stash =
+          op.op === 'move_stash_to_day' ? projection.stash.get(op.stashId as string) : undefined
+        if (op.op === 'move_stash_to_day' && !stash)
+          return fail(i, `候选「${op.stashId}」不存在或不属于当前行程`)
         const day = projection.days.get(op.dayId as string)
         if (!day) return fail(i, `天「${op.dayId}」不存在`)
         if (findItem(projection, op.itemId as string)) return fail(i, `卡片「${op.itemId}」已存在`)
@@ -262,10 +303,12 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops'], tripId:
           order: 0,
           seq: projection.seqCounter++,
           type: normalizeItemType(op.type) ?? stash?.poi?.type ?? 'other',
-          title: stash ? stash.title ?? stash.poi?.name ?? '' : op.title as string,
-          note: stash ? stash.note ?? stash.poi?.address ?? '' : (op.note as string | undefined) ?? '',
+          title: stash ? (stash.title ?? stash.poi?.name ?? '') : (op.title as string),
+          note: stash
+            ? (stash.note ?? stash.poi?.address ?? '')
+            : ((op.note as string | undefined) ?? ''),
           ...readActivityItemMetadata(op),
-          poi: stash ? stash.poi : (op.poi as PatchPoiRef | null | undefined) ?? null,
+          poi: stash ? stash.poi : ((op.poi as PatchPoiRef | null | undefined) ?? null),
           ...(stash?.poi ? { images: JSON.stringify(stash.poi.images) } : {}),
           pending: (op.pending as boolean | undefined) ?? false,
           legPending: (op.legPending as boolean | undefined) ?? false,
@@ -291,7 +334,10 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops'], tripId:
         const item = found.item
         const metadata = readActivityItemMetadata(op)
         Object.assign(item, metadata)
-        projection.itemMetadataTouches.set(item.id, { ...projection.itemMetadataTouches.get(item.id), ...metadata })
+        projection.itemMetadataTouches.set(item.id, {
+          ...projection.itemMetadataTouches.get(item.id),
+          ...metadata,
+        })
         if (op.title !== undefined) item.title = op.title as string
         if (op.note !== undefined) item.note = (op.note as string | null) ?? ''
         if (op.type !== undefined) item.type = normalizeItemType(op.type) ?? item.type
@@ -357,7 +403,10 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops'], tripId:
     if (op.op === 'add_day' || op.op === 'update_day') {
       const day = projection.days.get(op.dayId as string)!
       const payload = {
-        id: day.id, idx: day.idx, date: day.date, theme: day.theme,
+        id: day.id,
+        idx: day.idx,
+        date: day.date,
+        theme: day.theme,
         ...(op.title !== undefined ? { title: op.title as string } : {}),
         ...(op.note !== undefined ? { note: op.note as string } : {}),
       }
@@ -375,7 +424,12 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops'], tripId:
         await store.deleteDayRow(tripId, dayId)
         stats.daysRemoved += 1
       })
-    } else if (op.op === 'add_item' || op.op === 'update_item' || op.op === 'move_item' || op.op === 'move_stash_to_day') {
+    } else if (
+      op.op === 'add_item' ||
+      op.op === 'update_item' ||
+      op.op === 'move_item' ||
+      op.op === 'move_stash_to_day'
+    ) {
       const item = findItem(projection, op.itemId as string)!.item
       const payload = itemUpsert(item, readActivityItemMetadata(op))
       const operation = op.op
@@ -383,7 +437,8 @@ function validateOps(projection: Projection, ops: TripPatchInput['ops'], tripId:
       projection.writes.push(async (store, stats) => {
         await store.upsertItemRow(tripId, payload)
         if (operation === 'move_stash_to_day') {
-          if (!await store.deleteStashRow(tripId, stashId)) throw new Error('stash disappeared during transaction')
+          if (!(await store.deleteStashRow(tripId, stashId)))
+            throw new Error('stash disappeared during transaction')
           stats.stashMoved = (stats.stashMoved ?? 0) + 1
           stats.itemsAdded += 1
         } else if (operation === 'add_item') stats.itemsAdded += 1
@@ -430,36 +485,49 @@ async function validateGlobalIds(
     const op = ops[i]
     if (!op) continue
     if (op.op === 'add_day') {
-      if (addedDayIds.has(op.dayId)) return fail(i, `天「${op.dayId}」在同一 patch 中重复创建，id 必须全局唯一`)
+      if (addedDayIds.has(op.dayId))
+        return fail(i, `天「${op.dayId}」在同一 patch 中重复创建，id 必须全局唯一`)
       addedDayIds.add(op.dayId)
       const owner = await store.getDayTripId(op.dayId)
       if (owner !== null) {
-        return fail(i, owner === tripId
-          ? `天「${op.dayId}」已存在，add_day 需要使用全新的 id`
-          : `天「${op.dayId}」与其他行程冲突（该 id 已被占用），请换一个新的 dayId`)
+        return fail(
+          i,
+          owner === tripId
+            ? `天「${op.dayId}」已存在，add_day 需要使用全新的 id`
+            : `天「${op.dayId}」与其他行程冲突（该 id 已被占用），请换一个新的 dayId`,
+        )
       }
       continue
     }
     if (op.op === 'add_stash') {
-      if (addedStashIds.has(op.stashId)) return fail(i, `候选「${op.stashId}」在同一 patch 中重复创建，id 必须全局唯一`)
+      if (addedStashIds.has(op.stashId))
+        return fail(i, `候选「${op.stashId}」在同一 patch 中重复创建，id 必须全局唯一`)
       addedStashIds.add(op.stashId)
       const owner = await store.getStashTripId(op.stashId)
-      if (owner !== null) return fail(i, owner === tripId
-        ? `候选「${op.stashId}」已存在，add_stash 需要使用全新的 id`
-        : `候选「${op.stashId}」与其他行程冲突（该 id 已被占用），请换一个新的 stashId`)
+      if (owner !== null)
+        return fail(
+          i,
+          owner === tripId
+            ? `候选「${op.stashId}」已存在，add_stash 需要使用全新的 id`
+            : `候选「${op.stashId}」与其他行程冲突（该 id 已被占用），请换一个新的 stashId`,
+        )
     }
     if (op.op === 'move_stash_to_day' && !addedStashIds.has(op.stashId)) {
       const owner = await store.getStashTripId(op.stashId)
       if (owner !== null && owner !== tripId) return fail(i, `候选「${op.stashId}」不属于当前行程`)
     }
     if (op.op === 'add_item' || op.op === 'move_stash_to_day') {
-      if (addedItemIds.has(op.itemId)) return fail(i, `卡片「${op.itemId}」在同一 patch 中重复创建，id 必须全局唯一`)
+      if (addedItemIds.has(op.itemId))
+        return fail(i, `卡片「${op.itemId}」在同一 patch 中重复创建，id 必须全局唯一`)
       addedItemIds.add(op.itemId)
       const owner = await store.getItemTripId(op.itemId)
       if (owner !== null) {
-        return fail(i, owner === tripId
-          ? `卡片「${op.itemId}」已存在，add_item 需要使用全新的 id`
-          : `卡片「${op.itemId}」与其他行程冲突（该 id 已被占用），请换一个新的 itemId`)
+        return fail(
+          i,
+          owner === tripId
+            ? `卡片「${op.itemId}」已存在，add_item 需要使用全新的 id`
+            : `卡片「${op.itemId}」与其他行程冲突（该 id 已被占用），请换一个新的 itemId`,
+        )
       }
     }
   }
@@ -515,7 +583,9 @@ function validateReachability(projection: Projection): ValidationFailure | { ok:
   return { ok: true }
 }
 
-function projectedAdjacentPairs(projection: Projection): Array<{ from: ProjectedItem; to: ProjectedItem }> {
+function projectedAdjacentPairs(
+  projection: Projection,
+): Array<{ from: ProjectedItem; to: ProjectedItem }> {
   const byId = new Map<string, ProjectedItem>()
   const items: CanvasItem[] = []
   for (const day of projection.days.values()) {
@@ -527,7 +597,10 @@ function projectedAdjacentPairs(projection: Projection): Array<{ from: Projected
   const order = [...projection.days.values()].map((day) => ({ id: day.id, index: day.idx }))
   return adjacentTripPairs(items, order)
     .map((pair) => ({ from: byId.get(pair.from.id), to: byId.get(pair.to.id) }))
-    .filter((pair): pair is { from: ProjectedItem; to: ProjectedItem } => pair.from !== undefined && pair.to !== undefined)
+    .filter(
+      (pair): pair is { from: ProjectedItem; to: ProjectedItem } =>
+        pair.from !== undefined && pair.to !== undefined,
+    )
 }
 
 function markDayItems(day: ProjectedDay): void {
@@ -535,17 +608,24 @@ function markDayItems(day: ProjectedDay): void {
 }
 
 function neighboringDays(projection: Projection, dayId: string): ProjectedDay[] {
-  const ordered = [...projection.days.values()].sort((a, b) => a.idx - b.idx || a.id.localeCompare(b.id))
+  const ordered = [...projection.days.values()].sort(
+    (a, b) => a.idx - b.idx || a.id.localeCompare(b.id),
+  )
   const index = ordered.findIndex((day) => day.id === dayId)
   if (index < 0) return []
-  return [ordered[index - 1], ordered[index + 1]].filter((day): day is ProjectedDay => day !== undefined)
+  return [ordered[index - 1], ordered[index + 1]].filter(
+    (day): day is ProjectedDay => day !== undefined,
+  )
 }
 
 // ---------------------------------------------------------------------------
 // Apply: replay the validated ops as store writes, rebuild adjacency legs
 // ---------------------------------------------------------------------------
 
-function itemUpsert(item: ProjectedItem, metadata: ActivityItemMetadata | undefined): TripPatchItemUpsert {
+function itemUpsert(
+  item: ProjectedItem,
+  metadata: ActivityItemMetadata | undefined,
+): TripPatchItemUpsert {
   return {
     id: item.id,
     dayId: item.dayId,
@@ -604,7 +684,9 @@ function toPoiRef(poi: PatchPoiRef): PoiRef {
     lat: poi.lat,
     lng: poi.lng,
     ...(poi.address !== undefined ? { address: poi.address } : {}),
-    ...(poi.accommodationBaseId !== undefined ? { accommodationBaseId: poi.accommodationBaseId } : {}),
+    ...(poi.accommodationBaseId !== undefined
+      ? { accommodationBaseId: poi.accommodationBaseId }
+      : {}),
     ...(poi.accommodationType !== undefined ? { accommodationType: poi.accommodationType } : {}),
     ...(poi.accommodationNotes !== undefined ? { accommodationNotes: poi.accommodationNotes } : {}),
     ...(poi.accommodationMigrationVersion !== undefined
@@ -638,7 +720,9 @@ function toPoiStorage(poi: PatchPoiRef): {
     category: poi.category ?? '',
     rating: poi.rating ?? 0,
     introSummary: poi.introSummary ?? '',
-    ...(poi.accommodationBaseId !== undefined ? { accommodationBaseId: poi.accommodationBaseId } : {}),
+    ...(poi.accommodationBaseId !== undefined
+      ? { accommodationBaseId: poi.accommodationBaseId }
+      : {}),
     ...(poi.accommodationType !== undefined ? { accommodationType: poi.accommodationType } : {}),
     ...(poi.accommodationNotes !== undefined ? { accommodationNotes: poi.accommodationNotes } : {}),
     ...(poi.accommodationMigrationVersion !== undefined
@@ -648,7 +732,10 @@ function toPoiStorage(poi: PatchPoiRef): {
 }
 
 /** Preserve migration metadata when AI updates only the visible POI fields. */
-function preserveAccommodationMetadata(current: PatchPoiRef | null, next: PatchPoiRef): PatchPoiRef {
+function preserveAccommodationMetadata(
+  current: PatchPoiRef | null,
+  next: PatchPoiRef,
+): PatchPoiRef {
   if (!current) return next
   return {
     ...next,
@@ -661,7 +748,8 @@ function preserveAccommodationMetadata(current: PatchPoiRef | null, next: PatchP
     ...(next.accommodationNotes === undefined && current.accommodationNotes !== undefined
       ? { accommodationNotes: current.accommodationNotes }
       : {}),
-    ...(next.accommodationMigrationVersion === undefined && current.accommodationMigrationVersion !== undefined
+    ...(next.accommodationMigrationVersion === undefined &&
+    current.accommodationMigrationVersion !== undefined
       ? { accommodationMigrationVersion: current.accommodationMigrationVersion }
       : {}),
   }
@@ -673,7 +761,9 @@ function preserveAccommodationMetadata(current: PatchPoiRef | null, next: PatchP
  * are excluded on purpose: reusing them verbatim would freeze the NULLs
  * forever instead of letting the estimate fallback fill real numbers.
  */
-function usableStoredLegs(rows: Awaited<ReturnType<TripPatchStoreDriver['listLegRows']>>): CanvasLeg[] {
+function usableStoredLegs(
+  rows: Awaited<ReturnType<TripPatchStoreDriver['listLegRows']>>,
+): CanvasLeg[] {
   const legs: CanvasLeg[] = []
   for (const row of Array.isArray(rows) ? rows : []) {
     if (row === null || typeof row !== 'object') continue
@@ -718,6 +808,7 @@ async function rebuildLegsForTrip(
       durationMin: leg.durationMin,
       polyline: leg.polyline === null ? null : JSON.stringify(leg.polyline),
       quality: leg.quality,
+      verifiedRouteKey: leg[LEG_ROUTE_KEY],
     })
     stats.legsWritten += 1
   }
@@ -730,7 +821,9 @@ async function rebuildLegsForTrip(
  */
 export type TripPatchApplyOptions = {
   /** Runs on the same transaction connection before snapshot reads or writes. */
-  beforeApply?: (store: TripPatchStoreDriver) => Promise<{ ok: true } | { ok: false; code: 'invalid'; error: string }>
+  beforeApply?: (
+    store: TripPatchStoreDriver,
+  ) => Promise<{ ok: true } | { ok: false; code: 'invalid'; error: string }>
 }
 
 export async function applyTripPatch(
@@ -744,8 +837,13 @@ export async function applyTripPatch(
   const ops = parsed.value.ops
 
   const stats: TripPatchStats = {
-    daysAdded: 0, daysUpdated: 0, daysRemoved: 0,
-    itemsAdded: 0, itemsUpdated: 0, itemsRemoved: 0, legsWritten: 0,
+    daysAdded: 0,
+    daysUpdated: 0,
+    daysRemoved: 0,
+    itemsAdded: 0,
+    itemsUpdated: 0,
+    itemsRemoved: 0,
+    legsWritten: 0,
   }
   try {
     const rejected = await store.withTransaction(async (transactionStore) => {
@@ -770,21 +868,44 @@ export async function applyTripPatch(
         const day = reference.days.get(dayId)
         if (!day) continue
         for (const item of sortedItems(day)) {
-          await transactionStore.upsertItemRow(tripId, itemUpsert(item, reference.itemMetadataTouches.get(item.id)))
+          await transactionStore.upsertItemRow(
+            tripId,
+            itemUpsert(item, reference.itemMetadataTouches.get(item.id)),
+          )
         }
       }
-      const layoutChanged = ops.some((op) =>
-        op.op === 'add_item' || op.op === 'move_stash_to_day' || op.op === 'move_item' || op.op === 'remove_item' || op.op === 'remove_day',
-      ) || reference.touchedDays.size > 0
+      const layoutChanged =
+        ops.some(
+          (op) =>
+            op.op === 'add_item' ||
+            op.op === 'move_stash_to_day' ||
+            op.op === 'move_item' ||
+            op.op === 'remove_item' ||
+            op.op === 'remove_day',
+        ) || reference.touchedDays.size > 0
       if (layoutChanged) {
-        await rebuildLegsForTrip(transactionStore, tripId, reference, previousLegs, reference.invalidatedLegItems, stats)
+        await rebuildLegsForTrip(
+          transactionStore,
+          tripId,
+          reference,
+          previousLegs,
+          reference.invalidatedLegItems,
+          stats,
+        )
       }
       return null
     })
     if (rejected) return rejected
   } catch (error) {
     if (error instanceof TripPatchIdConflictError) {
-      const label = error.entity === 'day' ? '天' : error.entity === 'item' ? '卡片' : error.entity === 'stash' ? '候选' : '交通段'
+      const label =
+        error.entity === 'day'
+          ? '天'
+          : error.entity === 'item'
+            ? '卡片'
+            : error.entity === 'stash'
+              ? '候选'
+              : '交通段'
       return {
         ok: false,
         error: `${label}「${error.id}」与其他行程冲突（该 id 已被占用），请换一个新的 id。`,

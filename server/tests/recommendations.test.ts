@@ -5,7 +5,13 @@ import { createApp } from '../src/app.js'
 import { MemoryRecommendationsStoreDriver } from '../src/recommendations/driver-memory.js'
 import { RecommendationsRepository } from '../src/recommendations/repository.js'
 import { searchAmapPoi } from '../src/recommendations/search.js'
-import { parseAmapRoute, pendingRoute, refreshTripLegs, routeAmapLeg, RouteLookupCache } from '../src/recommendations/route.js'
+import {
+  parseAmapRoute,
+  pendingRoute,
+  refreshTripLegs,
+  routeAmapLeg,
+  RouteLookupCache,
+} from '../src/recommendations/route.js'
 import type { RecommendationPoi, RouteLegResult } from '../src/recommendations/types.js'
 import { MemoryItemsAdminStoreDriver } from '../src/items-admin/driver-memory.js'
 import { createMastra } from '../src/mastra.js'
@@ -37,19 +43,25 @@ async function fixture() {
   const app = await createApp({
     tripRepository: trips,
     recommendationsStore: recommendations,
-    searchPoi: async ({ query, region, type }): Promise<RecommendationPoi[]> => [{ ...poi, id: `${query || 'all'}-${region || 'all'}-${type || 'all'}` }],
+    searchPoi: async ({ query, region, type }): Promise<RecommendationPoi[]> => [
+      { ...poi, id: `${query || 'all'}-${region || 'all'}-${type || 'all'}` },
+    ],
   })
   const response = await app.request('/api/trips', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ title: '推荐 API 测试', startDate: '2026-10-02', endDate: '2026-10-03' }),
+    body: JSON.stringify({
+      title: '推荐 API 测试',
+      startDate: '2026-10-02',
+      endDate: '2026-10-03',
+    }),
   })
   assert.equal(response.status, 201)
   const trip = ((await response.json()) as { trip: { id: string } }).trip
   return { app, trip, recommendations }
 }
 
-test('stash and favorites are persisted, deduplicated, and favorites enter the pending pool', async () => {
+void test('stash and favorites are persisted, deduplicated, and favorites enter the pending pool', async () => {
   const { app, trip } = await fixture()
   const addStash = await app.request(`/api/trips/${trip.id}/stash`, {
     method: 'POST',
@@ -65,7 +77,11 @@ test('stash and favorites are persisted, deduplicated, and favorites enter the p
     body: JSON.stringify({ poi: { ...poi, name: '同一个点位的别名' } }),
   })
   assert.equal(duplicate.status, 201)
-  assert.equal(((await duplicate.json()) as { item: { id: string } }).item.id, firstStash.id, 'amapId deduplicates stash rows')
+  assert.equal(
+    ((await duplicate.json()) as { item: { id: string } }).item.id,
+    firstStash.id,
+    'amapId deduplicates stash rows',
+  )
 
   const addFavorite = await app.request(`/api/trips/${trip.id}/favorites`, {
     method: 'POST',
@@ -75,13 +91,17 @@ test('stash and favorites are persisted, deduplicated, and favorites enter the p
   assert.equal(addFavorite.status, 201)
   const snapshot = await app.request(`/api/trips/${trip.id}/recommendations`)
   assert.equal(snapshot.status, 200)
-  const body = (await snapshot.json()) as { stash: unknown[]; favorites: unknown[]; recommendations: unknown[] }
+  const body = (await snapshot.json()) as {
+    stash: unknown[]
+    favorites: unknown[]
+    recommendations: unknown[]
+  }
   assert.equal(body.stash.length, 1)
   assert.equal(body.favorites.length, 1)
   assert.equal(body.recommendations.length, 1)
 })
 
-test('removing a favorite removes its favorite-origin stash row but leaves recommendation-origin stash rows', async () => {
+void test('removing a favorite removes its favorite-origin stash row but leaves recommendation-origin stash rows', async () => {
   const { app, trip } = await fixture()
   const favorite = await app.request(`/api/trips/${trip.id}/favorites`, {
     method: 'POST',
@@ -89,9 +109,14 @@ test('removing a favorite removes its favorite-origin stash row but leaves recom
     body: JSON.stringify({ poi }),
   })
   const favoriteId = ((await favorite.json()) as { favorite: { id: string } }).favorite.id
-  const removed = await app.request(`/api/trips/${trip.id}/favorites/${favoriteId}`, { method: 'DELETE' })
+  const removed = await app.request(`/api/trips/${trip.id}/favorites/${favoriteId}`, {
+    method: 'DELETE',
+  })
   assert.equal(removed.status, 200)
-  const snapshot = (await (await app.request(`/api/trips/${trip.id}/recommendations`)).json()) as { stash: unknown[]; favorites: unknown[] }
+  const snapshot = (await (await app.request(`/api/trips/${trip.id}/recommendations`)).json()) as {
+    stash: unknown[]
+    favorites: unknown[]
+  }
   assert.equal(snapshot.favorites.length, 0)
   assert.equal(snapshot.stash.length, 0)
 
@@ -108,60 +133,116 @@ test('removing a favorite removes its favorite-origin stash row but leaves recom
   })
   const favoriteAgainId = ((await favoriteAgain.json()) as { favorite: { id: string } }).favorite.id
   await app.request(`/api/trips/${trip.id}/favorites/${favoriteAgainId}`, { method: 'DELETE' })
-  const preserved = (await (await app.request(`/api/trips/${trip.id}/recommendations`)).json()) as { stash: unknown[] }
+  const preserved = (await (await app.request(`/api/trips/${trip.id}/recommendations`)).json()) as {
+    stash: unknown[]
+  }
   assert.equal(preserved.stash.length, 1, 'recommendation-origin stash remains after unfavorite')
 })
 
-test('search endpoint uses the injected search_poi channel and passes filters', async () => {
+void test('search endpoint uses the injected search_poi channel and passes filters', async () => {
   const { app, trip } = await fixture()
-  const response = await app.request(`/api/trips/${trip.id}/recommendations/search?query=湿地&region=额尔古纳&type=attraction`)
+  const response = await app.request(
+    `/api/trips/${trip.id}/recommendations/search?query=湿地&region=额尔古纳&type=attraction`,
+  )
   assert.equal(response.status, 200)
   const body = (await response.json()) as { recommendations: Array<{ id: string }> }
-  assert.deepEqual(body.recommendations.map((entry) => entry.id), ['湿地-额尔古纳-attraction'])
+  assert.deepEqual(
+    body.recommendations.map((entry) => entry.id),
+    ['湿地-额尔古纳-attraction'],
+  )
 })
 
-test('repository drops malformed rows without throwing', async () => {
+void test('repository drops malformed rows without throwing', async () => {
   const driver = new MemoryRecommendationsStoreDriver()
-  driver.stashRows.set('bad', { id: 'bad', trip_id: 'trip', poi: '{bad json', origin: 'recommend', added_at: '' })
-  driver.favoriteRows.set('bad-favorite', { id: 'bad-favorite', trip_id: 'trip', poi: null, created_at: '' })
+  driver.stashRows.set('bad', {
+    id: 'bad',
+    trip_id: 'trip',
+    poi: '{bad json',
+    origin: 'recommend',
+    added_at: '',
+  })
+  driver.favoriteRows.set('bad-favorite', {
+    id: 'bad-favorite',
+    trip_id: 'trip',
+    poi: null,
+    created_at: '',
+  })
   const snapshot = await new RecommendationsRepository(driver).snapshot('trip')
   assert.deepEqual(snapshot, { stash: [], favorites: [] })
 })
 
-test('recommendation HTTP snapshots expose text candidates without inventing map recommendations', async () => {
+void test('recommendation HTTP snapshots expose text candidates without inventing map recommendations', async () => {
   const { app, trip, recommendations } = await fixture()
   await recommendations.insertStashRow(trip.id, {
-    id: 'text-http', poi: 'null', title: '  日落散步  ', note: '', category: '  灵感  ',
-    origin: 'recommend', addedAt: 'old-time', createdAt: 'saved-time',
+    id: 'text-http',
+    poi: 'null',
+    title: '  日落散步  ',
+    note: '',
+    category: '  灵感  ',
+    origin: 'recommend',
+    addedAt: 'old-time',
+    createdAt: 'saved-time',
   })
   const response = await app.request(`/api/trips/${trip.id}/recommendations`)
   assert.equal(response.status, 200)
-  const payload = await response.json() as { stash: unknown[]; favorites: unknown[]; recommendations: unknown[]; pois: unknown[] }
+  const payload = (await response.json()) as {
+    stash: unknown[]
+    favorites: unknown[]
+    recommendations: unknown[]
+    pois: unknown[]
+  }
   assert.deepEqual(payload, {
-    stash: [{
-      id: 'text-http', poi: null, title: '  日落散步  ', note: '', category: '  灵感  ',
-      origin: 'recommend', addedAt: 'old-time', tripId: trip.id, createdAt: 'saved-time',
-    }],
-    favorites: [], recommendations: [], pois: [],
+    stash: [
+      {
+        id: 'text-http',
+        poi: null,
+        title: '  日落散步  ',
+        note: '',
+        category: '  灵感  ',
+        origin: 'recommend',
+        addedAt: 'old-time',
+        tripId: trip.id,
+        createdAt: 'saved-time',
+      },
+    ],
+    favorites: [],
+    recommendations: [],
+    pois: [],
   })
   const legacyWrite = await app.request(`/api/trips/${trip.id}/stash`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ poi: null, title: '文本候选' }),
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ poi: null, title: '文本候选' }),
   })
-  assert.equal(legacyWrite.status, 400, 'text candidates are authored through patches; the legacy POI endpoint keeps its contract')
+  assert.equal(
+    legacyWrite.status,
+    400,
+    'text candidates are authored through patches; the legacy POI endpoint keeps its contract',
+  )
 })
 
 for (const backend of ['memory', 'sqlite'] as const) {
-  test(`${backend} recommendation storage retains explicit text content and nullable POIs through favorite changes`, async (t) => {
+  void test(`${backend} recommendation storage retains explicit text content and nullable POIs through favorite changes`, async (t) => {
     const db = backend === 'sqlite' ? createSqliteDatabase(':memory:') : undefined
     if (db) {
       t.after(() => db.close())
       await ensureSchema(db)
-      await db.run("INSERT INTO trips (id, created_at, updated_at) VALUES ('trip-content', 'date', 'date')")
+      await db.run(
+        "INSERT INTO trips (id, created_at, updated_at) VALUES ('trip-content', 'date', 'date')",
+      )
     }
-    const driver = db ? new SqliteRecommendationsStoreDriver(db) : new MemoryRecommendationsStoreDriver()
+    const driver = db
+      ? new SqliteRecommendationsStoreDriver(db)
+      : new MemoryRecommendationsStoreDriver()
     await driver.insertStashRow('trip-content', {
-      id: 'text', poi: 'null', title: '  晚上闲逛  ', note: '', category: '  自由安排  ',
-      origin: 'favorite', addedAt: 'legacy-date', createdAt: 'explicit-date',
+      id: 'text',
+      poi: 'null',
+      title: '  晚上闲逛  ',
+      note: '',
+      category: '  自由安排  ',
+      origin: 'favorite',
+      addedAt: 'legacy-date',
+      createdAt: 'explicit-date',
     })
     const [raw] = await driver.listStashRows('trip-content')
     assert.ok(raw)
@@ -173,17 +254,36 @@ for (const backend of ['memory', 'sqlite'] as const) {
     const repository = new RecommendationsRepository(driver)
     const [text] = (await repository.snapshot('trip-content')).stash
     assert.deepEqual(text, {
-      id: 'text', poi: null, origin: 'favorite', addedAt: 'legacy-date', tripId: 'trip-content',
-      title: '  晚上闲逛  ', note: '', category: '  自由安排  ', createdAt: 'explicit-date',
+      id: 'text',
+      poi: null,
+      origin: 'favorite',
+      addedAt: 'legacy-date',
+      tripId: 'trip-content',
+      title: '  晚上闲逛  ',
+      note: '',
+      category: '  自由安排  ',
+      createdAt: 'explicit-date',
     })
     const favorite = await repository.addFavorite('trip-content', poi)
     assert.ok(favorite.ok)
     const beforeRemoval = await repository.snapshot('trip-content')
-    assert.equal(beforeRemoval.stash.length, 2, 'a text candidate cannot deduplicate a POI stash write')
+    assert.equal(
+      beforeRemoval.stash.length,
+      2,
+      'a text candidate cannot deduplicate a POI stash write',
+    )
     assert.ok((await repository.removeFavorite('trip-content', favorite.value.id)).ok)
-    assert.deepEqual((await repository.snapshot('trip-content')).stash, [text], 'unfavorite leaves the text candidate intact')
+    assert.deepEqual(
+      (await repository.snapshot('trip-content')).stash,
+      [text],
+      'unfavorite leaves the text candidate intact',
+    )
     assert.deepEqual((await repository.snapshot('other-trip')).stash, [])
-    assert.equal((await repository.addStash('trip-content', null)).ok, false, 'legacy REST write still requires a POI')
+    assert.equal(
+      (await repository.addStash('trip-content', null)).ok,
+      false,
+      'legacy REST write still requires a POI',
+    )
   })
 }
 
@@ -201,12 +301,16 @@ async function createLegacyStashDatabase(): Promise<SqlDatabase> {
   await db.run(LEGACY_STASH_SQL)
   await db.run("INSERT INTO trips (id, created_at, updated_at) VALUES ('trip-old', 'date', 'date')")
   await db.run('INSERT INTO stash (id, trip_id, poi, origin, added_at) VALUES (?, ?, ?, ?, ?)', [
-    'old', 'trip-old', JSON.stringify({ ...poi, name: '  旧名称  ', category: '  旧分类  ' }), 'recommend', '  original-date  ',
+    'old',
+    'trip-old',
+    JSON.stringify({ ...poi, name: '  旧名称  ', category: '  旧分类  ' }),
+    'recommend',
+    '  original-date  ',
   ])
   return db
 }
 
-test('stash metadata migration is additive, repeatable, and leaves old POI rows untouched', async (t) => {
+void test('stash metadata migration is additive, repeatable, and leaves old POI rows untouched', async (t) => {
   const db = await createLegacyStashDatabase()
   t.after(() => db.close())
   const before = (await db.run('SELECT * FROM stash')).rows[0]!
@@ -221,17 +325,28 @@ test('stash metadata migration is additive, repeatable, and leaves old POI rows 
     assert.equal(column.dflt_value, null)
   }
   assert.equal(columns.find((entry) => entry.name === 'poi')?.notnull, 1)
-  assert.deepEqual((await db.run("SELECT rootpage FROM sqlite_schema WHERE name = 'stash'")).rows, root)
+  assert.deepEqual(
+    (await db.run("SELECT rootpage FROM sqlite_schema WHERE name = 'stash'")).rows,
+    root,
+  )
   assert.deepEqual((await db.run('SELECT * FROM stash')).rows[0], {
-    ...before, title: null, note: null, category: null, created_at: null,
+    ...before,
+    title: null,
+    note: null,
+    category: null,
+    created_at: null,
   })
-  const [legacy] = (await new RecommendationsRepository(new SqliteRecommendationsStoreDriver(db)).snapshot('trip-old')).stash
+  const [legacy] = (
+    await new RecommendationsRepository(new SqliteRecommendationsStoreDriver(db)).snapshot(
+      'trip-old',
+    )
+  ).stash
   assert.equal(legacy?.title, '  旧名称  ')
   assert.equal(legacy?.category, '  旧分类  ')
   assert.equal(legacy?.createdAt, '  original-date  ')
 })
 
-test('partially migrated stash columns retain exact values and opaque driver rows', async (t) => {
+void test('partially migrated stash columns retain exact values and opaque driver rows', async (t) => {
   const db = await createLegacyStashDatabase()
   t.after(() => db.close())
   await db.run('ALTER TABLE stash ADD COLUMN title TEXT')
@@ -246,14 +361,22 @@ test('partially migrated stash columns retain exact values and opaque driver row
   assert.equal(row?.created_at, null)
   await db.run("UPDATE stash SET title = X'6162'")
   const [opaque] = await driver.listStashRows('trip-old')
-  assert.deepEqual(opaque?.title, (await db.run('SELECT title FROM stash')).rows[0]?.title, 'driver returns raw metadata rather than coercing storage')
+  assert.deepEqual(
+    opaque?.title,
+    (await db.run('SELECT title FROM stash')).rows[0]?.title,
+    'driver returns raw metadata rather than coercing storage',
+  )
   assert.equal(typeof opaque?.title, 'object')
   const [decoded] = (await new RecommendationsRepository(driver).snapshot('trip-old')).stash
-  assert.equal(decoded?.title, undefined, 'invalid explicit metadata cannot fall back to the old POI alias')
+  assert.equal(
+    decoded?.title,
+    undefined,
+    'invalid explicit metadata cannot fall back to the old POI alias',
+  )
   assert.equal(decoded?.note, '')
 })
 
-test('stash migration rechecks an ALTER failure and propagates errors while the column is still missing', async (t) => {
+void test('stash migration rechecks an ALTER failure and propagates errors while the column is still missing', async (t) => {
   const db = await createLegacyStashDatabase()
   t.after(() => db.close())
   const concurrent: SqlDatabase = {
@@ -267,22 +390,28 @@ test('stash migration rechecks an ALTER failure and propagates errors while the 
     },
   }
   await ensureSchema(concurrent)
-  assert.ok((await db.run('PRAGMA table_info(stash)')).rows.some((column) => column.name === 'title'))
+  assert.ok(
+    (await db.run('PRAGMA table_info(stash)')).rows.some((column) => column.name === 'title'),
+  )
 
   const failingDb = await createLegacyStashDatabase()
   t.after(() => failingDb.close())
   const failing: SqlDatabase = {
     close: () => failingDb.close(),
     run: async (sql, args) => {
-      if (sql === 'ALTER TABLE stash ADD COLUMN note TEXT') throw new Error('stash migration unavailable')
+      if (sql === 'ALTER TABLE stash ADD COLUMN note TEXT')
+        throw new Error('stash migration unavailable')
       return failingDb.run(sql, args)
     },
   }
   await assert.rejects(ensureSchema(failing), /stash migration unavailable/)
-  assert.equal((await failingDb.run('PRAGMA table_info(stash)')).rows.some((column) => column.name === 'note'), false)
+  assert.equal(
+    (await failingDb.run('PRAGMA table_info(stash)')).rows.some((column) => column.name === 'note'),
+    false,
+  )
 })
 
-test('AMap POI search converts coordinates and keeps web-service rating/photos', async () => {
+void test('AMap POI search converts coordinates and keeps web-service rating/photos', async () => {
   const previousKey = process.env.AMAP_WEB_KEY
   const previousFetch = globalThis.fetch
   process.env.AMAP_WEB_KEY = 'test-key'
@@ -322,15 +451,17 @@ test('AMap POI search converts coordinates and keeps web-service rating/photos',
   }
 })
 
-test('route parser reads the AMap object-shaped response and keeps pending explicit', () => {
+void test('route parser reads the AMap object-shaped response and keeps pending explicit', () => {
   const route = parseAmapRoute({
     status: '1',
     route: {
-      paths: [{
-        distance: '12345',
-        duration: '3600',
-        steps: [{ polyline: '119.9,49.4;119.91,49.41' }],
-      }],
+      paths: [
+        {
+          distance: '12345',
+          duration: '3600',
+          steps: [{ polyline: '119.9,49.4;119.91,49.41' }],
+        },
+      ],
     },
   })
   assert.deepEqual(route, {
@@ -338,26 +469,35 @@ test('route parser reads the AMap object-shaped response and keeps pending expli
     source: 'amap',
     distanceKm: 12.3,
     durationMin: 60,
-    polyline: [[119.89303871958799, 49.39824893444907], [119.90304600361077, 49.40824923313777]],
+    polyline: [
+      [119.89303871958799, 49.39824893444907],
+      [119.90304600361077, 49.40824923313777],
+    ],
   })
   assert.equal(pendingRoute('无 Key').distanceKm, null)
   assert.equal(pendingRoute('无 Key').durationMin, null)
 })
 
-test('AMap route adapter converts persisted WGS-84 endpoints at the request boundary', async () => {
+void test('AMap route adapter converts persisted WGS-84 endpoints at the request boundary', async () => {
   const previousKey = process.env.AMAP_WEB_KEY
   const previousFetch = globalThis.fetch
   process.env.AMAP_WEB_KEY = 'test-key'
   let requestUrl = ''
   globalThis.fetch = (async (input) => {
     requestUrl = String(input)
-    return new Response(JSON.stringify({ status: '1', route: { paths: [{ distance: '1000', duration: '600' }] } }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    })
+    return new Response(
+      JSON.stringify({ status: '1', route: { paths: [{ distance: '1000', duration: '600' }] } }),
+      {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      },
+    )
   }) as typeof fetch
   try {
-    const result = await routeAmapLeg({ from: { lat: 49.4, lng: 119.9 }, to: { lat: 49.5, lng: 120 } })
+    const result = await routeAmapLeg({
+      from: { lat: 49.4, lng: 119.9 },
+      to: { lat: 49.5, lng: 120 },
+    })
     assert.equal(result.status, 'ok')
     const params = new URL(requestUrl).searchParams
     assert.notEqual(params.get('origin'), '119.9,49.4')
@@ -369,32 +509,77 @@ test('AMap route adapter converts persisted WGS-84 endpoints at the request boun
   }
 })
 
-test('route refresh replaces estimate rows with real metrics and preserves them when pending', async () => {
+void test('route refresh replaces estimate rows with real metrics and preserves them when pending', async () => {
   const store = new MemoryItemsAdminStoreDriver()
   store.itemRows.set('item-a', {
-    id: 'item-a', trip_id: 'trip-route', day_id: 'day-1', item_order: 0, type: 'attraction', title: '起点', note: '',
-    poi: JSON.stringify({ name: '起点', lat: 49.4, lng: 119.9 }), images: null, pending: 0,
+    id: 'item-a',
+    trip_id: 'trip-route',
+    day_id: 'day-1',
+    item_order: 0,
+    type: 'attraction',
+    title: '起点',
+    note: '',
+    poi: JSON.stringify({ name: '起点', lat: 49.4, lng: 119.9 }),
+    images: null,
+    pending: 0,
   })
   store.itemRows.set('item-b', {
-    id: 'item-b', trip_id: 'trip-route', day_id: 'day-1', item_order: 1, type: 'attraction', title: '终点', note: '',
-    poi: JSON.stringify({ name: '终点', lat: 49.5, lng: 120 }), images: null, pending: 0,
+    id: 'item-b',
+    trip_id: 'trip-route',
+    day_id: 'day-1',
+    item_order: 1,
+    type: 'attraction',
+    title: '终点',
+    note: '',
+    poi: JSON.stringify({ name: '终点', lat: 49.5, lng: 120 }),
+    images: null,
+    pending: 0,
   })
   store.legRows.set('leg-item-a-item-b', {
-    id: 'leg-item-a-item-b', trip_id: 'trip-route', from_item_id: 'item-a', to_item_id: 'item-b', mode: 'drive', distance_km: 16.8, duration_min: 17, polyline: null,
+    id: 'leg-item-a-item-b',
+    trip_id: 'trip-route',
+    from_item_id: 'item-a',
+    to_item_id: 'item-b',
+    mode: 'drive',
+    distance_km: 16.8,
+    duration_min: 17,
+    polyline: null,
   })
   const real: RouteLegResult = {
-    status: 'ok', source: 'amap', distanceKm: 21.4, durationMin: 28, polyline: [[119.9, 49.4], [120, 49.5]],
+    status: 'ok',
+    source: 'amap',
+    distanceKm: 21.4,
+    durationMin: 28,
+    polyline: [
+      [119.9, 49.4],
+      [120, 49.5],
+    ],
   }
   const refreshed = await refreshTripLegs(store, 'trip-route', async () => real)
   assert.equal(refreshed.ok, true)
-  if (refreshed.ok) assert.deepEqual(refreshed.legs[0], { id: 'leg-item-a-item-b', fromItemId: 'item-a', toItemId: 'item-b', mode: 'drive', distanceKm: 21.4, durationMin: 28, polyline: real.polyline, quality: 'measured', distanceMeters: 21400, durationSeconds: 1680, formattedDistance: '21.4 千米', formattedDuration: '28 分钟' })
+  if (refreshed.ok)
+    assert.deepEqual(JSON.parse(JSON.stringify(refreshed.legs[0])) as unknown, {
+      id: 'leg-item-a-item-b',
+      fromItemId: 'item-a',
+      toItemId: 'item-b',
+      mode: 'drive',
+      distanceKm: 21.4,
+      durationMin: 28,
+      polyline: real.polyline,
+      quality: 'measured',
+      status: 'verified',
+      distanceMeters: 21400,
+      durationSeconds: 1680,
+      formattedDistance: '21.4 千米',
+      formattedDuration: '28 分钟',
+    })
 
   const pending = await refreshTripLegs(store, 'trip-route', async () => pendingRoute('未配置'))
   assert.equal(pending.ok, true)
   if (pending.ok) assert.equal(pending.legs[0]?.distanceKm, 21.4)
 })
 
-test('route refresh limits provider concurrency and reuses only ordered cached pairs', async () => {
+void test('route refresh limits provider concurrency and reuses only ordered cached pairs', async () => {
   const store = new MemoryItemsAdminStoreDriver()
   for (let index = 0; index < 7; index += 1) {
     store.itemRows.set(`item-${index}`, {
@@ -405,7 +590,11 @@ test('route refresh limits provider concurrency and reuses only ordered cached p
       type: 'attraction',
       title: `点位 ${index}`,
       note: '',
-      poi: JSON.stringify({ name: `点位 ${index}`, lat: 49.4 + index * 0.01, lng: 119.9 + index * 0.01 }),
+      poi: JSON.stringify({
+        name: `点位 ${index}`,
+        lat: 49.4 + index * 0.01,
+        lng: 119.9 + index * 0.01,
+      }),
       images: null,
       pending: 0,
     })
@@ -419,39 +608,84 @@ test('route refresh limits provider concurrency and reuses only ordered cached p
     maximumActive = Math.max(maximumActive, active)
     await new Promise((resolve) => setTimeout(resolve, 5))
     active -= 1
-    return { status: 'ok', source: 'amap', distanceKm: 10, durationMin: 12, polyline: [[119.9, 49.4], [120, 49.5]] }
+    return {
+      status: 'ok',
+      source: 'amap',
+      distanceKm: 10,
+      durationMin: 12,
+      polyline: [
+        [119.9, 49.4],
+        [120, 49.5],
+      ],
+    }
   }
-  const options = { cache: new RouteLookupCache(), concurrency: 2, lookupTimeoutMs: 100, maxDurationMs: 500 }
+  const options = {
+    cache: new RouteLookupCache(),
+    concurrency: 2,
+    lookupTimeoutMs: 100,
+    maxDurationMs: 500,
+  }
   const first = await refreshTripLegs(store, 'trip-bounded', provider, options)
   assert.equal(first.ok, true)
   assert.equal(calls, 6)
   assert.ok(maximumActive <= 2)
-  if (first.ok) assert.deepEqual(first.summary, { attempted: 6, updated: 6, pending: 0, truncated: false })
+  if (first.ok)
+    assert.deepEqual(first.summary, { attempted: 6, updated: 6, pending: 0, truncated: false })
 
   const second = await refreshTripLegs(store, 'trip-bounded', provider, options)
   assert.equal(second.ok, true)
   assert.equal(calls, 6, 'the same ordered coordinate pairs are served from the cache')
 })
 
-test('pending refresh turns a reverse geometry cache into an explicit estimate', async () => {
+void test('pending refresh turns a reverse geometry cache into an explicit estimate', async () => {
   const store = new MemoryItemsAdminStoreDriver()
   store.itemRows.set('item-a', {
-    id: 'item-a', trip_id: 'trip-reverse', day_id: 'day-1', item_order: 1, type: 'attraction', title: '起点', note: '',
-    poi: JSON.stringify({ name: '起点', lat: 49.4, lng: 119.9 }), images: null, pending: 0,
+    id: 'item-a',
+    trip_id: 'trip-reverse',
+    day_id: 'day-1',
+    item_order: 1,
+    type: 'attraction',
+    title: '起点',
+    note: '',
+    poi: JSON.stringify({ name: '起点', lat: 49.4, lng: 119.9 }),
+    images: null,
+    pending: 0,
   })
   store.itemRows.set('item-b', {
-    id: 'item-b', trip_id: 'trip-reverse', day_id: 'day-1', item_order: 0, type: 'attraction', title: '终点', note: '',
-    poi: JSON.stringify({ name: '终点', lat: 49.5, lng: 120 }), images: null, pending: 0,
+    id: 'item-b',
+    trip_id: 'trip-reverse',
+    day_id: 'day-1',
+    item_order: 0,
+    type: 'attraction',
+    title: '终点',
+    note: '',
+    poi: JSON.stringify({ name: '终点', lat: 49.5, lng: 120 }),
+    images: null,
+    pending: 0,
   })
   // This is the shape ticket 09 produces after moving a measured a→b leg to
   // b→a. A pending provider must not preserve that one-way geometry.
   store.legRows.set('leg-item-a-item-b', {
-    id: 'leg-item-a-item-b', trip_id: 'trip-reverse', from_item_id: 'item-a', to_item_id: 'item-b', mode: 'drive',
-    distance_km: 99, duration_min: 120, polyline: JSON.stringify([[119.9, 49.4], [120, 49.5]]),
+    id: 'leg-item-a-item-b',
+    trip_id: 'trip-reverse',
+    from_item_id: 'item-a',
+    to_item_id: 'item-b',
+    mode: 'drive',
+    distance_km: 99,
+    duration_min: 120,
+    polyline: JSON.stringify([
+      [119.9, 49.4],
+      [120, 49.5],
+    ]),
   })
-  const refreshed = await refreshTripLegs(store, 'trip-reverse', async () => pendingRoute('未配置'), {
-    maxDurationMs: 100,
-  })
+  const refreshed = await refreshTripLegs(
+    store,
+    'trip-reverse',
+    async () => pendingRoute('未配置'),
+    {
+      maxDurationMs: 100,
+    },
+  )
   assert.equal(refreshed.ok, true)
   if (refreshed.ok) {
     assert.equal(refreshed.legs[0]?.polyline, null)
@@ -460,12 +694,24 @@ test('pending refresh turns a reverse geometry cache into an explicit estimate',
   }
 })
 
-test('route refresh abandons hanging provider pairs within its total budget', async () => {
+void test('route refresh abandons hanging provider pairs within its total budget', async () => {
   const store = new MemoryItemsAdminStoreDriver()
   for (let index = 0; index < 5; index += 1) {
     store.itemRows.set(`item-${index}`, {
-      id: `item-${index}`, trip_id: 'trip-timeout', day_id: 'day-1', item_order: index, type: 'attraction', title: `点位 ${index}`, note: '',
-      poi: JSON.stringify({ name: `点位 ${index}`, lat: 49.4 + index * 0.01, lng: 119.9 + index * 0.01 }), images: null, pending: 0,
+      id: `item-${index}`,
+      trip_id: 'trip-timeout',
+      day_id: 'day-1',
+      item_order: index,
+      type: 'attraction',
+      title: `点位 ${index}`,
+      note: '',
+      poi: JSON.stringify({
+        name: `点位 ${index}`,
+        lat: 49.4 + index * 0.01,
+        lng: 119.9 + index * 0.01,
+      }),
+      images: null,
+      pending: 0,
     })
   }
   const started = Date.now()
@@ -475,18 +721,27 @@ test('route refresh abandons hanging provider pairs within its total budget', as
     maxDurationMs: 35,
   })
   assert.equal(result.ok, true)
-  assert.ok(Date.now() - started < 250, 'the whole refresh is bounded even when the provider never resolves')
+  assert.ok(
+    Date.now() - started < 250,
+    'the whole refresh is bounded even when the provider never resolves',
+  )
   if (result.ok) assert.equal(result.summary.truncated, true)
 })
 
-test('route refresh API upgrades the shared item-admin leg store', async () => {
+void test('route refresh API upgrades the shared item-admin leg store', async () => {
   const trips = new TripRepository(new MemoryTripStoreDriver())
   const items = new MemoryItemsAdminStoreDriver()
   const app = await createApp({
     tripRepository: trips,
     itemsAdminStore: items,
     recommendationsStore: new MemoryRecommendationsStoreDriver(),
-    routeLegs: async () => ({ status: 'ok', source: 'amap', distanceKm: 8.2, durationMin: 12, polyline: null }),
+    routeLegs: async () => ({
+      status: 'ok',
+      source: 'amap',
+      distanceKm: 8.2,
+      durationMin: 12,
+      polyline: null,
+    }),
   })
   const created = await app.request('/api/trips', {
     method: 'POST',
@@ -495,20 +750,41 @@ test('route refresh API upgrades the shared item-admin leg store', async () => {
   })
   const tripId = ((await created.json()) as { trip: { id: string } }).trip.id
   items.itemRows.set('item-a', {
-    id: 'item-a', trip_id: tripId, day_id: 'day-1', item_order: 0, type: 'attraction', title: '起点', note: '',
-    poi: JSON.stringify({ name: '起点', lat: 49.4, lng: 119.9 }), images: null, pending: 0,
+    id: 'item-a',
+    trip_id: tripId,
+    day_id: 'day-1',
+    item_order: 0,
+    type: 'attraction',
+    title: '起点',
+    note: '',
+    poi: JSON.stringify({ name: '起点', lat: 49.4, lng: 119.9 }),
+    images: null,
+    pending: 0,
   })
   items.itemRows.set('item-b', {
-    id: 'item-b', trip_id: tripId, day_id: 'day-1', item_order: 1, type: 'attraction', title: '终点', note: '',
-    poi: JSON.stringify({ name: '终点', lat: 49.5, lng: 120 }), images: null, pending: 0,
+    id: 'item-b',
+    trip_id: tripId,
+    day_id: 'day-1',
+    item_order: 1,
+    type: 'attraction',
+    title: '终点',
+    note: '',
+    poi: JSON.stringify({ name: '终点', lat: 49.5, lng: 120 }),
+    images: null,
+    pending: 0,
   })
   const response = await app.request(`/api/trips/${tripId}/legs/refresh`, { method: 'POST' })
   assert.equal(response.status, 200)
-  const body = (await response.json()) as { legs: Array<{ distanceKm: number; durationMin: number }> }
-  assert.deepEqual(body.legs.map((leg) => [leg.distanceKm, leg.durationMin]), [[8.2, 12]])
+  const body = (await response.json()) as {
+    legs: Array<{ distanceKm: number; durationMin: number }>
+  }
+  assert.deepEqual(
+    body.legs.map((leg) => [leg.distanceKm, leg.durationMin]),
+    [[8.2, 12]],
+  )
 })
 
-test('stay references reuse search_poi and the planner exposes all route tools', async () => {
+void test('stay references reuse search_poi and the planner exposes all route tools', async () => {
   const calls: unknown[] = []
   const stayTool = createSearchStayReferenceTool(async (input) => {
     calls.push(input)
@@ -523,7 +799,10 @@ test('stay references reuse search_poi and the planner exposes all route tools',
   assert.deepEqual(calls, [{ query: '酒店', region: '室韦', type: 'stay' }])
   if (stayResult.ok) assert.equal(stayResult.stays[0]?.name, poi.name)
 
-  const tools = await createMastra({ searchPoi: async () => [], routeLegs: async () => pendingRoute('test') })
+  const tools = await createMastra({
+    searchPoi: async () => [],
+    routeLegs: async () => pendingRoute('test'),
+  })
     .getAgent('planner')
     .listTools()
   assert.deepEqual(Object.keys(tools).sort(), [

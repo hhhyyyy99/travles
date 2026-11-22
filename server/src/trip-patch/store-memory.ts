@@ -5,11 +5,7 @@
  * `unknown` field values) so read mapping behaves identically.
  */
 import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
-import type {
-  DayRow,
-  ItemRow,
-  LegRow,
-} from '../days/types.js'
+import type { DayRow, ItemRow, LegRow } from '../days/types.js'
 import { TripPatchIdConflictError } from './types.js'
 import type {
   PatchConfirmationRecord,
@@ -75,7 +71,16 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
   }
 
   async listLegRows(tripId: string): Promise<LegRow[]> {
-    return this.legRows.filter((row) => row.trip_id === tripId)
+    const items = new Map(
+      this.itemRows.filter((row) => row.trip_id === tripId).map((row) => [row.id, row.poi]),
+    )
+    return this.legRows
+      .filter((row) => row.trip_id === tripId)
+      .map((row) => ({
+        ...row,
+        from_poi: items.get(row.from_item_id),
+        to_poi: items.get(row.to_item_id),
+      }))
   }
 
   async getDayTripId(dayId: string): Promise<string | null> {
@@ -102,7 +107,11 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       throw new Error(`stash id "${item.id}" already exists`)
     }
     this.stashRows.push({
-      id: item.id, trip_id: tripId, poi: item.poi, origin: item.origin, added_at: item.addedAt,
+      id: item.id,
+      trip_id: tripId,
+      poi: item.poi,
+      origin: item.origin,
+      added_at: item.addedAt,
       ...(item.title !== undefined ? { title: item.title } : {}),
       ...(item.note !== undefined ? { note: item.note } : {}),
       ...(item.category !== undefined ? { category: item.category } : {}),
@@ -119,7 +128,10 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
 
   async withTransaction<T>(fn: (store: TripPatchStoreDriver) => Promise<T>): Promise<T> {
     const run = this.transactionTail.then(() => this.executeTransaction(fn))
-    this.transactionTail = run.then(() => undefined, () => undefined)
+    this.transactionTail = run.then(
+      () => undefined,
+      () => undefined,
+    )
     return run
   }
 
@@ -155,7 +167,12 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       return
     }
     this.dayRows.push({
-      id: day.id, trip_id: tripId, idx: day.idx, date: day.date, theme: day.theme, color: '',
+      id: day.id,
+      trip_id: tripId,
+      idx: day.idx,
+      date: day.date,
+      theme: day.theme,
+      color: '',
       ...(day.title !== undefined ? { title: day.title } : {}),
       ...(day.note !== undefined ? { note: day.note } : {}),
     })
@@ -184,9 +201,11 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
   async upsertItemRow(tripId: string, item: TripPatchItemUpsert): Promise<void> {
     const metadata = ActivityItemMetadataSchema.parse(item)
     const owner = await this.getItemTripId(item.id)
-    if (owner !== null && owner !== tripId) throw new TripPatchIdConflictError('item', item.id, owner)
+    if (owner !== null && owner !== tripId)
+      throw new TripPatchIdConflictError('item', item.id, owner)
     const dayOwner = await this.getDayTripId(item.dayId)
-    if (dayOwner !== null && dayOwner !== tripId) throw new TripPatchIdConflictError('day', item.dayId, dayOwner)
+    if (dayOwner !== null && dayOwner !== tripId)
+      throw new TripPatchIdConflictError('day', item.dayId, dayOwner)
     const existing = this.itemRows.find((row) => row.id === item.id && row.trip_id === tripId)
     if (existing) {
       existing.day_id = item.dayId
@@ -219,10 +238,12 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
 
   async upsertLegRow(tripId: string, leg: TripPatchLegUpsert): Promise<void> {
     const owner = this.legRows.find((row) => row.id === leg.id)?.trip_id
-    if (owner !== undefined && owner !== tripId) throw new TripPatchIdConflictError('leg', leg.id, owner)
+    if (owner !== undefined && owner !== tripId)
+      throw new TripPatchIdConflictError('leg', leg.id, owner)
     for (const itemId of [leg.fromItemId, leg.toItemId]) {
       const itemOwner = await this.getItemTripId(itemId)
-      if (itemOwner !== null && itemOwner !== tripId) throw new TripPatchIdConflictError('item', itemId, itemOwner)
+      if (itemOwner !== null && itemOwner !== tripId)
+        throw new TripPatchIdConflictError('item', itemId, itemOwner)
     }
     const existing = this.legRows.find((row) => row.id === leg.id && row.trip_id === tripId)
     if (existing) {
@@ -232,7 +253,13 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       existing.distance_km = leg.distanceKm
       existing.duration_min = leg.durationMin
       existing.polyline = leg.polyline
-      existing.quality = legQualityForWrite(leg.quality, leg.distanceKm, leg.durationMin, leg.polyline)
+      existing.quality = legQualityForWrite(
+        leg.quality,
+        leg.distanceKm,
+        leg.durationMin,
+        leg.polyline,
+      )
+      existing.verified_route_key = leg.verifiedRouteKey ?? null
       return
     }
     this.legRows.push({
@@ -245,6 +272,7 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
       duration_min: leg.durationMin,
       polyline: leg.polyline,
       quality: legQualityForWrite(leg.quality, leg.distanceKm, leg.durationMin, leg.polyline),
+      verified_route_key: leg.verifiedRouteKey ?? null,
     })
   }
 
@@ -290,9 +318,19 @@ export class MemoryTripPatchStore implements TripPatchStoreDriver {
     })
   }
 
-  async consumePatchConfirmation(tripId: string, token: string, snapshotHash: string): Promise<boolean> {
+  async consumePatchConfirmation(
+    tripId: string,
+    token: string,
+    snapshotHash: string,
+  ): Promise<boolean> {
     const record = this.patchConfirmations.get(tripId)
-    if (!record || record.consumedAt || record.token !== token || record.snapshotHash !== snapshotHash) return false
+    if (
+      !record ||
+      record.consumedAt ||
+      record.token !== token ||
+      record.snapshotHash !== snapshotHash
+    )
+      return false
     record.consumedAt = new Date().toISOString()
     return true
   }

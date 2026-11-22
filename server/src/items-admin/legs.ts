@@ -25,7 +25,8 @@
  * The recompute never throws: corrupt inputs are filtered by the callers'
  * tolerant row mapping before they reach this module.
  */
-import type { CanvasItem, CanvasLeg, PoiRef } from '../days/types.js'
+import { LEG_ROUTE_KEY, type CanvasItem, type CanvasLeg, type PoiRef } from '../days/types.js'
+import { drivingRouteKey } from '../days/route-identity.js'
 import { normalizeLegQuality } from '../days/repository.js'
 import { projectLegMetrics } from '../days/leg-projections.js'
 
@@ -52,16 +53,21 @@ const EARTH_RADIUS_KM = 6371
  * pair with deterministic ids (`leg-<fromItemId>-<toItemId>`), ready for
  * `replaceLegs`.
  */
-export function recomputeTripLegs(items: CanvasItem[], previousLegs: CanvasLeg[], dayOrder?: LegDayOrder[]): CanvasLeg[] {
+export function recomputeTripLegs(
+  items: CanvasItem[],
+  previousLegs: CanvasLeg[],
+  dayOrder?: LegDayOrder[],
+): CanvasLeg[] {
   const byPair = new Map<string, CanvasLeg>()
   for (const leg of previousLegs) {
     if (!leg.fromItemId || !leg.toItemId) continue
-    const key = `${leg.fromItemId}|${leg.toItemId}`
+    const key = JSON.stringify([leg.fromItemId, leg.toItemId])
     if (!byPair.has(key)) byPair.set(key, leg)
   }
 
   const legs: CanvasLeg[] = []
-  for (const pair of adjacentTripPairs(items, dayOrder)) legs.push(plannedLegFor(pair.from, pair.to, byPair))
+  for (const pair of adjacentTripPairs(items, dayOrder))
+    legs.push(plannedLegFor(pair.from, pair.to, byPair))
   return legs
 }
 
@@ -71,7 +77,10 @@ export function recomputeTripLegs(items: CanvasItem[], previousLegs: CanvasLeg[]
  * callers; repositories pass the authoritative `days.idx` order when they
  * need cross-day bridges.
  */
-export function adjacentTripPairs(items: CanvasItem[], dayOrder?: LegDayOrder[]): AdjacentItemPair[] {
+export function adjacentTripPairs(
+  items: CanvasItem[],
+  dayOrder?: LegDayOrder[],
+): AdjacentItemPair[] {
   const byDay = new Map<string, CanvasItem[]>()
   for (const item of items) {
     if (!item.dayId) continue
@@ -80,11 +89,12 @@ export function adjacentTripPairs(items: CanvasItem[], dayOrder?: LegDayOrder[])
     else byDay.set(item.dayId, [item])
   }
 
-  const order = dayOrder && dayOrder.length > 0
-    ? [...dayOrder]
-        .filter((day) => typeof day?.id === 'string' && day.id !== '')
-        .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id))
-    : [...byDay.keys()].map((id, index) => ({ id, index }))
+  const order =
+    dayOrder && dayOrder.length > 0
+      ? [...dayOrder]
+          .filter((day) => typeof day?.id === 'string' && day.id !== '')
+          .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id))
+      : [...byDay.keys()].map((id, index) => ({ id, index }))
   const known = new Set(order.map((day) => day.id))
   for (const id of byDay.keys()) {
     if (!known.has(id)) order.push({ id, index: order.length })
@@ -93,7 +103,9 @@ export function adjacentTripPairs(items: CanvasItem[], dayOrder?: LegDayOrder[])
   const pairs: AdjacentItemPair[] = []
   let previous: { day: LegDayOrder; items: CanvasItem[] } | null = null
   for (const day of order) {
-    const currentItems = [...(byDay.get(day.id) ?? [])].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+    const currentItems = [...(byDay.get(day.id) ?? [])].sort(
+      (a, b) => a.order - b.order || a.id.localeCompare(b.id),
+    )
     for (let index = 1; index < currentItems.length; index += 1) {
       const from = currentItems[index - 1]
       const to = currentItems[index]
@@ -110,10 +122,15 @@ export function adjacentTripPairs(items: CanvasItem[], dayOrder?: LegDayOrder[])
 }
 
 /** Same-ordered-pair reuse → estimate → empty leg. */
-function plannedLegFor(from: CanvasItem, to: CanvasItem, byPair: Map<string, CanvasLeg>): CanvasLeg {
+function plannedLegFor(
+  from: CanvasItem,
+  to: CanvasItem,
+  byPair: Map<string, CanvasLeg>,
+): CanvasLeg {
   const id = `leg-${from.id}-${to.id}`
-  const same = byPair.get(`${from.id}|${to.id}`)
-  if (same) {
+  const same = byPair.get(JSON.stringify([from.id, to.id]))
+  const verifiedKey = same?.[LEG_ROUTE_KEY]
+  if (same && (verifiedKey === undefined || verifiedKey === drivingRouteKey(from.poi, to.poi))) {
     return {
       // Preserve projections AND their absence; legacy metrics may be fallbacks.
       ...same,
@@ -130,11 +147,28 @@ function plannedLegFor(from: CanvasItem, to: CanvasItem, byPair: Map<string, Can
   const estimate = estimateLeg(from.poi, to.poi)
   if (estimate) {
     return {
-      id, fromItemId: from.id, toItemId: to.id, mode: 'drive', ...estimate, polyline: null, quality: 'estimate',
+      id,
+      fromItemId: from.id,
+      toItemId: to.id,
+      mode: 'drive',
+      ...estimate,
+      polyline: null,
+      quality: 'estimate',
+      status: 'estimated',
       ...projectLegMetrics(estimate.distanceKm, estimate.durationMin, 'estimate', null),
     }
   }
-  return { id, fromItemId: from.id, toItemId: to.id, mode: 'drive', distanceKm: 0, durationMin: 0, polyline: null, quality: 'pending' }
+  return {
+    id,
+    fromItemId: from.id,
+    toItemId: to.id,
+    mode: 'drive',
+    distanceKm: 0,
+    durationMin: 0,
+    polyline: null,
+    quality: 'pending',
+    status: 'pending',
+  }
 }
 
 /**

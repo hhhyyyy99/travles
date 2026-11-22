@@ -84,7 +84,13 @@ export const ItemTypeSchema = z.enum(['traffic', 'stay', 'attraction', 'food', '
 export type ItemType = z.infer<typeof ItemTypeSchema>
 
 /** The activity vocabulary named by the universal planner specification. */
-export const ActivityTypeSchema = z.enum(['attraction', 'transit', 'dining', 'accommodation', 'note'])
+export const ActivityTypeSchema = z.enum([
+  'attraction',
+  'transit',
+  'dining',
+  'accommodation',
+  'note',
+])
 export type ActivityType = z.infer<typeof ActivityTypeSchema>
 
 /** Both input vocabularies, without transforms so AI tools can expose JSON Schema. */
@@ -116,6 +122,9 @@ export function normalizeItemType(value: unknown): ItemType | undefined {
 /** Provenance of a leg's distance/time. */
 export const LegQualitySchema = z.enum(['reference', 'estimate', 'measured', 'pending'])
 export type LegQuality = z.infer<typeof LegQualitySchema>
+
+export const LegStatusSchema = z.enum(['verified', 'estimated', 'pending'])
+export type LegStatus = z.infer<typeof LegStatusSchema>
 
 export const PoiRefSchema = z.object({
   amapId: z.string(),
@@ -200,6 +209,7 @@ export const LegSchema = z.object({
   formattedDuration: z.string().optional(),
   polyline: z.array(z.tuple([z.number(), z.number()])).nullable(),
   quality: LegQualitySchema.optional(),
+  status: LegStatusSchema.optional(),
 })
 export type Leg = z.infer<typeof LegSchema>
 

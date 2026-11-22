@@ -8,7 +8,9 @@ import { normalizeItemType, readActivityItemMetadata } from '@hailar/domain'
 import { asText } from '../trips/dates.js'
 import { projectDayIdentity } from './projections.js'
 import { readDayMetadata } from './metadata.js'
-import { projectLegMetrics } from './leg-projections.js'
+import { projectLegMetrics, projectLegStatus } from './leg-projections.js'
+import { drivingRouteKey, readRoutePoint } from './route-identity.js'
+import { LEG_ROUTE_KEY } from './types.js'
 import type {
   CanvasDay,
   CanvasItem,
@@ -24,7 +26,10 @@ import type {
 } from './types.js'
 
 /** Tolerant whole-trip canvas read; a failing driver → empty canvas. */
-export async function readTripCanvas(driver: WorkbenchStoreDriver, tripId: string): Promise<TripCanvas> {
+export async function readTripCanvas(
+  driver: WorkbenchStoreDriver,
+  tripId: string,
+): Promise<TripCanvas> {
   let dayRows: DayRow[]
   let itemRows: ItemRow[]
   let legRows: LegRow[]
@@ -45,13 +50,18 @@ export async function readTripCanvas(driver: WorkbenchStoreDriver, tripId: strin
  * items under their day, and sorts days by idx / items by order. Legs that
  * reference unknown items are dropped.
  */
-export function assembleCanvas(dayRows: DayRow[], itemRows: ItemRow[], legRows: LegRow[], tripId?: string): TripCanvas {
+export function assembleCanvas(
+  dayRows: DayRow[],
+  itemRows: ItemRow[],
+  legRows: LegRow[],
+  tripId?: string,
+): TripCanvas {
   const itemsByDay = new Map<string, CanvasItem[]>()
-  const itemIds = new Set<string>()
+  const itemPois = new Map<string, unknown>()
   for (const row of itemRows) {
     const item = mapItemRow(row)
     if (item === null) continue
-    itemIds.add(item.id)
+    itemPois.set(item.id, row.poi)
     const bucket = itemsByDay.get(item.dayId)
     if (bucket) bucket.push(item)
     else itemsByDay.set(item.dayId, [item])
@@ -66,9 +76,15 @@ export function assembleCanvas(dayRows: DayRow[], itemRows: ItemRow[], legRows: 
     .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id))
 
   const legs = legRows
-    .map((row) => mapLegRow(row))
+    .map((row) =>
+      mapLegRow({
+        ...row,
+        from_poi: itemPois.get(asText(row?.from_item_id)),
+        to_poi: itemPois.get(asText(row?.to_item_id)),
+      }),
+    )
     .filter((leg): leg is CanvasLeg => leg !== null)
-    .filter((leg) => itemIds.has(leg.fromItemId) && itemIds.has(leg.toItemId))
+    .filter((leg) => itemPois.has(leg.fromItemId) && itemPois.has(leg.toItemId))
 
   return { days, legs }
 }
@@ -117,6 +133,13 @@ export function mapLegRow(row: LegRow): CanvasLeg | null {
   const distanceKm = asNonNegativeNumber(row?.distance_km)
   const durationMin = asNonNegativeNumber(row?.duration_min)
   const polyline = mapPolyline(row?.polyline)
+  const metrics = projectLegMetrics(row?.distance_km, row?.duration_min, row?.quality, polyline)
+  const routeKey = drivingRouteKey(readRoutePoint(row?.from_poi), readRoutePoint(row?.to_poi))
+  const status = projectLegStatus(
+    metrics,
+    row?.quality,
+    routeKey !== null && row?.verified_route_key === routeKey,
+  )
   return {
     id,
     fromItemId,
@@ -126,7 +149,9 @@ export function mapLegRow(row: LegRow): CanvasLeg | null {
     durationMin,
     polyline,
     quality: normalizeLegQuality(row?.quality, distanceKm, durationMin, polyline),
-    ...projectLegMetrics(row?.distance_km, row?.duration_min, row?.quality, polyline),
+    ...metrics,
+    status,
+    ...(status === 'verified' && routeKey ? { [LEG_ROUTE_KEY]: routeKey } : {}),
   }
 }
 
@@ -137,7 +162,8 @@ export function normalizeLegQuality(
   durationMin: number,
   polyline: [number, number][] | null,
 ): LegQuality {
-  if (value === 'reference' || value === 'estimate' || value === 'measured' || value === 'pending') return value
+  if (value === 'reference' || value === 'estimate' || value === 'measured' || value === 'pending')
+    return value
   if (distanceKm <= 0 && durationMin <= 0) return 'pending'
   return polyline === null ? 'estimate' : 'measured'
 }
@@ -159,13 +185,15 @@ export function mapPoiRef(value: unknown): PoiRef | null {
   const record = parsed as Record<string, unknown>
   const name = asText(record.name)
   if (!name) return null
-  const location = record.location !== null && typeof record.location === 'object'
-    ? (record.location as Record<string, unknown>)
-    : {}
+  const location =
+    record.location !== null && typeof record.location === 'object'
+      ? (record.location as Record<string, unknown>)
+      : {}
   const accommodationBaseId = asText(record.accommodationBaseId)
-  const accommodationType = record.accommodationType === 'area' || record.accommodationType === 'hotel'
-    ? record.accommodationType
-    : undefined
+  const accommodationType =
+    record.accommodationType === 'area' || record.accommodationType === 'hotel'
+      ? record.accommodationType
+      : undefined
   const accommodationNotes = asText(record.accommodationNotes)
   const migrationVersion = Number(record.accommodationMigrationVersion)
   return {
@@ -180,7 +208,9 @@ export function mapPoiRef(value: unknown): PoiRef | null {
     ...(accommodationBaseId ? { accommodationBaseId } : {}),
     ...(accommodationType ? { accommodationType } : {}),
     ...(accommodationNotes ? { accommodationNotes } : {}),
-    ...(Number.isInteger(migrationVersion) && migrationVersion > 0 ? { accommodationMigrationVersion: migrationVersion } : {}),
+    ...(Number.isInteger(migrationVersion) && migrationVersion > 0
+      ? { accommodationMigrationVersion: migrationVersion }
+      : {}),
     category: asText(record.category),
     rating: asFiniteNumber(record.rating),
     introSummary: asText(record.introSummary),

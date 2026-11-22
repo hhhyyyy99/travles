@@ -27,6 +27,15 @@ export class MemoryWorkbenchStoreDriver implements WorkbenchStoreDriver {
   }
 
   async listLegRows(tripId: string): Promise<LegRow[]> {
-    return this.legRows.filter((row) => row.trip_id === tripId)
+    const items = new Map(
+      this.itemRows.filter((row) => row.trip_id === tripId).map((row) => [String(row.id), row.poi]),
+    )
+    return this.legRows
+      .filter((row) => row.trip_id === tripId)
+      .map((row) => ({
+        ...row,
+        from_poi: items.get(String(row.from_item_id)),
+        to_poi: items.get(String(row.to_item_id)),
+      }))
   }
 }

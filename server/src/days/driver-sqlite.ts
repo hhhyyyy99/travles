@@ -10,9 +10,10 @@ export class SqliteWorkbenchStoreDriver implements WorkbenchStoreDriver {
   constructor(private readonly db: SqlDatabase) {}
 
   async listDayRows(tripId: string): Promise<DayRow[]> {
-    const { rows } = await this.db.run('SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ?', [
-      tripId,
-    ])
+    const { rows } = await this.db.run(
+      'SELECT id, trip_id, idx, date, theme, color, title, note FROM days WHERE trip_id = ?',
+      [tripId],
+    )
     return rows as unknown as DayRow[]
   }
 
@@ -25,11 +26,7 @@ export class SqliteWorkbenchStoreDriver implements WorkbenchStoreDriver {
   }
 
   async listLegRows(tripId: string): Promise<LegRow[]> {
-    const { rows } = await this.db.run(
-      'SELECT id, trip_id, from_item_id, to_item_id, mode, distance_km, duration_min, polyline, quality FROM legs WHERE trip_id = ?',
-      [tripId],
-    )
-    return rows as unknown as LegRow[]
+    return readSqliteLegRows(this.db, tripId)
   }
 }
 
@@ -39,4 +36,16 @@ export class SqliteWorkbenchStoreDriver implements WorkbenchStoreDriver {
  */
 export function createSqliteWorkbenchStore(db: SqlDatabase): WorkbenchStoreDriver {
   return new SqliteWorkbenchStoreDriver(db)
+}
+
+/** Read verification proof and live endpoint locations in one statement. */
+export async function readSqliteLegRows(db: SqlDatabase, tripId: string): Promise<LegRow[]> {
+  const { rows } = await db.run(
+    `SELECT l.*, src.poi AS from_poi, dst.poi AS to_poi FROM legs l
+     LEFT JOIN items src ON src.id = l.from_item_id AND src.trip_id = l.trip_id
+     LEFT JOIN items dst ON dst.id = l.to_item_id AND dst.trip_id = l.trip_id
+     WHERE l.trip_id = ?`,
+    [tripId],
+  )
+  return rows as unknown as LegRow[]
 }
