@@ -180,6 +180,13 @@ function parsePolyline(path: Record<string, unknown>): Array<[number, number]> |
   return points.length > 0 ? points : null
 }
 
+/** Compare ordered WGS-84 endpoints without rounding or using display names. */
+export function drivingRouteKey(from: RoutePoint | undefined, to: RoutePoint | undefined): string | null {
+  const start = from && validPoint(from)
+  const end = to && validPoint(to)
+  return start && end ? JSON.stringify([start.lat, start.lng, end.lat, end.lng]) : null
+}
+
 function validPoint(point: RoutePoint): { lat: number; lng: number } | null {
   if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return null
   if (point.lat < -90 || point.lat > 90 || point.lng < -180 || point.lng > 180) return null

@@ -5,10 +5,6 @@
  * `emit_round_meta` tool. The server validates tool inputs with this schema;
  * the frontend derives its metadata types from it while retaining its
  * tolerant decoder for existing messages.
- *
- * This schema preserves the existing tool input and persisted metadata. The
- * geographicFactCheck field requested in issue #4 remains to be designed and
- * integrated with the existing warning flow.
  */
 import { z } from 'zod'
 
@@ -48,6 +44,20 @@ export const RoundWarningSchema = z.object({
 })
 export type RoundWarning = z.infer<typeof RoundWarningSchema>
 
+const GeographicCheckInputSchema = z.object({
+  from: z.string().trim().min(1).max(120),
+  to: z.string().trim().min(1).max(120),
+  durationMin: z.number().finite().nonnegative(),
+})
+
+// The server assigns provenance. Itinerary data may itself be an estimate.
+export const GeographicCheckSchema = z.discriminatedUnion('source', [
+  GeographicCheckInputSchema.extend({ source: z.literal('model'), estimated: z.literal(true) }),
+  GeographicCheckInputSchema.extend({ source: z.literal('itinerary'), estimated: z.boolean() }),
+  GeographicCheckInputSchema.extend({ source: z.literal('amap'), estimated: z.literal(false) }),
+])
+export type GeographicCheck = z.infer<typeof GeographicCheckSchema>
+
 /** Round types of the four-round protocol. */
 export const RoundTypeSchema = z.enum(['clarify', 'qa', 'plan', 'patch-explain'])
 export type RoundType = z.infer<typeof RoundTypeSchema>
@@ -63,6 +73,9 @@ export const roundMetaInputSchema = z.object({
     .describe('回复中提到的地点（用于行内 POI 链接与地图联动）'),
   think: z.string().max(2000).optional().describe('推理过程摘要，用于「思考完成」折叠区'),
   thinkComplete: z.boolean().optional().describe('思考摘要是否已完整'),
+  // Discard malformed optional geography without losing valid chips or the round type.
+  geographicFactCheck: z.array(GeographicCheckInputSchema.optional().catch(undefined)).max(20).optional().catch(undefined)
+    .describe('本轮评估的驾驶段，提供起点、终点和预计驾驶分钟。无法估算时省略。'),
   sources: z.array(RoundSourceSchema).max(10).optional().describe('引用来源，用于「来源」折叠区'),
   impacts: z.array(z.string().min(1).max(300)).max(20).optional().describe('修改将影响的日期或安排，每条一句'),
   conflicts: z.array(z.string().min(1).max(300)).max(12).optional().describe('识别出的冲突；patch-explain 回合必须明确列出'),
@@ -85,6 +98,7 @@ export type RoundMeta = z.infer<typeof RoundMetaSchema>
  */
 export const RoundMetaPayloadSchema = roundMetaInputSchema.extend({
   round: z.string(),
+  geographicFactCheck: z.array(GeographicCheckSchema).optional(),
   warnings: z.array(RoundWarningSchema).optional(),
   conflicts: z.array(z.string()).optional(),
 })
@@ -102,12 +116,16 @@ export function normalizeRoundMeta(input: unknown): RoundMetaPayload {
     return { round: 'qa' }
   }
   const data = parsed.data
+  const geographicFactCheck = data.geographicFactCheck?.flatMap((check): GeographicCheck[] =>
+    check === undefined ? [] : [{ ...check, source: 'model', estimated: true }],
+  )
   return {
     round: data.round,
     ...(data.chips !== undefined && data.chips.length > 0 ? { chips: data.chips } : {}),
     ...(data.poiLinks !== undefined && data.poiLinks.length > 0 ? { poiLinks: data.poiLinks } : {}),
     ...(data.think !== undefined && data.think !== '' ? { think: data.think } : {}),
     ...(data.thinkComplete !== undefined ? { thinkComplete: data.thinkComplete } : {}),
+    ...(geographicFactCheck?.length ? { geographicFactCheck } : {}),
     ...(data.sources !== undefined && data.sources.length > 0 ? { sources: data.sources } : {}),
     ...(data.impacts !== undefined && data.impacts.length > 0 ? { impacts: data.impacts } : {}),
     ...(data.conflicts !== undefined && data.conflicts.length > 0 ? { conflicts: data.conflicts } : {}),

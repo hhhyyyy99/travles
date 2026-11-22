@@ -1,11 +1,13 @@
+import { GeographicCheckSchema } from '@hailar/domain'
 import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
 import { searchAmapPoi } from './search.js'
 import { normalizePoi } from './repository.js'
-import { pendingRoute, routeAmapLeg } from './route.js'
-import type { PoiSearch, RouteLegSearch } from './types.js'
+import { drivingRouteKey, pendingRoute, routeAmapLeg } from './route.js'
+import type { DrivingRouteCheck, PoiSearch, RouteLegSearch } from './types.js'
 
 export const SEARCH_POI_TOOL_NAME = 'search_poi'
+export const ROUTE_CHECKS_CONTEXT_KEY = 'chat.routeChecks'
 
 const searchPoiInputSchema = z.object({
   query: z.string().max(120).default('').describe('关键词，例如「额尔古纳湿地」或「沿途观景营地」'),
@@ -76,7 +78,7 @@ export function createRouteLegsTool(provider: RouteLegSearch = routeAmapLeg) {
     id: 'route_legs',
     description: '查询相邻地点的驾车距离、时长和路线。没有路线服务或坐标不可用时返回 pending，不要把估算当成实测。',
     inputSchema: routeLegsInputSchema,
-    execute: async (input) => {
+    execute: async (input, context) => {
       const pairs = input.legs ?? [{ from: input.from!, to: input.to! }]
       const legs = await Promise.all(
         pairs.map(async (pair) => {
@@ -87,6 +89,19 @@ export function createRouteLegsTool(provider: RouteLegSearch = routeAmapLeg) {
           }
         }),
       )
+      const checks = context?.requestContext?.get(ROUTE_CHECKS_CONTEXT_KEY) as DrivingRouteCheck[] | undefined
+      if (checks) {
+        for (const [index, leg] of legs.entries()) {
+          // A zero can be a rounded sub-minute result or coerced missing provider data.
+          if (leg?.status !== 'ok' || leg.source !== 'amap' || !(leg.durationMin && leg.durationMin > 0)) continue
+          const pair = pairs[index]!
+          const parsed = GeographicCheckSchema.safeParse({
+            from: pair.from.name, to: pair.to.name, durationMin: leg.durationMin, source: 'amap', estimated: false,
+          })
+          const routeKey = drivingRouteKey(pair.from, pair.to)
+          if (routeKey && parsed.success) checks.push({ routeKey, value: parsed.data })
+        }
+      }
       return { ok: true as const, legs, ...(legs.length === 1 ? { leg: legs[0] } : {}) }
     },
   })

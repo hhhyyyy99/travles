@@ -20,7 +20,7 @@
  * `{ok:false,error}`.
  */
 
-import type { RoundMetaPayload, RoundOptionChip, RoundPoiLink, RoundSource, RoundWarning } from '@hailar/domain'
+import { GeographicCheckSchema, type RoundMetaPayload, type RoundOptionChip, type RoundPoiLink, type RoundSource, type RoundWarning } from '@hailar/domain'
 import type { ApiResult, FetchLike } from './tripList'
 import { defaultFetch } from './tripList'
 
@@ -176,8 +176,15 @@ export function normalizeChatMeta(raw: unknown): ChatMessageMeta | null {
       }
     }
   }
+  const geographicFactCheck = Array.isArray(m.geographicFactCheck)
+    ? m.geographicFactCheck.flatMap((entry) => {
+        const parsed = GeographicCheckSchema.safeParse(entry)
+        return parsed.success ? [parsed.data] : []
+      })
+    : []
   return {
     round,
+    ...(geographicFactCheck.length > 0 ? { geographicFactCheck } : {}),
     ...(chips.length > 0 ? { chips } : {}),
     ...(poiLinks.length > 0 ? { poiLinks } : {}),
     ...(typeof m.think === 'string' && m.think ? { think: m.think } : {}),

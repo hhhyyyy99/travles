@@ -6,9 +6,12 @@
  * date/day contradictions are surfaced before a patch can land, and long
  * stored or cross-day drive estimates are passed back as structured warnings.
  */
+import { GeographicCheckSchema, type GeographicCheck } from '@hailar/domain'
 import { mapPoiRef } from '../days/repository.js'
 import type { DayRow, LegRow, ItemRow, PoiRef } from '../days/types.js'
 import { estimateLeg } from '../items-admin/legs.js'
+import { drivingRouteKey } from '../recommendations/route.js'
+import type { DrivingRouteCheck, RoutePoint } from '../recommendations/types.js'
 import type { RoundWarning } from './round-meta.js'
 
 export const LONG_DRIVE_LIMIT_MINUTES = 6 * 60
@@ -239,16 +242,33 @@ function normalizeDatePair(first: string | undefined, second: string | undefined
   return { start: a, end: b, reversed: b < a }
 }
 
+type ItineraryRouteValue<T> = { routeKey: string | null; value: T }
+
+export type ItineraryGeography = {
+  checks: ItineraryRouteValue<GeographicCheck>[]
+  warnings: ItineraryRouteValue<RoundWarning>[]
+  routeKeys: ReadonlySet<string>
+}
+
 /** Convert stored and cross-day drive rows into warnings the round metadata can carry. */
 export function longDriveWarnings(legs: LegRow[], items: ItemRow[], days: DayRow[] = []): RoundWarning[] {
+  return analyzeItineraryGeography(legs, items, days).warnings.map(({ value }) => value)
+}
+
+export function analyzeItineraryGeography(legs: LegRow[], items: ItemRow[], days: DayRow[]): ItineraryGeography {
   const titles = new Map<string, string>()
+  const points = new Map<string, RoutePoint>()
   for (const row of Array.isArray(items) ? items : []) {
     const id = text(row?.id)
     if (!id) continue
     titles.set(id, text(row?.title) || id)
+    const point = readItineraryPoint(row.poi)
+    if (point) points.set(id, point)
   }
 
-  const warnings: RoundWarning[] = []
+  const warnings: ItineraryGeography['warnings'] = []
+  const checks: ItineraryGeography['checks'] = []
+  const routeKeys = new Set<string>()
   const storedPairs = new Set<string>()
   for (const leg of Array.isArray(legs) ? legs : []) {
     const fromItemId = text(leg?.from_item_id)
@@ -256,33 +276,101 @@ export function longDriveWarnings(legs: LegRow[], items: ItemRow[], days: DayRow
     if (fromItemId && toItemId) storedPairs.add(`${fromItemId}|${toItemId}`)
     const mode = text(leg?.mode).toLowerCase()
     if (mode !== '' && !['drive', 'driving', 'car', '驾车', '自驾'].includes(mode)) continue
+    const routeKey = drivingRouteKey(points.get(fromItemId), points.get(toItemId))
+    if (routeKey) routeKeys.add(routeKey)
     const durationMin = number(leg?.duration_min)
+    const from = titles.get(fromItemId) || fromItemId || '上一站'
+    const to = titles.get(toItemId) || toItemId || '下一站'
+    const estimated = leg?.quality !== 'measured' || typeof leg.duration_min !== 'number'
+    if (fromItemId && toItemId && leg?.quality !== 'pending' && (durationMin > 0 || (!estimated && leg.duration_min === 0))) {
+      const parsed = GeographicCheckSchema.safeParse({ from, to, durationMin, source: 'itinerary', estimated })
+      if (parsed.success) checks.push({ routeKey, value: parsed.data })
+    }
     if (durationMin <= LONG_DRIVE_LIMIT_MINUTES) continue
-    const from = titles.get(text(leg?.from_item_id)) || text(leg?.from_item_id) || '上一站'
-    const to = titles.get(text(leg?.to_item_id)) || text(leg?.to_item_id) || '下一站'
     warnings.push({
+      routeKey,
+      value: {
+        kind: 'long-drive',
+        title: '长途驾驶警示',
+        message: `${from} → ${to} 预计驾驶 ${formatHours(durationMin)}，超过 6 小时。`,
+        suggestion: '建议拆成两段，增加中途休息或过夜点，再继续规划。',
+        from,
+        to,
+        durationMin,
+        ...(estimated ? { estimated: true } : {}),
+      },
+    })
+  }
+  for (const { from, to, warning } of crossDayDrives(days, items, storedPairs)) {
+    const routeKey = drivingRouteKey(points.get(from), points.get(to))
+    if (routeKey) routeKeys.add(routeKey)
+    if (!warning) continue
+    warnings.push({ routeKey, value: warning })
+    const parsed = GeographicCheckSchema.safeParse({ ...warning, source: 'itinerary', estimated: true })
+    if (parsed.success) checks.push({ routeKey, value: parsed.data })
+  }
+  return { checks, warnings, routeKeys }
+}
+
+/** Use stored coordinates directly so tolerant POI display defaults cannot identify a route. */
+function readItineraryPoint(value: unknown): RoutePoint | undefined {
+  if (typeof value !== 'string' || value === '') return undefined
+  try {
+    const poi = JSON.parse(value) as (Partial<RoutePoint> & { location?: Partial<RoutePoint> }) | null
+    const lat = poi?.location?.lat ?? poi?.lat
+    const lng = poi?.location?.lng ?? poi?.lng
+    return typeof lat === 'number' && typeof lng === 'number' ? { lat, lng } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function displayPairKey(from: string, to: string): string {
+  return JSON.stringify([from.trim(), to.trim()])
+}
+
+/** Use stored durations for matching model pairs, and otherwise report known long drives. */
+export function mergeGeographicChecks(
+  itineraryChecks: ItineraryGeography['checks'],
+  modelChecks: GeographicCheck[],
+  routeChecks: DrivingRouteCheck[],
+): GeographicCheck[] {
+  const routeByCoordinates = new Map(routeChecks.map(({ routeKey, value }) => [routeKey, value]))
+  const modelByName = new Map(modelChecks.map((check) => [displayPairKey(check.from, check.to), check]))
+  for (const { from, to } of routeByCoordinates.values()) modelByName.delete(displayPairKey(from, to))
+  const itinerary = itineraryChecks.flatMap(({ routeKey, value }) => {
+    if (routeKey && routeByCoordinates.has(routeKey)) return []
+    const matched = modelByName.delete(displayPairKey(value.from, value.to))
+    return matched || value.durationMin > LONG_DRIVE_LIMIT_MINUTES ? [value] : []
+  })
+  return [...itinerary, ...routeByCoordinates.values(), ...modelByName.values()]
+}
+
+/** Reconcile model-authored warning text with structured checks; itinerary warnings use route keys. */
+export function dropSupersededModelDriveWarnings(warnings: RoundWarning[], checks: GeographicCheck[]): RoundWarning[] {
+  const pairs = new Set(checks.map(({ from, to }) => displayPairKey(from, to)))
+  return warnings.filter(({ kind, from, to }) => kind !== 'long-drive' || !from || !to || !pairs.has(displayPairKey(from, to)))
+}
+
+export function reportedDriveWarnings(checks: GeographicCheck[]): RoundWarning[] {
+  return checks
+    .filter((check) => check.source !== 'itinerary' && check.durationMin > LONG_DRIVE_LIMIT_MINUTES)
+    .map(({ from, to, durationMin, source, estimated }) => ({
       kind: 'long-drive',
-      title: '长途驾驶警示',
+      title: source === 'amap' ? '长途驾驶提示 · 高德路线' : '长途驾驶提示 · AI 估算',
       message: `${from} → ${to} 预计驾驶 ${formatHours(durationMin)}，超过 6 小时。`,
-      suggestion: '建议拆成两段，增加中途休息或过夜点，再继续规划。',
+      suggestion: '请核对实际路况，可考虑拆成两段并安排休息。',
       from,
       to,
       durationMin,
-    })
-  }
-  return [...warnings, ...crossDayLongDriveWarnings(days, items, storedPairs)]
+      estimated,
+    }))
 }
 
-/**
- * Derive a warning for a day boundary when the adjacency-leg pipeline skips
- * cross-day pairs. The estimate is deliberately conservative and labelled as
- * unverified: it is based on POI coordinates, not a road-service response.
- */
-export function crossDayLongDriveWarnings(
-  days: DayRow[],
-  items: ItemRow[],
-  storedPairs: ReadonlySet<string> = new Set(),
-): RoundWarning[] {
+type CrossDayDrive = { from: string; to: string; warning?: RoundWarning }
+
+/** Find day boundaries without stored legs and warn when the coordinate estimate is long. */
+function crossDayDrives(days: DayRow[], items: ItemRow[], storedPairs: ReadonlySet<string>): CrossDayDrive[] {
   const orderedDays = (Array.isArray(days) ? days : [])
     .map((row, sourceIndex) => ({ id: text(row?.id), index: integer(row?.idx), sourceIndex }))
     .filter((entry) => entry.id !== '' && entry.index >= 0)
@@ -307,7 +395,7 @@ export function crossDayLongDriveWarnings(
     bucket.sort((a, b) => a.order - b.order || a.sourceIndex - b.sourceIndex || a.id.localeCompare(b.id))
   }
 
-  const warnings: RoundWarning[] = []
+  const drives: CrossDayDrive[] = []
   for (let index = 0; index + 1 < orderedDays.length; index += 1) {
     const currentDay = orderedDays[index]
     const nextDay = orderedDays[index + 1]
@@ -315,9 +403,11 @@ export function crossDayLongDriveWarnings(
     const from = lastPoi(itemsByDay.get(currentDay.id) ?? [])
     const to = firstPoi(itemsByDay.get(nextDay.id) ?? [])
     if (!from || !to || storedPairs.has(`${from.id}|${to.id}`)) continue
+    const drive: CrossDayDrive = { from: from.id, to: to.id }
+    drives.push(drive)
     const estimate = estimateLeg(from.poi, to.poi)
     if (!estimate || estimate.durationMin <= LONG_DRIVE_LIMIT_MINUTES) continue
-    warnings.push({
+    drive.warning = {
       kind: 'long-drive',
       title: '跨天长途驾驶估算',
       message: `${from.title} → ${to.title}（跨天）按坐标估算驾驶 ${formatHours(estimate.durationMin)}，超过 6 小时。`,
@@ -326,9 +416,9 @@ export function crossDayLongDriveWarnings(
       to: to.title,
       durationMin: estimate.durationMin,
       estimated: true,
-    })
+    }
   }
-  return warnings
+  return drives
 }
 
 type OrderedPoiItem = {
@@ -404,7 +494,8 @@ function integer(value: unknown): number {
 }
 
 function formatHours(minutes: number): string {
-  const hours = Math.floor(minutes / 60)
-  const rest = Math.round(minutes % 60)
+  const roundedMinutes = Math.ceil(minutes)
+  const hours = Math.floor(roundedMinutes / 60)
+  const rest = roundedMinutes % 60
   return rest === 0 ? `${hours} 小时` : `${hours} 小时 ${rest} 分钟`
 }

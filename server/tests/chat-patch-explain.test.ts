@@ -8,6 +8,8 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { RoundMetaPayloadSchema } from '@hailar/domain'
+import type { RouteLegSearch } from '../src/recommendations/types.js'
 
 import { createApp } from '../src/app.js'
 import { MemoryTripStoreDriver } from '../src/trips/driver-memory.js'
@@ -99,7 +101,7 @@ function parseSse(raw: string): { event: string; data: unknown }[] {
     .filter((entry) => entry.data !== null || entry.event !== 'message')
 }
 
-async function makeApp(model: MastraLanguageModel) {
+async function makeApp(model: MastraLanguageModel, routeLegs?: RouteLegSearch) {
   const messages = new MemoryMessageStoreDriver()
   const tripRepository = new TripRepository(new MemoryTripStoreDriver())
   const patchStore = new MemoryTripPatchStore((id) => tripRepository.get(id))
@@ -108,6 +110,7 @@ async function makeApp(model: MastraLanguageModel) {
     messageStore: messages,
     tripPatchStore: patchStore,
     plannerModel: model,
+    routeLegs,
     plannerMemory: new MockMemory({ storage: new InMemoryStore(), enableMessageHistory: true }),
   })
   const response = await app.request(
@@ -334,9 +337,12 @@ test('ordinary questions on an existing plan keep the qa round and do not requir
   assert.equal((await patchStore.listDayRows(trip.id))[0]?.theme, '原计划')
 })
 
-test('a long existing drive is shown in metadata and assistant text with a split suggestion', async () => {
+test('a long existing drive takes precedence over a model estimate for that pair', async () => {
   const model = scriptedModel([
-    { toolCalls: [{ toolName: 'emit_round_meta', input: { round: 'qa' } }] },
+    { toolCalls: [{ toolName: 'emit_round_meta', input: {
+      round: 'qa',
+      geographicFactCheck: [{ from: '海拉尔', to: '满洲里', durationMin: 410 }],
+    } }] },
     { text: '我先看一下当前路线。' },
   ])
   const { app, trip, patchStore } = await makeApp(model)
@@ -354,12 +360,204 @@ test('a long existing drive is shown in metadata and assistant text with a split
   const response = await app.request('/api/trips/' + trip.id + '/messages', jsonRequest('POST', { content: '这段路线有什么需要注意？' }))
   assert.equal(response.status, 200)
   const events = parseSse(await response.text())
-  const meta = events.find((entry) => entry.event === 'meta')?.data as { round: string; warnings?: { kind: string; suggestion?: string }[] }
+  const meta = RoundMetaPayloadSchema.parse(events.find((entry) => entry.event === 'meta')?.data)
   assert.equal(meta.round, 'qa')
+  assert.equal(meta.warnings?.length, 1)
   assert.equal(meta.warnings?.[0]?.kind, 'long-drive')
   assert.match(meta.warnings?.[0]?.suggestion ?? '', /拆成两段/)
+  assert.deepEqual(meta.geographicFactCheck, [
+    { from: '海拉尔', to: '满洲里', durationMin: 361, source: 'itinerary', estimated: true },
+  ])
   const done = events.find((entry) => entry.event === 'done')?.data as { assistantMessage: { content: string } }
   assert.match(done.assistantMessage.content, /建议拆成两段/)
+})
+
+test('model geographic checks survive SSE and history with server-assigned estimate provenance', async () => {
+  const long = { from: '成都', to: '康定', durationMin: 360.2 }
+  const short = { from: '康定', to: '新都桥', durationMin: 90 }
+  const model = scriptedModel([
+    { toolCalls: [{ toolName: 'emit_round_meta', input: {
+      round: 'qa',
+      geographicFactCheck: [
+        { ...long, durationMin: 420 },
+        { ...long, from: ' 成都 ', source: 'itinerary', estimated: false },
+        short,
+      ],
+      warnings: [{ ...long, kind: 'long-drive', title: '高德核实', message: '已经核实', estimated: false }],
+    } }] },
+    { text: '我先看一下驾驶时间。' },
+  ])
+  const { app, trip } = await makeApp(model)
+  const endpoint = `/api/trips/${trip.id}/messages`
+  const response = await app.request(endpoint, jsonRequest('POST', { content: '这两段自驾要多久？' }))
+  assert.equal(response.status, 200)
+  const events = parseSse(await response.text())
+  const meta = RoundMetaPayloadSchema.parse(events.find((entry) => entry.event === 'meta')?.data)
+  assert.deepEqual(meta.geographicFactCheck, [
+    { ...long, source: 'model', estimated: true },
+    { ...short, source: 'model', estimated: true },
+  ])
+  assert.equal(meta.warnings?.length, 1)
+  assert.match(meta.warnings?.[0]?.title ?? '', /AI 估算/)
+  assert.match(meta.warnings?.[0]?.message ?? '', /6 小时 1 分钟/)
+  assert.equal(meta.warnings?.[0]?.durationMin, long.durationMin)
+  const done = events.find((entry) => entry.event === 'done')?.data as { assistantMessage: { meta: unknown } }
+  const history = await (await app.request(endpoint)).json() as { messages: { meta?: unknown }[] }
+  assert.deepEqual(done.assistantMessage.meta, meta)
+  assert.deepEqual(history.messages[1]?.meta, meta)
+})
+
+test('a confirmed removal drops geographic warnings for a leg queried before deletion', async () => {
+  const apply = { ops: [{ op: 'remove_item', itemId: 'i1' }] }
+  const from = { name: '甲地', lat: 30.67, lng: 104.06 }
+  const to = { name: '乙地', lat: 29.98, lng: 101.96 }
+  const next = { name: '丙地', lat: 30.06, lng: 102.1 }
+  const model = scriptedModel([
+    { toolCalls: [{ toolName: 'emit_round_meta', input: EXPLAIN_META }] },
+    { text: '请先确认。' },
+    { toolCalls: [{ toolName: 'route_legs', input: { legs: [{ from, to }, { from, to: next }] } }] },
+    { toolCalls: [
+      { toolName: 'emit_round_meta', input: {
+        round: 'plan', geographicFactCheck: [{ from: from.name, to: to.name, durationMin: 420 }],
+        warnings: [{ kind: 'long-drive', title: '旧路段', message: '旧路段需要七小时', from: from.name, to: to.name, durationMin: 420 }],
+      } },
+      { toolName: 'apply_trip_patch', input: apply },
+    ] },
+    { text: '已删除。' },
+  ])
+  const { app, trip, patchStore } = await makeApp(model, async ({ to }) => ({
+    status: 'ok', source: 'amap', distanceKm: 500, durationMin: to.lng === next.lng ? 90 : 420, polyline: null,
+  }))
+  await patchStore.upsertDayRow(trip.id, { id: 'd1', idx: 0, date: '2026-10-02', theme: '自驾' })
+  for (const [order, poi] of [from, to, next].entries()) {
+    await patchStore.upsertItemRow(trip.id, {
+      id: `i${order}`, dayId: 'd1', itemOrder: order, type: 'attraction', title: poi.name, note: '', poi: JSON.stringify(poi), pending: false,
+    })
+  }
+  await patchStore.upsertLegRow(trip.id, {
+    id: 'l1', fromItemId: 'i0', toItemId: 'i1', mode: 'drive', distanceKm: 500, durationMin: 420, polyline: null,
+  })
+  const endpoint = `/api/trips/${trip.id}/messages`
+  const explain = await app.request(endpoint, jsonRequest('POST', { content: '删除乙地' }))
+  assert.match(await explain.text(), /geographicFactCheck/)
+  const confirmed = await app.request(endpoint, jsonRequest('POST', { content: EXPLAIN_META.chips[0]!.value }))
+  const events = parseSse(await confirmed.text())
+  assert.ok(events.some((event) => event.event === 'applied_patch'))
+  const meta = RoundMetaPayloadSchema.parse(events.find((entry) => entry.event === 'meta')?.data)
+  assert.deepEqual(meta.geographicFactCheck, [
+    { from: from.name, to: next.name, durationMin: 90, source: 'amap', estimated: false },
+  ])
+  assert.equal(meta.warnings, undefined)
+  const history = await (await app.request(endpoint)).json() as { messages: { meta?: unknown }[] }
+  assert.deepEqual(history.messages.at(-1)?.meta, meta)
+  const legs = await patchStore.listLegRows(trip.id)
+  assert.deepEqual(legs.map((leg) => [leg.from_item_id, leg.to_item_id]), [['i0', 'i2']])
+})
+
+const ROUTE_FROM = { name: '甲地', lat: 30.67, lng: 104.06 }
+const ROUTE_TO = { name: '乙地', lat: 29.98, lng: 101.96 }
+
+for (const { scenario, query, replaces } of [
+  { scenario: 'different coordinates with the same names', query: { from: ROUTE_FROM, to: { ...ROUTE_TO, lng: 104.1 } }, replaces: false },
+  { scenario: 'reversed coordinates with the same names', query: { from: { ...ROUTE_TO, name: ROUTE_FROM.name }, to: { ...ROUTE_FROM, name: ROUTE_TO.name } }, replaces: false },
+  { scenario: 'identical ordered coordinates with different names', query: { from: { ...ROUTE_FROM, name: '旧称甲地' }, to: { ...ROUTE_TO, name: '旧称乙地' } }, replaces: true },
+]) {
+  test(`itinerary warning reconciliation for ${scenario}`, async () => {
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'route_legs', input: query }] },
+      { toolCalls: [{ toolName: 'emit_round_meta', input: { round: 'qa' } }] },
+      { text: '我查了驾驶时间。' },
+    ])
+    const { app, trip, patchStore } = await makeApp(model, async () => ({
+      status: 'ok', source: 'amap', distanceKm: 100, durationMin: 90, polyline: null,
+    }))
+    await patchStore.upsertDayRow(trip.id, { id: 'd1', idx: 0, date: '2026-10-02', theme: '自驾' })
+    for (const [order, poi] of [ROUTE_FROM, ROUTE_TO].entries()) {
+      await patchStore.upsertItemRow(trip.id, {
+        id: `i${order}`, dayId: 'd1', itemOrder: order, type: 'attraction', title: poi.name, note: '',
+        poi: JSON.stringify({ name: poi.name, location: { lat: poi.lat, lng: poi.lng } }), pending: false,
+      })
+    }
+    await patchStore.upsertLegRow(trip.id, {
+      id: 'l1', fromItemId: 'i0', toItemId: 'i1', mode: 'drive', distanceKm: 500, durationMin: 420, polyline: null, quality: 'measured',
+    })
+    const response = await app.request(`/api/trips/${trip.id}/messages`, jsonRequest('POST', { content: '这段自驾要多久？' }))
+    const events = parseSse(await response.text())
+    const meta = RoundMetaPayloadSchema.parse(events.find((entry) => entry.event === 'meta')?.data)
+    assert.ok(meta.geographicFactCheck?.some((check) => check.source === 'amap' && check.durationMin === 90))
+    if (replaces) {
+      assert.equal(meta.warnings, undefined)
+      assert.equal(meta.geographicFactCheck?.length, 1)
+    } else {
+      assert.equal(meta.warnings?.length, 1)
+      assert.equal(meta.warnings?.[0]?.durationMin, 420)
+      assert.ok(meta.geographicFactCheck?.some((check) => check.source === 'itinerary' && check.durationMin === 420))
+    }
+  })
+}
+
+test('a short stored driving leg prevents a contradictory model warning', async () => {
+  const model = scriptedModel([
+    { toolCalls: [{ toolName: 'emit_round_meta', input: {
+      round: 'qa', geographicFactCheck: [{ from: '成都', to: '雅安', durationMin: 420 }],
+    } }] },
+    { text: '我先看一下驾驶时间。' },
+  ])
+  const { app, trip, patchStore } = await makeApp(model)
+  await patchStore.upsertDayRow(trip.id, { id: 'd1', idx: 0, date: '2026-10-02', theme: '自驾' })
+  for (const [order, title] of ['成都', '雅安'].entries()) {
+    await patchStore.upsertItemRow(trip.id, {
+      id: `i${order}`, dayId: 'd1', itemOrder: order, type: 'attraction', title, note: '', poi: null, pending: false,
+    })
+  }
+  await patchStore.upsertLegRow(trip.id, {
+    id: 'l1', fromItemId: 'i0', toItemId: 'i1', mode: 'drive', distanceKm: 125, durationMin: 90, polyline: null, quality: 'measured',
+  })
+  const response = await app.request(`/api/trips/${trip.id}/messages`, jsonRequest('POST', { content: '这段自驾要多久？' }))
+  const events = parseSse(await response.text())
+  const meta = RoundMetaPayloadSchema.parse(events.find((entry) => entry.event === 'meta')?.data)
+  assert.deepEqual(meta.geographicFactCheck, [
+    { from: '成都', to: '雅安', durationMin: 90, source: 'itinerary', estimated: false },
+  ])
+  assert.equal(meta.warnings, undefined)
+})
+
+test('a successful route lookup supplies the duration even when the model reports something different', async () => {
+  const from = { name: '成都', lat: 30.67, lng: 104.06 }
+  const to = { name: '雅安', lat: 29.98, lng: 103.01 }
+  const model = scriptedModel([
+    { toolCalls: [{ toolName: 'route_legs', input: { from, to } }] },
+    { toolCalls: [{ toolName: 'emit_round_meta', input: {
+      round: 'qa', geographicFactCheck: [{ from: from.name, to: to.name, durationMin: 420 }],
+    } }] },
+    { text: '我先看一下驾驶时间。' },
+  ])
+  const { app, trip } = await makeApp(model, async () => ({
+    status: 'ok', source: 'amap', distanceKm: 125, durationMin: 90, polyline: null,
+  }))
+  const response = await app.request(`/api/trips/${trip.id}/messages`, jsonRequest('POST', { content: '这段自驾要多久？' }))
+  const events = parseSse(await response.text())
+  const meta = RoundMetaPayloadSchema.parse(events.find((entry) => entry.event === 'meta')?.data)
+  assert.deepEqual(meta.geographicFactCheck, [{ from: from.name, to: to.name, durationMin: 90, source: 'amap', estimated: false }])
+  assert.equal(meta.warnings, undefined)
+})
+
+test('invalid optional geography does not discard valid clarification chips', async () => {
+  const chips = [{ label: '自驾', value: '自驾' }]
+  const valid = { from: '成都', to: '雅安', durationMin: 90 }
+  const model = scriptedModel([
+    { toolCalls: [{ toolName: 'emit_round_meta', input: {
+      round: 'clarify', chips, geographicFactCheck: [{ from: '  ', to: '康定', durationMin: -1 }, valid],
+    } }] },
+    { text: '怎么出行？' },
+  ])
+  const { app, trip } = await makeApp(model)
+  const response = await app.request(`/api/trips/${trip.id}/messages`, jsonRequest('POST', { content: '川西怎么玩？' }))
+  const events = parseSse(await response.text())
+  const meta = RoundMetaPayloadSchema.parse(events.find((entry) => entry.event === 'meta')?.data)
+  assert.deepEqual(meta, {
+    round: 'clarify', chips, geographicFactCheck: [{ ...valid, source: 'model', estimated: true }],
+  })
 })
 
 test('a cross-day coordinate estimate reaches the chat SSE metadata and prose', async () => {

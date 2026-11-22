@@ -48,7 +48,7 @@ export function createEmitRoundMetaTool() {
   return createTool({
     id: 'emit_round_meta',
     description:
-      '每轮回复必须调用一次：上报本轮回合类型与结构化元数据（澄清选项 chips、patch-explain 的影响/冲突/妥协、边界警示、行内地点 POI 链接、思考摘要、来源）。正文之外的所有结构化信息只通过本工具输出，不要写进正文。',
+      '每轮回复必须调用一次：上报本轮回合类型与结构化元数据（澄清选项 chips、patch-explain 的影响/冲突/妥协、边界警示、地理校验、行内地点 POI 链接、思考摘要、来源）。正文之外的所有结构化信息只通过本工具输出，不要写进正文。',
     inputSchema: roundMetaInputSchema,
     execute: async (input): Promise<EmitRoundMetaResult> => {
       const meta: RoundMetaPayload = normalizeRoundMeta(input)
