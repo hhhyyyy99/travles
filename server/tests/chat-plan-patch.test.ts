@@ -18,6 +18,9 @@ import { TripRepository } from '../src/trips/repository.js'
 import type { TripSummary } from '../src/trips/types.js'
 import { MemoryMessageStoreDriver } from '../src/chat/driver-memory.js'
 import { MemoryTripPatchStore } from '../src/trip-patch/store-memory.js'
+import { SqliteTripPatchStore } from '../src/trip-patch/store-sqlite.js'
+import { createSqliteTripRepository } from '../src/trips/factory.js'
+import { createSqliteRecommendationsStore } from '../src/recommendations/driver-sqlite.js'
 import type { MastraLanguageModel } from '@mastra/core/agent'
 import { MockMemory } from '@mastra/core/memory'
 import { InMemoryStore } from '@mastra/core/storage'
@@ -34,6 +37,7 @@ type StreamPart =
   | { type: 'finish'; finishReason: 'stop' | 'tool-calls'; usage: { inputTokens: number; outputTokens: number; totalTokens: number } }
 
 type ScriptedCall = {
+  beforeStream?: () => Promise<void>
   /** Tool calls emitted before the prose of this model round. */
   toolCalls?: { toolName: string; input: unknown }[]
   /** Prose streamed after the tool calls of this round. */
@@ -63,6 +67,7 @@ function fakeScriptedModel(script: ScriptedCall[]): MastraLanguageModel & { prom
       const step = script[call] ?? { text: '好的，就按这个计划来。' }
       call += 1
       if (prompt !== undefined) prompts.push(JSON.stringify(prompt))
+      await step.beforeStream?.()
       const parts: StreamPart[] = [{ type: 'stream-start', warnings: [] }]
       for (const [index, toolCall] of (step.toolCalls ?? []).entries()) {
         parts.push({
@@ -245,6 +250,63 @@ test('plan round end-to-end: apply_trip_patch writes days/items/legs, SSE carrie
   assert.ok(assistantRow?.appliedPatch)
   assert.equal(assistantRow.appliedPatch.summary, applied.data.summary)
   assert.equal(messageStore.messageRows.length, 2)
+})
+
+test('a candidate saved during first-turn planning is explained before it can be scheduled', async (t) => {
+  const sqlite = await createSqliteTripRepository(':memory:')
+  t.after(() => sqlite.close())
+  const created = await sqlite.repository.create({ title: '周末游', startDate: '2026-10-02', endDate: '2026-10-02' })
+  assert.ok(created.ok)
+  const { trip } = created
+  const patchStore = new SqliteTripPatchStore(sqlite.db)
+  const choice = '确认方案：安排雨天候选'
+  const move = { op: 'move_stash_to_day', stashId: '', itemId: 'scheduled', dayId: 'first-day', pending: true }
+  const apply = { toolName: 'apply_trip_patch', input: { ops: [{ op: 'add_day', dayId: 'first-day' }, move] } }
+  const model = fakeScriptedModel([
+    {
+      beforeStream: async () => {
+        const saved = await app.request(`/api/trips/${trip.id}/stash`, jsonRequest('POST', {
+          poi: { id: 'museum', name: '雨天备选', lat: 49, lng: 119, type: 'attraction' },
+        }))
+        assert.equal(saved.status, 201)
+        move.stashId = ((await saved.json()) as { item: { id: string } }).item.id
+      },
+      toolCalls: [{ toolName: 'emit_round_meta', input: PLAN_META }, apply],
+    },
+    { toolCalls: [apply, { toolName: 'read_trip_snapshot', input: {} }] },
+    { toolCalls: [{ toolName: 'emit_round_meta', input: {
+      round: 'patch-explain', impacts: ['雨天备选将进入第一天'], chips: [{ label: '确认安排', value: choice }],
+    } }] },
+    { text: '建议将刚保存的雨天备选排入第一天，请先确认。' },
+    { toolCalls: [apply] },
+    { text: '已安排雨天备选。' },
+  ])
+  const app = await createApp({
+    tripRepository: sqlite.repository,
+    tripPatchStore: patchStore,
+    recommendationsStore: createSqliteRecommendationsStore(sqlite.db),
+    messageStore: new MemoryMessageStoreDriver(),
+    plannerModel: model,
+    plannerMemory: new MockMemory({ storage: new InMemoryStore(), enableMessageHistory: true }),
+  })
+
+  const events = await sendAndParse(app, trip.id, '帮我规划一天行程')
+  assert.ok(move.stashId)
+  assert.ok(!events.some(({ event }) => event === 'applied_patch'))
+  assert.deepEqual(await patchStore.listDayRows(trip.id), [])
+  assert.deepEqual(await patchStore.listItemRows(trip.id), [])
+  assert.deepEqual((await patchStore.listStashRows(trip.id)).map((row) => row.id), [move.stashId])
+  assert.match(model.prompts[1] ?? '', /行程或候选池已发生变化.*read_trip_snapshot/)
+  assert.ok(model.prompts[2]?.includes('雨天备选'))
+  const meta = events.find(({ event }) => event === 'meta')?.data as { round: string; chips: { value: string }[] }
+  assert.equal(meta.round, 'patch-explain')
+  assert.equal(meta.chips[0]?.value, choice)
+  assert.equal(events.at(-1)?.event, 'done')
+
+  const confirmed = await sendAndParse(app, trip.id, choice)
+  assert.ok(confirmed.some(({ event }) => event === 'applied_patch'))
+  assert.deepEqual(await patchStore.listStashRows(trip.id), [])
+  assert.equal((await patchStore.listItemRows(trip.id))[0]?.title, '雨天备选')
 })
 
 test('intake context reaches the first planner turn and successful QA gets next-step chips', async () => {

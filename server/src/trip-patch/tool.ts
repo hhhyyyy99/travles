@@ -43,7 +43,7 @@ export type PatchTurnState = {
   allowApply: boolean
   /** A model tried to write before confirmation; keep the turn non-fatal. */
   blockedBeforeConfirmation: boolean
-  /** Confirmed snapshot guard; rechecked on the patch's transaction connection. */
+  /** Snapshot guard rechecked on the patch's transaction connection. */
   beforeApply?: TripPatchApplyOptions['beforeApply']
 }
 
@@ -99,6 +99,9 @@ export function createApplyTripPatchTool(options: ApplyTripPatchToolOptions = {}
       if (result.ok) {
         state.applied = { summary: result.summary, stats: result.stats, patch: result.patch }
         return { ok: true, summary: result.summary, stats: result.stats }
+      }
+      if (!state.allowApply) {
+        return { ok: false, retryable: false, pendingConfirmation: true, error: result.error }
       }
       if (state.attempts >= state.maxAttempts) {
         state.exhausted = true

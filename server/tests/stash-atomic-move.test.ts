@@ -19,6 +19,33 @@ const recommendation = {
   introSummary: '旧 POI 简介', address: '地址', images: [{ url: '/stash-image.jpg', caption: '候选图片' }],
 }
 
+test('SQLite saves a stash-only patch despite existing accommodation conflicts', async (t) => {
+  const { store, tripId } = await fixture(t, 'SQLite')
+  await store.upsertDayRow(tripId, { id: 'day', idx: 0, date: '2026-10-02', theme: '' })
+  for (const itemOrder of [0, 1]) {
+    await store.upsertItemRow(tripId, {
+      id: `stay-${itemOrder}`, dayId: 'day', itemOrder, type: 'stay', title: `住宿 ${itemOrder}`,
+      note: '', poi: null, pending: true,
+    })
+  }
+  const before = await store.listItemRows(tripId)
+
+  const result = await applyTripPatch(store, tripId, { ops: [
+    { op: 'add_stash', stashId: 'idea', title: '雨天备选' },
+  ] })
+  assert.ok(result.ok, result.ok ? undefined : result.error)
+  assert.deepEqual((await store.listStashRows(tripId)).map((row) => row.id), ['idea'])
+  assert.deepEqual(await store.listItemRows(tripId), before)
+
+  const mixed = await applyTripPatch(store, tripId, { ops: [
+    { op: 'add_stash', stashId: 'another-idea', title: '另一个候选' },
+    { op: 'update_day', dayId: 'day', theme: '修改日程' },
+  ] })
+  assert.equal(mixed.ok, false)
+  if (!mixed.ok) assert.match(mixed.error, /每天最多一个过夜住宿/)
+  assert.deepEqual((await store.listStashRows(tripId)).map((row) => row.id), ['idea'])
+})
+
 for (const backend of ['SQLite', 'memory'] as const) {
   test(`${backend} add_stash followed by move consumes the caller id and copies explicit content and images`, async (t) => {
     const { store, tripId } = await fixture(t, backend)

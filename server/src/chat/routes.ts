@@ -103,7 +103,8 @@ import type { AppEnv } from '../app.js'
 import { readJsonBody } from '../http/body.js'
 import type { RoundMetaPayload, RoundWarning } from './round-meta.js'
 import { readRoundFromToolArgs } from './round-meta.js'
-import { createPatchConfirmation, hashTripSnapshot, readTripSnapshotRows } from './confirmation.js'
+import { createPatchConfirmation, hashTripSnapshot, hashTripSnapshotRows, readTripSnapshotRows, type TripSnapshotRows } from './confirmation.js'
+import { PROPOSAL_SNAPSHOT_HASH_KEY, PROPOSAL_TRIP_ID_KEY } from '../ai-proposals/tool.js'
 import {
   detectTimeConstraintConflicts,
   isModificationRequest,
@@ -204,9 +205,10 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
       )
       if (!gate.ok) return c.json({ error: gate.error, guidance: gate.guidance, code: gate.code }, 409)
     }
+    const { snapshotHash } = analysis
     const allowPatchApply =
+      snapshotHash !== null &&
       analysis.conflicts.length === 0 &&
-      !analysis.storeReadFailed &&
       (!analysis.hasExistingPlan || confirmationRequested)
 
     // Start the agent run before committing to SSE so failures at run
@@ -216,13 +218,24 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
     // the trip id and the retry state the route owns (read back after the run).
     const requestContext = new RequestContext()
     const patchTurn = createPatchTurnState(PATCH_TURN_MAX_ATTEMPTS, allowPatchApply)
-    if (confirmationRequested && analysis.snapshotHash !== null) {
-      const confirmedHash = analysis.snapshotHash
+    let changedRows: TripSnapshotRows | undefined
+    if (allowPatchApply) {
       patchTurn.beforeApply = async (store) => {
         const rows = await readTripSnapshotRows(store, trip.id)
-        return hashTripSnapshot(trip, rows.days, rows.items, rows.legs, rows.stash) === confirmedHash
-          ? { ok: true }
-          : { ok: false, code: 'invalid', error: '行程或候选池已发生变化，这份影响分析已经过期。请重新分析后确认。' }
+        if (!changedRows && hashTripSnapshot(trip, rows.days, rows.items, rows.legs, rows.stash) === snapshotHash) return { ok: true }
+        if (confirmationRequested || patchTurn.applied !== null) {
+          return { ok: false, code: 'invalid', error: '行程或候选池已发生变化，这份影响分析已经过期。请重新分析后确认。' }
+        }
+        // A concurrent edit invalidated the empty snapshot that allowed this write.
+        changedRows ??= rows
+        requestContext.delete(PROPOSAL_SNAPSHOT_HASH_KEY)
+        patchTurn.allowApply = false
+        patchTurn.blockedBeforeConfirmation = true
+        return {
+          ok: false,
+          code: 'invalid',
+          error: '行程或候选池已发生变化，本轮未写入。请调用 read_trip_snapshot 重新分析当前安排，再调用 emit_round_meta 输出 patch-explain 和确认选项。等待用户确认，勿重试写入。',
+        }
       }
     }
     requestContext.set(PATCH_TRIP_ID_KEY, trip.id)
@@ -230,7 +243,7 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
     // Ticket 13's read_trip_snapshot tool uses the proposal context key. Set
     // it here too so patch-explain turns can inspect the same current canvas
     // without introducing a second snapshot implementation.
-    requestContext.set('ai.proposal.tripId', trip.id)
+    requestContext.set(PROPOSAL_TRIP_ID_KEY, trip.id)
     try {
       output = await planner.stream(buildPlannerPrompt(content, analysis, allowPatchApply), {
         ...(options.memoryConfigured
@@ -268,7 +281,8 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
 
       const writeStart = async (): Promise<void> => {
         started = true
-        await stream.writeSSE({ event: 'start', data: JSON.stringify({ round: round ?? (forcedPatchExplain ? 'patch-explain' : 'qa') }) })
+        const startRound = changedRows ? 'patch-explain' : round ?? (forcedPatchExplain ? 'patch-explain' : 'qa')
+        await stream.writeSSE({ event: 'start', data: JSON.stringify({ round: startRound }) })
         if (analysis.conflicts.length > 0) {
           const warningText = analysis.conflicts
             .map((conflict) => `⚠️ ${conflict.message} ${conflict.suggestion}`)
@@ -340,6 +354,25 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         return
       }
 
+      const refreshedTrip = changedRows && patchTurn.applied === null ? await requireTrip(tripId) : null
+      const refreshedAnalysis = changedRows && refreshedTrip
+        ? analyzeTripSnapshot(refreshedTrip, content, changedRows)
+        : null
+      const finalAnalysis = refreshedAnalysis ?? analysis
+      let refreshedExplanation = false
+      if (changedRows && patchTurn.applied === null) {
+        // Only use a new explanation based on the same rows that stopped the write.
+        refreshedExplanation = refreshedAnalysis !== null && meta?.round === 'patch-explain' &&
+          requestContext.get(PROPOSAL_SNAPSHOT_HASH_KEY) === hashTripSnapshotRows(changedRows)
+        meta = refreshedExplanation && meta
+          ? { ...meta, chips: meta.chips?.filter(({ value }) => isPatchConfirmation(value)) }
+          : null
+        const guidance = refreshedExplanation ? '请查看最新的影响分析后确认。' : '请重新发送规划请求，以便分析最新安排。'
+        const notice = `${full === '' ? '' : '\n\n'}规划期间行程或候选池发生了变化，本轮未写入。${guidance}`
+        full += notice
+        await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: notice }) })
+      }
+
       // Keep the boundary warnings visible even when the model omitted the
       // optional fields from emit_round_meta. The itinerary itself stays on
       // the server; only these concise warnings cross the model/UI boundary.
@@ -347,18 +380,19 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         ? await readLongDriveWarnings(options.resolveTripPatchStore, tripId)
         : []
       const boundaryWarnings = dedupeWarnings([
-        ...analysis.warnings,
+        ...finalAnalysis.warnings,
         ...postApplyWarnings,
-        ...analysis.conflicts.map(conflictToWarning),
+        ...finalAnalysis.conflicts.map(conflictToWarning),
       ])
       const mustExplainPatch = forcedPatchExplain || patchTurn.blockedBeforeConfirmation || round === 'patch-explain'
       const shouldSaveConfirmation =
-        analysis.hasExistingPlan &&
+        finalAnalysis.hasExistingPlan &&
         !confirmationRequested &&
         patchTurn.applied === null &&
         !patchTurn.exhausted &&
         mustExplainPatch &&
-        analysis.snapshotHash !== null
+        (!changedRows || refreshedExplanation) &&
+        finalAnalysis.snapshotHash !== null
       if (boundaryWarnings.length > 0 || mustExplainPatch) {
         const nextRound = mustExplainPatch ? 'patch-explain' : round ?? 'qa'
         const current = meta ?? { round: nextRound }
@@ -368,10 +402,10 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
           ...(boundaryWarnings.length > 0
             ? { warnings: dedupeWarnings([...(current.warnings ?? []), ...boundaryWarnings]) }
             : {}),
-          ...(analysis.conflicts.length > 0
-            ? { conflicts: dedupeStrings([...(current.conflicts ?? []), ...analysis.conflicts.map((conflict) => conflict.message)]) }
+          ...(finalAnalysis.conflicts.length > 0
+            ? { conflicts: dedupeStrings([...(current.conflicts ?? []), ...finalAnalysis.conflicts.map((conflict) => conflict.message)]) }
             : {}),
-          ...(nextRound === 'patch-explain' && (!current.chips || current.chips.length === 0)
+          ...(nextRound === 'patch-explain' && (!changedRows || refreshedExplanation) && !current.chips?.length
             ? {
                 chips: [
                   {
@@ -413,7 +447,7 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
         return
       }
 
-      const completedRound = patchTurn.applied !== null ? 'plan' : round ?? 'qa'
+      const completedRound = patchTurn.applied !== null ? 'plan' : changedRows ? 'patch-explain' : round ?? 'qa'
       if (completedRound === 'qa' || completedRound === 'plan') {
         const current = meta ?? { round: completedRound }
         meta = {
@@ -473,7 +507,7 @@ export function registerChatRoutes(app: Hono<AppEnv>, options: ChatRouteOptions)
           const fallback = '确认方案：按刚才的影响分析执行重排'
           await store.savePatchConfirmation(
             tripId,
-            createPatchConfirmation(analysis.snapshotHash!, choices.length > 0 ? choices : [fallback]),
+            createPatchConfirmation(finalAnalysis.snapshotHash!, choices.length > 0 ? choices : [fallback]),
           )
         } catch {
           await stream.writeSSE({
@@ -514,52 +548,38 @@ async function analyzeTripTurn(
   content: string,
   resolveStore?: () => Promise<TripPatchStoreDriver>,
 ): Promise<TripTurnAnalysis> {
-  // A newly created trip may carry placeholder dates from the create form;
-  // only compare against stored trip dates once an actual plan exists.
-  const isModification = isModificationRequest(content)
-  const scheduleRequest = isScheduleRequest(content)
-  const explicitConflicts = scheduleRequest ? detectTimeConstraintConflicts(content) : []
-  if (!resolveStore) {
-    return {
-      hasExistingPlan: false,
-      isModification,
-      storeReadFailed: false,
-      snapshotHash: null,
-      warnings: explicitConflicts.map(conflictToWarning),
-      conflicts: explicitConflicts,
-      planningContext: trip.planningContext,
+  if (resolveStore) {
+    try {
+      const store = await resolveStore()
+      return analyzeTripSnapshot(trip, content, await readTripSnapshotRows(store, trip.id))
+    } catch {
+      // Keep explicit constraints visible even when the stored rows cannot be read.
     }
   }
-  try {
-    const store = await resolveStore()
-    const { days: dayRows, items: itemRows, legs: legRows, stash: stashRows } = await readTripSnapshotRows(store, trip.id)
-    const hasDays = dayRows.some((row) => typeof row?.id === 'string' && row.id !== '')
-    const hasExistingPlan = hasDays || stashRows.length > 0
-    const snapshotHash = hashTripSnapshot(trip, dayRows, itemRows, legRows, stashRows)
-    const conflicts = scheduleRequest
-      ? hasDays
-        ? detectTimeConstraintConflicts(content, trip)
-        : explicitConflicts
-      : []
-    return {
-      hasExistingPlan,
-      isModification,
-      storeReadFailed: false,
-      snapshotHash,
-      warnings: [...longDriveWarnings(legRows, itemRows, dayRows), ...conflicts.map(conflictToWarning)],
-      conflicts,
-      planningContext: trip.planningContext,
-    }
-  } catch {
-    return {
-      hasExistingPlan: false,
-      isModification,
-      storeReadFailed: true,
-      snapshotHash: null,
-      warnings: explicitConflicts.map(conflictToWarning),
-      conflicts: explicitConflicts,
-      planningContext: trip.planningContext,
-    }
+  const conflicts = isScheduleRequest(content) ? detectTimeConstraintConflicts(content) : []
+  return {
+    hasExistingPlan: false,
+    isModification: isModificationRequest(content),
+    storeReadFailed: resolveStore !== undefined,
+    snapshotHash: null,
+    warnings: conflicts.map(conflictToWarning),
+    conflicts,
+    planningContext: trip.planningContext,
+  }
+}
+
+function analyzeTripSnapshot(trip: TripSummary, content: string, { days, items, legs, stash }: TripSnapshotRows): TripTurnAnalysis {
+  // A newly created trip may carry placeholder dates. Compare them only once a Day exists.
+  const hasDays = days.some((row) => typeof row?.id === 'string' && row.id !== '')
+  const conflicts = isScheduleRequest(content) ? detectTimeConstraintConflicts(content, hasDays ? trip : undefined) : []
+  return {
+    hasExistingPlan: days.length > 0 || items.length > 0 || legs.length > 0 || stash.length > 0,
+    isModification: isModificationRequest(content),
+    storeReadFailed: false,
+    snapshotHash: hashTripSnapshot(trip, days, items, legs, stash),
+    warnings: [...longDriveWarnings(legs, items, days), ...conflicts.map(conflictToWarning)],
+    conflicts,
+    planningContext: trip.planningContext,
   }
 }
 

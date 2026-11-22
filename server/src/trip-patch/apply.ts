@@ -756,9 +756,11 @@ export async function applyTripPatch(
       if (!globalIntegrity.ok) return { ...globalIntegrity, code: 'invalid' as const }
       const integrity = validateOps(reference, ops, tripId)
       if (!integrity.ok) return { ...integrity, code: 'invalid' as const }
-      for (const check of [validateDates, validateStays, validateReachability]) {
-        const result = check(reference)
-        if (!result.ok) return { ...result, code: 'invalid' as const }
+      if (ops.some((op) => op.op !== 'add_stash')) {
+        for (const check of [validateDates, validateStays, validateReachability]) {
+          const result = check(reference)
+          if (!result.ok) return { ...result, code: 'invalid' as const }
+        }
       }
       const previousLegs = usableStoredLegs(await transactionStore.listLegRows(tripId))
       for (const write of reference.writes) await write(transactionStore, stats)
