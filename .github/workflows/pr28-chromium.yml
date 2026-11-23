@@ -1,0 +1,86 @@
+name: PR 28 Chromium validation
+run-name: Production Chromium for PR 28 baseline and candidate 894eabc
+
+on:
+  push:
+    branches: [agent/verify-pr28-chromium]
+
+permissions:
+  contents: read
+
+env:
+  EXPECTED_BASE: aea4dff0440e29c9e35a2bf7ca93e4ef79ce7cff
+  EXPECTED_HEAD: ba345b188a56dd9eb65a7279d562b836c266f7f8
+  EXPECTED_CANDIDATE: 894eabc55df914fb19e1bb34c7b52c1bb10b68d4
+  EXPECTED_CANDIDATE_TREE: b131ab1012e8c68087b04928374c0863accab02b
+  AMAP_KEY: ''
+  AMAP_WEB_KEY: ''
+  AI_API_KEY: ''
+
+jobs:
+  browser:
+    name: Production Chromium (${{ matrix.revision }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - revision: baseline
+            ref: aea4dff0440e29c9e35a2bf7ca93e4ef79ce7cff
+          - revision: candidate
+            ref: refs/pull/28/merge
+    defaults:
+      run:
+        working-directory: application
+    steps:
+      - name: Check out the validation script
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: harness
+          persist-credentials: false
+      - name: Check out the application revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.ref }}
+          path: application
+          persist-credentials: false
+      - name: Verify revision, source tree and clean checkout
+        env:
+          REVISION: ${{ matrix.revision }}
+        run: |
+          actual=$(git rev-parse HEAD)
+          tree=$(git rev-parse 'HEAD^{tree}')
+          parents=$(git cat-file -p HEAD | sed -n '/^$/q; s/^parent //p')
+          printf '%s checkout %s\nSource tree %s\nParents:\n%s\n' "$REVISION" "$actual" "$tree" "$parents" | tee -a "$GITHUB_STEP_SUMMARY"
+          test -z "$(git status --porcelain)"
+          if [ "$REVISION" = baseline ]; then
+            test "$actual" = "$EXPECTED_BASE"
+          else
+            test "$actual" = "$EXPECTED_CANDIDATE"
+            test "$tree" = "$EXPECTED_CANDIDATE_TREE"
+            test "$parents" = "$(printf '%s\n%s' "$EXPECTED_BASE" "$EXPECTED_HEAD")"
+          fi
+          shasum -a 256 ../harness/verification/legacy-stay-browser.cjs
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: application/package.json
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Record Chromium version
+        run: |
+          node --input-type=module -e 'import { chromium } from "playwright"; const browser = await chromium.launch(); console.log(`Chromium ${browser.version()}`); await browser.close();'
+      - id: build
+        run: pnpm build
+      - name: Verify accommodation migration and manual correction
+        env:
+          REVISION: ${{ matrix.revision }}
+        run: node --import tsx --test ../harness/verification/legacy-stay-browser.cjs
+      - name: Run the full production Chromium regression
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: APP_MODE=preview pnpm test:app
