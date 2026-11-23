@@ -24,6 +24,7 @@
  * the server on first startup). If it is absent the migration reports
  * 'trip-missing' without setting the marker.
  */
+import { tripPlan } from '../data/itinerary'
 import { defaultStorage, readState, type StorageLike } from './storage'
 import { CHECKLIST_ITEMS, loadChecklist, type ChecklistStorage } from './checklist'
 import { getDayStay, overnightDays } from './accommodation'
@@ -49,11 +50,7 @@ export function migratedChecklistItemId(index: number): string {
 }
 
 export type MigrationStatus =
-  | 'migrated'
-  | 'already-migrated'
-  | 'no-legacy-data'
-  | 'trip-missing'
-  | 'failed'
+  'migrated' | 'already-migrated' | 'no-legacy-data' | 'trip-missing' | 'failed'
 
 export type MigrationResult = { status: MigrationStatus; tripId?: string; tripTitle?: string }
 
@@ -68,7 +65,9 @@ export interface MigrationOptions {
  * as "no legacy data" and is marked done (the codecs' defaults are the best
  * available interpretation of it).
  */
-export async function migrateLegacyDataToServer(options: MigrationOptions = {}): Promise<MigrationResult> {
+export async function migrateLegacyDataToServer(
+  options: MigrationOptions = {},
+): Promise<MigrationResult> {
   const storage = options.storage ?? defaultStorage()
   const checklistStorage = options.checklistStorage ?? storage
   const fetchLike = options.fetchLike ?? defaultFetch()
@@ -79,7 +78,8 @@ export async function migrateLegacyDataToServer(options: MigrationOptions = {}):
   // Both codecs are 容错读取: corrupt JSON degrades to defaults here.
   const accommodation = readState(storage)
   const checked = loadChecklist(checklistStorage)
-  const hasAccommodation = accommodation.bases.length > 0 || Object.keys(accommodation.stays).length > 0
+  const hasAccommodation =
+    accommodation.bases.length > 0 || Object.keys(accommodation.stays).length > 0
   const hasChecklist = checked.length > 0
   if (!hasAccommodation && !hasChecklist && !legacyMarker) {
     writeMarker(storage)
@@ -104,20 +104,30 @@ export async function migrateLegacyDataToServer(options: MigrationOptions = {}):
         if (!day || !stay) return null
         const current = day.items?.find((item) => item.id === migratedStayItemId(dayIndex))
         if (legacyMarker && !current) return null
+        const seed = tripPlan.days[dayIndex]
+        const placeholder = `第 ${dayIndex + 1} 晚住宿`
+        // A saved POI already identifies the lodging. Only replace seed text
+        // when this write supplies the lodging, and keep a deliberately blank note.
+        const replaceTitle =
+          !current?.poi && (current?.title === seed?.stay || current?.title === placeholder)
+        const replaceNote =
+          !current?.poi && (current?.note === seed?.alt || current?.note === placeholder)
         return {
           id: migratedStayItemId(dayIndex),
           dayId: day.id,
-          itemOrder: 100,
+          itemOrder: current?.itemOrder ?? 100,
           type: 'stay',
-          title: shouldReplaceSeedTitle(current?.title, dayIndex) ? stay.name : current?.title || stay.name,
-          note: shouldReplaceSeedNote(current?.note, dayIndex) ? stay.address ?? '' : current?.note ?? stay.address ?? '',
+          title: replaceTitle ? stay.name : current?.title || stay.name,
+          note: replaceNote ? (stay.address ?? '') : (current?.note ?? stay.address ?? ''),
           poi: current?.poi ?? accommodationPoi(stay),
           pending: current?.pending ?? false,
         }
       })
       .filter((item): item is NonNullable<typeof item> => item !== null)
     if (items.length > 0) {
-      const written = await putJson(fetchLike, `/api/trips/${encodeURIComponent(trip.id)}/items`, { items })
+      const written = await putJson(fetchLike, `/api/trips/${encodeURIComponent(trip.id)}/items`, {
+        items,
+      })
       if (!written.ok) return { status: 'failed' }
     }
   }
@@ -130,7 +140,11 @@ export async function migrateLegacyDataToServer(options: MigrationOptions = {}):
       content,
       done: checked.includes(index),
     }))
-    const written = await putJson(fetchLike, `/api/trips/${encodeURIComponent(trip.id)}/checklist`, { items })
+    const written = await putJson(
+      fetchLike,
+      `/api/trips/${encodeURIComponent(trip.id)}/checklist`,
+      { items },
+    )
     if (!written.ok) return { status: 'failed' }
   }
 
@@ -145,10 +159,20 @@ export async function migrateLegacyDataToServer(options: MigrationOptions = {}):
 interface DaySummary {
   id: string
   idx: number
-  items?: Array<{ id: string; title: string; note: string; pending: boolean; poi: Record<string, unknown> | null }>
+  items?: Array<{
+    id: string
+    itemOrder?: number
+    title: string
+    note: string
+    pending: boolean
+    poi: Record<string, unknown> | null
+  }>
 }
 
-async function fetchDays(tripId: string, fetchLike: FetchLike): Promise<{ ok: true; data: DaySummary[] } | { ok: false }> {
+async function fetchDays(
+  tripId: string,
+  fetchLike: FetchLike,
+): Promise<{ ok: true; data: DaySummary[] } | { ok: false }> {
   let response: Response
   try {
     response = await fetchLike(`/api/trips/${encodeURIComponent(tripId)}/days`)
@@ -167,9 +191,16 @@ async function fetchDays(tripId: string, fetchLike: FetchLike): Promise<{ ok: tr
     const idx = Number(record.idx)
     const items = Array.isArray(record.items)
       ? record.items
-          .filter((item): item is Record<string, unknown> => item !== null && typeof item === 'object' && !Array.isArray(item))
+          .filter(
+            (item): item is Record<string, unknown> =>
+              item !== null && typeof item === 'object' && !Array.isArray(item),
+          )
           .map((item) => ({
             id: typeof item.id === 'string' ? item.id : '',
+            itemOrder:
+              typeof item.itemOrder === 'number' && Number.isFinite(item.itemOrder)
+                ? item.itemOrder
+                : undefined,
             title: typeof item.title === 'string' ? item.title : '',
             note: typeof item.note === 'string' ? item.note : '',
             pending: item.pending === true || item.pending === 1,
@@ -182,7 +213,11 @@ async function fetchDays(tripId: string, fetchLike: FetchLike): Promise<{ ok: tr
   return { ok: true, data }
 }
 
-async function putJson(fetchLike: FetchLike, url: string, body: unknown): Promise<{ ok: true } | { ok: false }> {
+async function putJson(
+  fetchLike: FetchLike,
+  url: string,
+  body: unknown,
+): Promise<{ ok: true } | { ok: false }> {
   let response: Response
   try {
     response = await fetchLike(url, {
@@ -221,16 +256,6 @@ function writeMarker(storage: StorageLike): void {
   }
 }
 
-function shouldReplaceSeedTitle(current: string | undefined, dayIndex: number): boolean {
-  const seed = typeof current === 'string' ? current.trim() : ''
-  return seed === '' || seed === `第 ${dayIndex + 1} 晚住宿` || new RegExp(`^.+ · 第 ${dayIndex + 1} 晚$`).test(seed)
-}
-
-function shouldReplaceSeedNote(current: string | undefined, dayIndex: number): boolean {
-  const note = typeof current === 'string' ? current.trim() : ''
-  return note === '' || note === `第 ${dayIndex + 1} 晚住宿`
-}
-
 function accommodationPoi(base: AccommodationBase): Record<string, unknown> {
   return {
     amapId: `legacy-accommodation:${base.id}`,
@@ -254,7 +279,9 @@ function parseStoredPoi(value: unknown): Record<string, unknown> | null {
   if (typeof value !== 'string' || value.trim() === '') return null
   try {
     const parsed = JSON.parse(value)
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null
   } catch {
     return null
   }
