@@ -21,7 +21,16 @@
  *   (spec 用户故事 25); the history stays untouched.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, Check, Copy, FileText, ListChecks, MessageCircle, PanelLeftClose, SendHorizontal } from 'lucide-react'
+import {
+  AlertTriangle,
+  Check,
+  Copy,
+  FileText,
+  ListChecks,
+  MessageCircle,
+  PanelLeftClose,
+  SendHorizontal,
+} from 'lucide-react'
 import {
   fetchChatHistory,
   sendChatMessage,
@@ -53,9 +62,7 @@ const CHAT_STARTERS = [
 ] as const
 
 type SendState =
-  | { status: 'idle' }
-  | { status: 'sending' }
-  | { status: 'error'; error: ChatStreamError | string }
+  { status: 'idle' } | { status: 'sending' } | { status: 'error'; error: ChatStreamError | string }
 
 export default function ChatPanel({
   tripId,
@@ -173,7 +180,13 @@ export default function ChatPanel({
         const requestSeq = ++historyReadSeqRef.current
         const sendEpoch = localSendEpochRef.current
         void fetchChatHistory(tripId).then((result) => {
-          if (!active || requestSeq !== historyReadSeqRef.current || sendEpoch !== localSendEpochRef.current || !result.ok) return
+          if (
+            !active ||
+            requestSeq !== historyReadSeqRef.current ||
+            sendEpoch !== localSendEpochRef.current ||
+            !result.ok
+          )
+            return
           setHistory(result.data)
         })
       },
@@ -182,7 +195,13 @@ export default function ChatPanel({
         const requestSeq = ++historyReadSeqRef.current
         const sendEpoch = localSendEpochRef.current
         void fetchChatHistory(tripId).then((result) => {
-          if (!active || requestSeq !== historyReadSeqRef.current || sendEpoch !== localSendEpochRef.current || !result.ok) return
+          if (
+            !active ||
+            requestSeq !== historyReadSeqRef.current ||
+            sendEpoch !== localSendEpochRef.current ||
+            !result.ok
+          )
+            return
           setHistory(result.data)
         })
       },
@@ -232,7 +251,12 @@ export default function ChatPanel({
 
     if (result.ok) {
       setHistory((prev) => [
-        ...prev.filter((m) => m.id !== optimistic.id && m.id !== result.userMessage.id && m.id !== result.assistantMessage.id),
+        ...prev.filter(
+          (m) =>
+            m.id !== optimistic.id &&
+            m.id !== result.userMessage.id &&
+            m.id !== result.assistantMessage.id,
+        ),
         result.userMessage,
         result.assistantMessage,
       ])
@@ -264,7 +288,11 @@ export default function ChatPanel({
         </button>
       </div>
 
-      <div id="chat-list" ref={listRef} className="flex flex-1 flex-col gap-[10px] overflow-y-auto px-[12px] py-[12px]">
+      <div
+        id="chat-list"
+        ref={listRef}
+        className="flex flex-1 flex-col gap-[10px] overflow-y-auto px-[12px] py-[12px]"
+      >
         {loadError !== null && (
           <div className="mx-auto my-[12px] text-center text-[13px] leading-[1.8] text-muted">
             <p>{loadError}</p>
@@ -301,11 +329,23 @@ export default function ChatPanel({
           </div>
         )}
         {history.map((message) => (
-          <ChatBubble key={message.id} message={message} sending={sending} onSend={handleSend} onFocusPoi={onFocusPoi} />
+          <ChatBubble
+            key={message.id}
+            message={message}
+            sending={sending}
+            onSend={handleSend}
+            onFocusPoi={onFocusPoi}
+          />
         ))}
         {streamText !== null && (
           <ChatBubble
-            message={{ id: 'streaming', tripId, role: 'assistant', content: streamText, createdAt: '' }}
+            message={{
+              id: 'streaming',
+              tripId,
+              role: 'assistant',
+              content: streamText,
+              createdAt: '',
+            }}
             meta={streamMeta}
             appliedPatch={streamPatch}
             streaming
@@ -385,33 +425,59 @@ function ProposalReview({
 }) {
   if (state.status === 'loading') {
     return (
-      <div data-ai-proposal data-ai-proposal-status="loading" className="rounded-[8px] border border-green/30 bg-white px-[10px] py-[9px] text-[12px] text-muted">
+      <div
+        data-ai-proposal
+        data-ai-proposal-status="loading"
+        className="rounded-[8px] border border-green/30 bg-white px-[10px] py-[9px] text-[12px] text-muted"
+      >
         正在生成{proposalKindLabel(state.request.kind)}建议…
       </div>
     )
   }
   if (state.status === 'applied') {
     return (
-      <div data-ai-proposal data-ai-proposal-status="applied" className="rounded-[8px] border border-green/30 bg-green/5 px-[10px] py-[9px] text-[12px]">
+      <div
+        data-ai-proposal
+        data-ai-proposal-status="applied"
+        className="rounded-[8px] border border-green/30 bg-green/5 px-[10px] py-[9px] text-[12px]"
+      >
         <p className="font-[550] text-green">建议已应用</p>
-        <p data-ai-proposal-applied className="mt-[3px] text-muted">{state.record.summary}</p>
+        <p data-ai-proposal-applied className="mt-[3px] text-muted">
+          {state.record.summary}
+        </p>
       </div>
     )
   }
   const proposal = 'proposal' in state ? state.proposal : undefined
   if (state.status === 'error') {
     return (
-      <div data-ai-proposal data-ai-proposal-status="error" className="rounded-[8px] border border-[#b75342]/40 bg-[#fdf3f1] px-[10px] py-[9px] text-[12px]">
+      <div
+        data-ai-proposal
+        data-ai-proposal-status="error"
+        className="rounded-[8px] border border-[#b75342]/40 bg-[#fdf3f1] px-[10px] py-[9px] text-[12px]"
+      >
         <p className="font-[550] text-[#b75342]">建议生成失败</p>
-        <p data-ai-proposal-error className="mt-[3px] text-muted">{state.error}</p>
+        <p data-ai-proposal-error className="mt-[3px] text-muted">
+          {state.error}
+        </p>
         <div className="mt-[7px] flex gap-[6px]">
           {onRetry && (
-            <button type="button" data-ai-proposal-retry onClick={onRetry} className="rounded-[5px] bg-green px-[8px] py-[4px] text-[11px] text-white">
+            <button
+              type="button"
+              data-ai-proposal-retry
+              onClick={onRetry}
+              className="rounded-[5px] bg-green px-[8px] py-[4px] text-[11px] text-white"
+            >
               重试
             </button>
           )}
           {onCancel && (
-            <button type="button" data-ai-proposal-cancel onClick={onCancel} className="rounded-[5px] border border-line px-[8px] py-[4px] text-[11px] text-muted">
+            <button
+              type="button"
+              data-ai-proposal-cancel
+              onClick={onCancel}
+              className="rounded-[5px] border border-line px-[8px] py-[4px] text-[11px] text-muted"
+            >
               取消
             </button>
           )}
@@ -422,23 +488,44 @@ function ProposalReview({
   }
   if (!proposal) return null
   return (
-    <div data-ai-proposal data-ai-proposal-status={state.status} data-ai-proposal-kind={proposal.kind} className="rounded-[8px] border border-green/35 bg-white px-[10px] py-[9px] text-[12px]">
+    <div
+      data-ai-proposal
+      data-ai-proposal-status={state.status}
+      data-ai-proposal-kind={proposal.kind}
+      className="rounded-[8px] border border-green/35 bg-white px-[10px] py-[9px] text-[12px]"
+    >
       <div className="flex items-start gap-[7px]">
         <ListChecks aria-hidden="true" className="mt-[2px] w-[14px] shrink-0 text-green" />
         <div className="min-w-0 flex-1">
-          <p data-ai-proposal-title className="font-[600] text-ink">{proposal.title}</p>
-          <p data-ai-proposal-summary className="mt-[3px] leading-[1.65] text-muted">{proposal.summary}</p>
+          <p data-ai-proposal-title className="font-[600] text-ink">
+            {proposal.title}
+          </p>
+          <p data-ai-proposal-summary className="mt-[3px] leading-[1.65] text-muted">
+            {proposal.summary}
+          </p>
         </div>
       </div>
       <ProposalSummary proposal={proposal} />
       <div className="mt-[9px] flex gap-[6px]">
         {onApply && (
-          <button type="button" data-ai-proposal-confirm onClick={onApply} disabled={state.status === 'applying'} className="rounded-[5px] bg-green px-[9px] py-[5px] text-[11px] text-white disabled:opacity-50">
+          <button
+            type="button"
+            data-ai-proposal-confirm
+            onClick={onApply}
+            disabled={state.status === 'applying'}
+            className="rounded-[5px] bg-green px-[9px] py-[5px] text-[11px] text-white disabled:opacity-50"
+          >
             {state.status === 'applying' ? '应用中…' : '确认应用'}
           </button>
         )}
         {onCancel && (
-          <button type="button" data-ai-proposal-cancel onClick={onCancel} disabled={state.status === 'applying'} className="rounded-[5px] border border-line px-[9px] py-[5px] text-[11px] text-muted disabled:opacity-50">
+          <button
+            type="button"
+            data-ai-proposal-cancel
+            onClick={onCancel}
+            disabled={state.status === 'applying'}
+            className="rounded-[5px] border border-line px-[9px] py-[5px] text-[11px] text-muted disabled:opacity-50"
+          >
             取消
           </button>
         )}
@@ -450,7 +537,9 @@ function ProposalReview({
 function ProposalSummary({ proposal }: { proposal: AiProposal }) {
   return (
     <div data-ai-proposal-diff className="mt-[7px] border-t border-line pt-[6px]">
-      <p className="text-[11px] font-[550] text-muted">{proposalKindLabel(proposal.kind)} · {proposal.diff.length} 项变更</p>
+      <p className="text-[11px] font-[550] text-muted">
+        {proposalKindLabel(proposal.kind)} · {proposal.diff.length} 项变更
+      </p>
       <ul className="mt-[3px] space-y-[2px] text-[11px] text-muted">
         {proposal.diff.slice(0, 8).map((change, index) => (
           <li key={`${change.action}-${change.label}-${index}`} data-ai-proposal-change>
@@ -461,16 +550,24 @@ function ProposalSummary({ proposal }: { proposal: AiProposal }) {
       </ul>
       {proposal.items && proposal.items.length > 0 && (
         <div data-ai-proposal-items className="mt-[6px]">
-          <p className="text-[11px] text-muted">解析出 {proposal.items.length} 个行程项，确认后写入画布：</p>
+          <p className="text-[11px] text-muted">
+            解析出 {proposal.items.length} 个行程项，确认后写入画布：
+          </p>
           <ul className="mt-[3px] space-y-[2px] text-[11px] text-muted">
             {proposal.items.slice(0, 8).map((item) => (
-              <li key={item.itemId} data-ai-proposal-item={item.itemId} className="flex items-center gap-[5px]">
+              <li
+                key={item.itemId}
+                data-ai-proposal-item={item.itemId}
+                className="flex items-center gap-[5px]"
+              >
                 <span className="min-w-0 flex-1 truncate">{item.title}</span>
                 {item.pending && <span className="shrink-0 text-[#b75342]">待定</span>}
               </li>
             ))}
           </ul>
-          {proposal.items.length > 8 && <p className="mt-[2px] text-[10px] text-muted">另有 {proposal.items.length - 8} 项</p>}
+          {proposal.items.length > 8 && (
+            <p className="mt-[2px] text-[10px] text-muted">另有 {proposal.items.length - 8} 项</p>
+          )}
         </div>
       )}
     </div>
@@ -536,7 +633,8 @@ function ChatBubble({
   }
 
   const blocks = parseAssistantContent(message.content, poiLinks)
-  const renderSpans = (spans: InlineSpan[]) => spans.map((span, index) => renderSpan(span, index, onFocusPoi))
+  const renderSpans = (spans: InlineSpan[]) =>
+    spans.map((span, index) => renderSpan(span, index, onFocusPoi))
   return (
     <div className="flex justify-start">
       <div
@@ -546,13 +644,26 @@ function ChatBubble({
         {...(streaming ? { 'data-chat-streaming': 'true' } : {})}
         className="flex max-w-[85%] flex-col gap-[6px] rounded-[10px] rounded-bl-[3px] border border-line bg-paper px-[11px] py-[7px] text-[13px] leading-[1.7] text-ink"
       >
-        {think !== null && !streaming && <ThinkSection think={think} complete={roundMeta?.thinkComplete ?? true} />}
+        {think !== null && !streaming && (
+          <ThinkSection think={think} complete={roundMeta?.thinkComplete ?? true} />
+        )}
         <div className="whitespace-pre-wrap">
-          {blocks.length === 0 && streaming ? <span className="text-muted">思考中…</span> : blocks.map((block, index) => renderBlock(block, index, renderSpans))}
+          {blocks.length === 0 && streaming ? (
+            <span className="text-muted">思考中…</span>
+          ) : (
+            blocks.map((block, index) => renderBlock(block, index, renderSpans))
+          )}
         </div>
         {streaming && (
-          <span data-chat-generating className="inline-flex items-center gap-[5px] text-[11px] text-muted" aria-live="polite">
-            <span aria-hidden="true" className="workbench-spinner h-[11px] w-[11px] rounded-full border-2 border-line border-t-green" />
+          <span
+            data-chat-generating
+            className="inline-flex items-center gap-[5px] text-[11px] text-muted"
+            aria-live="polite"
+          >
+            <span
+              aria-hidden="true"
+              className="workbench-spinner h-[11px] w-[11px] rounded-full border-2 border-line border-t-green"
+            />
             正在生成回复…
           </span>
         )}
@@ -597,7 +708,10 @@ function PatchExplainDetails({ meta }: { meta: ChatMessageMeta }) {
   const hasDetails = sections.some((section) => section.values.length > 0) || warnings.length > 0
   if (!hasDetails) return null
   return (
-    <div data-chat-patch-explain className="flex flex-col gap-[6px] rounded-[6px] border border-[#d9c49b] bg-[#fffaf0] px-[8px] py-[7px] text-[12px]">
+    <div
+      data-chat-patch-explain
+      className="flex flex-col gap-[6px] rounded-[6px] border border-[#d9c49b] bg-[#fffaf0] px-[8px] py-[7px] text-[12px]"
+    >
       {sections.map((section) =>
         section.values.length > 0 ? (
           <div key={section.label}>
@@ -608,7 +722,9 @@ function PatchExplainDetails({ meta }: { meta: ChatMessageMeta }) {
               {section.label}
             </p>
             <ul className="mt-[2px] list-disc pl-[16px] text-muted">
-              {section.values.map((value) => <li key={value}>{value}</li>)}
+              {section.values.map((value) => (
+                <li key={value}>{value}</li>
+              ))}
             </ul>
           </div>
         ) : null,
@@ -622,7 +738,10 @@ function RoundWarnings({ warnings }: { warnings: ChatRoundWarning[] }) {
   return (
     <div data-chat-warnings className="flex flex-col gap-[4px]">
       {warnings.map((warning, index) => (
-        <div key={`${warning.kind}-${warning.title}-${index}`} className="flex gap-[5px] text-[#b75342]">
+        <div
+          key={`${warning.kind}-${warning.title}-${index}`}
+          className="flex gap-[5px] text-[#b75342]"
+        >
           <AlertTriangle aria-hidden="true" className="mt-[3px] w-[13px] shrink-0" />
           <div>
             <p className="font-[550]">{warning.title}</p>
@@ -663,7 +782,10 @@ function AppliedPatchCard({ record }: { record: AppliedPatchRecord }) {
   ]
   const useful = statEntries.filter(([, value]) => typeof value === 'number' && value !== 0)
   return (
-    <details data-chat-applied-patch className="rounded-[6px] border border-green/30 bg-white/70 px-[8px] py-[5px] text-[12px]">
+    <details
+      data-chat-applied-patch
+      className="rounded-[6px] border border-green/30 bg-white/70 px-[8px] py-[5px] text-[12px]"
+    >
       <summary className="flex cursor-pointer select-none items-center gap-[5px] font-[550] text-green">
         <ListChecks aria-hidden="true" className="w-[13px]" />
         已写入行程
@@ -730,7 +852,10 @@ function renderSpan(span: InlineSpan, index: number, onFocusPoi?: (poi: ChatPoiL
 /** "思考完成" 折叠推理段 (spec 用户故事 17); hidden when absent. */
 function ThinkSection({ think, complete }: { think: string; complete: boolean }) {
   return (
-    <details data-chat-think className="rounded-[6px] bg-white/60 px-[8px] py-[5px] text-[12px] text-muted">
+    <details
+      data-chat-think
+      className="rounded-[6px] bg-white/60 px-[8px] py-[5px] text-[12px] text-muted"
+    >
       <summary className="cursor-pointer select-none font-[550] text-ink">
         思考完成{complete ? '' : '（部分）'}
       </summary>
@@ -743,7 +868,9 @@ function ThinkSection({ think, complete }: { think: string; complete: boolean })
 function SourcesSection({ sources }: { sources: NonNullable<ChatMessage['sources']> }) {
   return (
     <details data-chat-sources className="rounded-[6px] bg-white/60 px-[8px] py-[5px] text-[12px]">
-      <summary className="cursor-pointer select-none font-[550] text-ink">来源 · {sources.length}</summary>
+      <summary className="cursor-pointer select-none font-[550] text-ink">
+        来源 · {sources.length}
+      </summary>
       <ul className="mt-[4px] space-y-[2px]">
         {sources.map((source) => (
           <li key={source.url}>
@@ -793,7 +920,11 @@ function CopyButton({ content }: { content: string }) {
         copied ? 'text-green' : 'text-muted hover:text-green'
       }`}
     >
-      {copied ? <Check aria-hidden="true" className="w-[12px]" /> : <Copy aria-hidden="true" className="w-[12px]" />}
+      {copied ? (
+        <Check aria-hidden="true" className="w-[12px]" />
+      ) : (
+        <Copy aria-hidden="true" className="w-[12px]" />
+      )}
       {copied ? '已复制' : '复制'}
     </button>
   )
@@ -802,7 +933,8 @@ function CopyButton({ content }: { content: string }) {
 /** spec 用户故事 25: 明确的错误说明 + 该去检查什么的指引。 */
 function ChatErrorBanner({ error }: { error: ChatStreamError | string }) {
   const message = typeof error === 'string' ? error : error.message
-  const guidance = typeof error === 'string' ? '请稍后重试；若持续失败请检查模型服务配置。' : error.guidance
+  const guidance =
+    typeof error === 'string' ? '请稍后重试；若持续失败请检查模型服务配置。' : error.guidance
   return (
     <div
       id="chat-error"
