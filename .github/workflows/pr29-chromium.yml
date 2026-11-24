@@ -105,6 +105,7 @@ jobs:
         run: pnpm build
       - name: Prove the exact browser regression rejects the baseline
         if: matrix.revision == 'baseline'
+        shell: bash
         run: |
           test "$(git -C ../test-source rev-parse HEAD)" = "$CURRENT_HEAD"
           source=../test-source/tests/app/26-chat-starters.app.browser.cjs
