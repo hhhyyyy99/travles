@@ -20,7 +20,7 @@
  * - Stream/HTTP errors surface as a banner with per-failure guidance
  *   (spec 用户故事 25); the history stays untouched.
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
   Check,
@@ -56,7 +56,7 @@ import type {
  * exactly like a typed message, so an empty workbench still offers a way in.
  */
 const CHAT_STARTERS = [
-  '第一次去呼伦贝尔，7 天怎么安排不赶？',
+  '这趟行程怎么安排才不赶？',
   '沿路有哪些值得吃的和值得带的？',
   '帮我把路线顺一顺，少绕路、多玩几个地方',
 ] as const
@@ -140,13 +140,17 @@ export default function ChatPanel({
     }
   }, [tripId])
 
+  const sendInitialPrompt = useEffectEvent((prompt: string) => {
+    void handleSend(prompt)
+  })
+
   useEffect(() => {
     const prompt = initialPrompt?.trim()
     if (!prompt || historyLoading || loadError !== null || history.length > 0) return
     const key = `${tripId}:${prompt}`
     if (initialPromptSentRef.current === key) return
     initialPromptSentRef.current = key
-    void handleSend(prompt)
+    sendInitialPrompt(prompt)
   }, [history.length, historyLoading, initialPrompt, loadError, tripId])
 
   function retryHistory() {
