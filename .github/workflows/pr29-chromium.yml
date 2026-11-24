@@ -1,0 +1,136 @@
+name: PR 29 Chromium validation
+run-name: Production Chromium for PR 29 (baseline, reviewed and current merge candidates)
+
+on:
+  push:
+    branches: [agent/verify-pr29-chromium]
+
+permissions:
+  contents: read
+
+env:
+  BASE: 10d5c37fd135acbbc7a39cc16e0cf22560354e74
+  REVIEWED_HEAD: 2ef4c40941e2b5f9f9ec82cfa94e0d3e22c271e5
+  REVIEWED_CANDIDATE: c4571b10c15d0d5e32b8c404af7a857f5848cc51
+  CURRENT_HEAD: 555c99575463a983d2fd95e5440a13b9bc18630d
+  CURRENT_CANDIDATE: f7a415d8f978b973a863deb1c9ad2893bcd47ef4
+  CANDIDATE_TREE: f8f77d2d4879ad78482067d9673863110b68ad7f
+  STARTER_TEST_BLOB: aec83153a19093ed665827dce77df1d863f4f30a
+  AI_BASE_URL: ''
+  AI_API_KEY: ''
+  AMAP_KEY: ''
+  AMAP_WEB_KEY: ''
+  APP_MODE: preview
+
+jobs:
+  browser:
+    name: Production Chromium (${{ matrix.revision }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - revision: baseline
+            sha: 10d5c37fd135acbbc7a39cc16e0cf22560354e74
+          - revision: reviewed-candidate
+            sha: c4571b10c15d0d5e32b8c404af7a857f5848cc51
+          - revision: current-candidate
+            sha: f7a415d8f978b973a863deb1c9ad2893bcd47ef4
+    env:
+      REVISION: ${{ matrix.revision }}
+      EXPECTED_CHECKOUT: ${{ matrix.sha }}
+    defaults:
+      run:
+        working-directory: application
+    steps:
+      - name: Check out isolation harness
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: harness
+          persist-credentials: false
+      - name: Check out pinned application revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.sha }}
+          path: application
+          persist-credentials: false
+      - name: Check out exact regression source for the baseline probe
+        if: matrix.revision == 'baseline'
+        uses: actions/checkout@v6
+        with:
+          ref: 555c99575463a983d2fd95e5440a13b9bc18630d
+          path: test-source
+          sparse-checkout: tests/app/26-chat-starters.app.browser.cjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify checkout SHA and merge provenance
+        run: |
+          actual=$(git rev-parse HEAD)
+          tree=$(git rev-parse 'HEAD^{tree}')
+          parents=$(git cat-file -p HEAD | sed -n '/^$/q; s/^parent //p')
+          {
+            printf 'Baseline: %s\nReviewed head: %s\nReviewed candidate: %s\n' "$BASE" "$REVIEWED_HEAD" "$REVIEWED_CANDIDATE"
+            printf 'Current head: %s\nCurrent candidate: %s\n' "$CURRENT_HEAD" "$CURRENT_CANDIDATE"
+            printf '%s checkout: %s\nSource tree: %s\nCommit parents:\n%s\n' "$REVISION" "$actual" "$tree" "$parents"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$actual" = "$EXPECTED_CHECKOUT"
+          test -z "$(git status --porcelain)"
+          case "$REVISION" in
+            baseline) test "$actual" = "$BASE" ;;
+            reviewed-candidate)
+              test "$actual" = "$REVIEWED_CANDIDATE"
+              test "$tree" = "$CANDIDATE_TREE"
+              test "$parents" = "$(printf '%s\n%s' "$BASE" "$REVIEWED_HEAD")" ;;
+            current-candidate)
+              test "$actual" = "$CURRENT_CANDIDATE"
+              test "$tree" = "$CANDIDATE_TREE"
+              test "$parents" = "$(printf '%s\n%s' "$BASE" "$CURRENT_HEAD")" ;;
+            *) exit 2 ;;
+          esac
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: application/package.json
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Record Chromium version
+        run: |
+          node --input-type=module -e 'import { chromium } from "playwright"; const browser = await chromium.launch(); console.log(`Chromium ${browser.version()}`); await browser.close();'
+      - id: build
+        run: pnpm build
+      - name: Prove the exact browser regression rejects the baseline
+        if: matrix.revision == 'baseline'
+        run: |
+          test "$(git -C ../test-source rev-parse HEAD)" = "$CURRENT_HEAD"
+          source=../test-source/tests/app/26-chat-starters.app.browser.cjs
+          test "$(git hash-object "$source")" = "$STARTER_TEST_BLOB"
+          printf 'Regression source SHA: %s, file blob: %s\n' "$CURRENT_HEAD" "$STARTER_TEST_BLOB"
+          # The temporary filename is outside the test:app glob, so its expected
+          # failure does not enter the baseline's existing-suite test count.
+          probe=tests/app/26-chat-starters.baseline-probe.cjs
+          cp "$source" "$probe"
+          log="$RUNNER_TEMP/pr29-baseline-probe.log"
+          status=0
+          node --test --test-reporter=spec "$probe" 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
+          test "$status" = 1
+          node ../harness/verification/verify-baseline-failure.cjs "$log"
+      - name: Verify the three starter buttons in the current code
+        if: matrix.revision != 'baseline'
+        run: |
+          source=tests/app/26-chat-starters.app.browser.cjs
+          test "$(git hash-object "$source")" = "$STARTER_TEST_BLOB"
+          node --test "$source"
+      - name: Verify actual HTTP requests, built-in itinerary and legacy guide
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node --test ../harness/verification/chat-starters-real.cjs
+      - name: Verify intake, retry and history protection
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node --test tests/app/17-current-trip-flows.app.browser.cjs
+      - name: Run the complete production Chromium suite
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: APP_MODE=preview pnpm run test:app
