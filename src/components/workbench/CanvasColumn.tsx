@@ -110,15 +110,20 @@ export default function CanvasColumn({
   const [draggingId, setDraggingId] = useState<string | null>(null)
   // Open "⋯" menu (card id) and the cross-day picker (移动到 / 复制到).
   const [menuFor, setMenuFor] = useState<string | null>(null)
-  const [picker, setPicker] = useState<{ mode: 'move' | 'copy'; itemId: string; dayId: string; index: number } | null>(
-    null,
-  )
+  const [picker, setPicker] = useState<{
+    mode: 'move' | 'copy'
+    itemId: string
+    dayId: string
+    index: number
+  } | null>(null)
 
   // Marker click → scroll the highlighted card's day column into view.
   useEffect(() => {
     if (!highlightItemId) return
     const behavior: ScrollBehavior =
-      typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+      typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'auto'
+        : 'smooth'
     for (const day of days) {
       if (!day.items.some((item) => item.id === highlightItemId)) continue
       document
@@ -131,7 +136,12 @@ export default function CanvasColumn({
     }
   }, [highlightItemId, days])
 
-  const handleCardAction = (action: CardMenuAction, item: WorkbenchItem, day: WorkbenchDay, index: number) => {
+  const handleCardAction = (
+    action: CardMenuAction,
+    item: WorkbenchItem,
+    day: WorkbenchDay,
+    index: number,
+  ) => {
     setMenuFor(null)
     switch (action) {
       case 'move-up':
@@ -143,7 +153,12 @@ export default function CanvasColumn({
       case 'move-to':
       case 'copy-to':
         // Keep the card's relative position when the target day is longer.
-        setPicker({ mode: action === 'move-to' ? 'move' : 'copy', itemId: item.id, dayId: day.id, index })
+        setPicker({
+          mode: action === 'move-to' ? 'move' : 'copy',
+          itemId: item.id,
+          dayId: day.id,
+          index,
+        })
         return
       case 'delete':
         onDeleteItem?.(item.id)
@@ -167,14 +182,21 @@ export default function CanvasColumn({
   }
 
   return (
-    <div id="workbench-canvas" className="relative h-full overflow-x-auto overflow-y-hidden bg-paper" aria-busy={syncing}>
+    <div
+      id="workbench-canvas"
+      className="relative h-full overflow-x-auto overflow-y-hidden bg-paper"
+      aria-busy={syncing}
+    >
       {syncing && (
         <div
           data-canvas-syncing
           className="pointer-events-none absolute right-[14px] top-[10px] z-[20] inline-flex items-center gap-[5px] rounded-[5px] border border-line bg-white/95 px-[8px] py-[4px] text-[11px] text-muted shadow-sm"
           aria-live="polite"
         >
-          <span aria-hidden="true" className="workbench-spinner h-[11px] w-[11px] rounded-full border-2 border-line border-t-green" />
+          <span
+            aria-hidden="true"
+            className="workbench-spinner h-[11px] w-[11px] rounded-full border-2 border-line border-t-green"
+          />
           路线重算中…
         </div>
       )}
@@ -189,7 +211,8 @@ export default function CanvasColumn({
         )}
         {days.map((day, index) => {
           const incoming = crossDayTransfersForCanvas.find(
-            (candidate) => candidate.toDayId === day.id && candidate.fromDayId === days[index - 1]?.id,
+            (candidate) =>
+              candidate.toDayId === day.id && candidate.fromDayId === days[index - 1]?.id,
           )
           return (
             <Fragment key={day.id}>
@@ -279,7 +302,12 @@ function DayColumn({
   setDraggingId: (itemId: string | null) => void
   menuFor: string | null
   setMenuFor: (itemId: string | null) => void
-  onCardAction: (action: CardMenuAction, item: WorkbenchItem, day: WorkbenchDay, index: number) => void
+  onCardAction: (
+    action: CardMenuAction,
+    item: WorkbenchItem,
+    day: WorkbenchDay,
+    index: number,
+  ) => void
   incomingTransfer?: ReturnType<typeof crossDayTransfers>[number]
 }) {
   const accent = dayAccentColor(day.color, day.index)
@@ -300,8 +328,15 @@ function DayColumn({
     if (stashPayload && onDropStash) {
       try {
         const stash = JSON.parse(stashPayload) as StashItem
-        if (typeof stash?.id === 'string' && stash.id && (stash.poi?.name || (stash.poi === null && stash.title?.trim()))) {
-          const index = targetItem === null ? day.items.length : day.items.findIndex((item) => item.id === targetItem.id)
+        if (
+          typeof stash?.id === 'string' &&
+          stash.id &&
+          (stash.poi?.name || (stash.poi === null && stash.title?.trim()))
+        ) {
+          const index =
+            targetItem === null
+              ? day.items.length
+              : day.items.findIndex((item) => item.id === targetItem.id)
           onDropStash(stash, day.id, index < 0 ? day.items.length : index)
           return
         }
@@ -721,10 +756,26 @@ function LegChip({ leg }: { leg: WorkbenchLeg | null }) {
       data-leg-chip={leg.id}
       data-leg-quality={pending ? 'pending' : quality}
       data-leg-warning={longDrive ? leg.id : undefined}
-      aria-label={pending ? '路线待查询' : estimated ? `预估路线：${displayLabel}` : `驾车路线：${displayLabel}`}
-      title={longDrive ? longDriveWarningText(leg) : pending ? '路线待查询' : estimated ? '直线估算，路线服务返回后会更新' : '高德驾车路线'}
+      aria-label={
+        pending
+          ? '路线待查询'
+          : estimated
+            ? `预估路线：${displayLabel}`
+            : `驾车路线：${displayLabel}`
+      }
+      title={
+        longDrive
+          ? longDriveWarningText(leg)
+          : pending
+            ? '路线待查询'
+            : estimated
+              ? '直线估算，路线服务返回后会更新'
+              : '高德驾车路线'
+      }
       className={`flex items-center gap-[6px] rounded-[999px] border px-[10px] py-[3px] text-[11px] ${
-        longDrive ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]' : 'border-line bg-paper text-muted'
+        longDrive
+          ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]'
+          : 'border-line bg-paper text-muted'
       }`}
     >
       <Car aria-hidden="true" className="w-[12px]" />
@@ -734,7 +785,11 @@ function LegChip({ leg }: { leg: WorkbenchLeg | null }) {
   )
 }
 
-export function CrossDayLeg({ transfer }: { transfer: ReturnType<typeof crossDayTransfers>[number] }) {
+export function CrossDayLeg({
+  transfer,
+}: {
+  transfer: ReturnType<typeof crossDayTransfers>[number]
+}) {
   const label = formatLegDisplayLabel(transfer.leg)
   const quality = legQuality(transfer.leg)
   const pending = quality === 'pending' || label === ''
@@ -744,9 +799,17 @@ export function CrossDayLeg({ transfer }: { transfer: ReturnType<typeof crossDay
       data-cross-day-leg={transfer.id}
       data-leg-quality={quality}
       aria-label={pending ? '跨天路线待查询' : `跨天路线：${displayLabel}`}
-      title={pending ? '跨天起终点缺少可用坐标，路线待查询' : quality === 'measured' ? '高德驾车路线' : '跨天距离与时长为估算，路线服务返回后会更新'}
+      title={
+        pending
+          ? '跨天起终点缺少可用坐标，路线待查询'
+          : quality === 'measured'
+            ? '高德驾车路线'
+            : '跨天距离与时长为估算，路线服务返回后会更新'
+      }
       className={`flex items-center gap-[6px] rounded-[999px] border px-[10px] py-[3px] text-[11px] ${
-        transfer.longDrive ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]' : 'border-line bg-paper text-muted'
+        transfer.longDrive
+          ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]'
+          : 'border-line bg-paper text-muted'
       }`}
     >
       <Car aria-hidden="true" className="w-[12px]" />
