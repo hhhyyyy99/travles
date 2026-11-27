@@ -1,0 +1,58 @@
+name: PR 30 Chromium verification
+run-name: Chromium regression for PR 30 merge candidate (sanitized)
+
+on:
+  push:
+    branches: [agent/verify-pr30-chromium]
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: Production Chromium and focused regression evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: application
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: df5175cb761d26665cce7190104756aa2db1a827
+          path: application
+          persist-credentials: false
+      - name: Verify exact application checkout, parents and tree
+        run: |
+          actual=$(git rev-parse HEAD)
+          tree=$(git rev-parse 'HEAD^{tree}')
+          parents=$(git cat-file -p HEAD | sed -n '/^$/q; s/^parent //p')
+          test "$actual" = df5175cb761d26665cce7190104756aa2db1a827
+          test "$tree" = c1dbf20a36b6518c3db92a4bb6de13f4f629ef12
+          test "$parents" = "$(printf '%s\n%s' cd94e33a15d135a47ca461e21fbae98758df7293 09e1ea7b42f5fa2f91ce4c3f3ea03a10c8ccb2a4)"
+          test -z "$(git status --porcelain)"
+          printf 'Application checkout: %s\nApplication tree: %s\n' "$actual" "$tree"
+          printf '### Application checkout\n\n- Merge candidate: `%s`\n- Tree: `%s`\n\n' "$actual" "$tree" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: application/package.json
+      - name: Install frozen dependencies and Chromium without publishing output
+        run: |
+          if ! pnpm install --frozen-lockfile > "$RUNNER_TEMP/pr30-install.log" 2>&1; then
+            echo 'Frozen install failed; output withheld.'
+            exit 1
+          fi
+          if ! pnpm exec playwright install --with-deps chromium > "$RUNNER_TEMP/pr30-chromium.log" 2>&1; then
+            echo 'Chromium setup failed; output withheld.'
+            exit 1
+          fi
+      - name: Run Chromium and publish only sanitized test counts
+        run: node ../harness/verification/pr30-chromium-summary.cjs
