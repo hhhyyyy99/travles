@@ -24,15 +24,15 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: f7a415d8f978b973a863deb1c9ad2893bcd47ef4
+          ref: a516c9818341ae4a5ac2baf871babdba05b32c66
           path: application
           persist-credentials: false
       - name: Verify pinned application checkout
         run: |
           actual=$(git rev-parse HEAD)
-          test "$actual" = f7a415d8f978b973a863deb1c9ad2893bcd47ef4
+          test "$actual" = a516c9818341ae4a5ac2baf871babdba05b32c66
           parents=$(git cat-file -p HEAD | sed -n '/^$/q; s/^parent //p')
-          test "$parents" = "$(printf '%s\n%s' 10d5c37fd135acbbc7a39cc16e0cf22560354e74 555c99575463a983d2fd95e5440a13b9bc18630d)"
+          test "$parents" = "$(printf '%s\n%s' 10d5c37fd135acbbc7a39cc16e0cf22560354e74 c2874593e9f7c958f067fb3e255f14f05d7ac7ef)"
           test -z "$(git status --porcelain)"
           printf 'Application checkout: %s\n' "$actual"
       - uses: actions/setup-node@v7
