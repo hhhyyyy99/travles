@@ -180,6 +180,35 @@ test('zoomed canvas still scrolls, selects POIs and sends the existing cross-day
   await page.locator('[data-poi-detail="card-3"]').waitFor()
 })
 
+test('the zoomed card menu opens an unscaled cross-day picker and can move a card', async (t) => {
+  const { page, close, writes } = await openCanvas()
+  t.after(close)
+  const { plus } = zoomControls(page)
+  await plus.click()
+  await plus.click()
+  await assertZoom(page, 140)
+
+  await page.locator('[data-card-menu-button="card-1"]').click()
+  const menu = page.getByRole('menu', { name: '卡片操作：示例卡片 1' })
+  await menu.getByRole('menuitem', { name: '移动到…' }).click()
+  await menu.waitFor({ state: 'hidden' })
+  const picker = page.getByRole('dialog', { name: '移动到哪一天' })
+  await picker.waitFor()
+  assert.equal((await picker.boundingBox()).width, 300, 'the dialog does not zoom with the cards')
+  assert.ok(await picker.locator('[data-target-day="day-1"]').isDisabled())
+  await page.keyboard.press('Escape')
+  await picker.waitFor({ state: 'hidden' })
+  assert.deepEqual(writes, [])
+
+  await page.locator('[data-card-menu-button="card-1"]').click()
+  await menu.getByRole('menuitem', { name: '移动到…' }).click()
+  await picker.locator('[data-target-day="day-3"]').click()
+  await picker.waitFor({ state: 'hidden' })
+  await page.locator('[data-canvas-day="day-3"] [data-canvas-card="card-1"]').waitFor()
+  assert.deepEqual(writes, [{ dayId: 'day-3', index: 0 }])
+  await assertZoom(page, 140)
+})
+
 test('zoom controls stay reachable at narrow widths while the canvas scrolls independently', async (t) => {
   const { page, close, writes } = await openCanvas({ width: 320, height: 750 })
   t.after(close)
