@@ -193,7 +193,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     const provider = await (await resolveAiProviderRepository()).getDefault()
     if (provider) return createProviderModel(provider, provider.capabilities)
     const environmentProvider = providerFromEnv()
-    return environmentProvider ? createProviderModel(environmentProvider, environmentProvider.capabilities) : null
+    return environmentProvider
+      ? createProviderModel(environmentProvider, environmentProvider.capabilities)
+      : null
   }
 
   const mastra = createMastra({
@@ -203,7 +205,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     // The default memory store points at the app database — but only on the
     // default (SQLite) startup path; pure in-memory test apps without an
     // injected memory run the agent without recall instead of opening a file.
-    databaseUrl: options.tripRepository ? undefined : options.databaseUrl ?? process.env.TRIPS_DB_PATH ?? defaultDatabaseUrl(),
+    databaseUrl: options.tripRepository
+      ? undefined
+      : (options.databaseUrl ?? process.env.TRIPS_DB_PATH ?? defaultDatabaseUrl()),
     // Ticket 08: the apply_trip_patch tool resolves its store lazily on first
     // patch (the SQLite path opens the shared database only when actually hit).
     resolveTripPatchStore: resolveTripPatchStore,
@@ -300,7 +304,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     }
     workbenchStore = createSqliteWorkbenchStore(sqlite.db)
     messageStore = new SqliteMessageStoreDriver(sqlite.db)
-    if (options.seedBuiltinTrip ?? (options.databaseUrl === undefined)) {
+    if (options.seedBuiltinTrip ?? options.databaseUrl === undefined) {
       await seedBuiltinTrip(sqlite.db)
     }
   }
@@ -405,7 +409,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
       if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
         return c.json({ error: '条目字段无效（需要 id、dayId、title）' }, 400)
       }
-      const result = await contentRepository.upsertItem(c.req.param('id'), entry as Record<string, unknown>)
+      const result = await contentRepository.upsertItem(
+        c.req.param('id'),
+        entry as Record<string, unknown>,
+      )
       if (!result.ok) return tripError(c, result.error, result.code)
       upserted += 1
     }
@@ -425,7 +432,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
       if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
         return c.json({ error: '清单条目字段无效（需要 id 与 content）' }, 400)
       }
-      const result = await contentRepository.upsertChecklistEntry(c.req.param('id'), entry as Record<string, unknown>)
+      const result = await contentRepository.upsertChecklistEntry(
+        c.req.param('id'),
+        entry as Record<string, unknown>,
+      )
       if (!result.ok) return tripError(c, result.error, result.code)
       upserted += 1
     }
@@ -534,11 +544,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     if ('note' in body) patch.note = body.note
     const store = await resolveDaysAdminStore()
     const days = new DaysAdminRepository(store)
-    const result = await days.updateDay(
-      tripId,
-      c.req.param('dayId'),
-      patch,
-    )
+    const result = await days.updateDay(tripId, c.req.param('dayId'), patch)
     if (!result.ok) return tripError(c, result.error, result.code)
     await synchronizeSchedule(tripId, store, true)
     notifyTrip(tripId, 'canvas', 'day_updated')
@@ -595,10 +601,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
 
   app.post('/api/trips/:id/items', async (c) => {
     const tripId = c.req.param('id')
-    if (await tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
+    if ((await tripRepository.get(tripId)) === null) return c.json({ error: '行程不存在' }, 404)
     const body = await readJsonBody(c)
     if (body === null) return c.json({ error: '请求体必须是有效的 JSON' }, 400)
-    const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).createItem(tripId, body)
+    const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).createItem(
+      tripId,
+      body,
+    )
     if (!result.ok) return tripError(c, result.error, result.code)
     await systemMessages.recordSystemMessage(tripId, `手动添加卡片「${result.item.title}」`)
     notifyTrip(tripId, 'canvas', 'item_created')
@@ -608,7 +617,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
 
   app.post('/api/trips/:id/items/:itemId/move', async (c) => {
     const tripId = c.req.param('id')
-    if (await tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
+    if ((await tripRepository.get(tripId)) === null) return c.json({ error: '行程不存在' }, 404)
     const body = (await readJsonBody(c)) ?? {}
     const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).moveItem(
       tripId,
@@ -616,7 +625,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
       body,
     )
     if (!result.ok) return tripError(c, result.error, result.code)
-    await systemMessages.recordSystemMessage(tripId, `手动调整顺序：移动卡片「${result.item.title}」`)
+    await systemMessages.recordSystemMessage(
+      tripId,
+      `手动调整顺序：移动卡片「${result.item.title}」`,
+    )
     notifyTrip(tripId, 'canvas', 'item_moved')
     notifyTrip(tripId, 'chat', 'manual_edit')
     return c.json({ item: result.item, legs: result.legs })
@@ -624,7 +636,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
 
   app.post('/api/trips/:id/items/:itemId/copy', async (c) => {
     const tripId = c.req.param('id')
-    if (await tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
+    if ((await tripRepository.get(tripId)) === null) return c.json({ error: '行程不存在' }, 404)
     const body = (await readJsonBody(c)) ?? {}
     const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).copyItem(
       tripId,
@@ -640,7 +652,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
 
   app.patch('/api/trips/:id/items/:itemId', async (c) => {
     const tripId = c.req.param('id')
-    if (await tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
+    if ((await tripRepository.get(tripId)) === null) return c.json({ error: '行程不存在' }, 404)
     const body = await readJsonBody(c)
     if (body === null) return c.json({ error: '请求体必须是有效的 JSON' }, 400)
     const patch: Record<string, unknown> = {}
@@ -664,7 +676,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
 
   app.delete('/api/trips/:id/items/:itemId', async (c) => {
     const tripId = c.req.param('id')
-    if (await tripRepository.get(tripId) === null) return c.json({ error: '行程不存在' }, 404)
+    if ((await tripRepository.get(tripId)) === null) return c.json({ error: '行程不存在' }, 404)
     const result = await new ItemsAdminRepository(await resolveItemsAdminStore()).deleteItem(
       tripId,
       c.req.param('itemId'),
@@ -734,7 +746,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
 }
 
 /** Map a repository failure class to its HTTP status. */
-function tripError(c: { json(body: unknown, status?: number): Response }, error: string, code: string) {
+function tripError(
+  c: { json(body: unknown, status?: number): Response },
+  error: string,
+  code: string,
+) {
   const status = code === 'not_found' ? 404 : code === 'storage' ? 500 : 400
   return c.json({ error }, status)
 }

@@ -166,10 +166,23 @@ export default function TripListPage({
         <div className="flex items-center gap-[10px] text-[18px] font-[650]">
           <MapPin aria-hidden="true" className="text-green w-[26px] h-[26px]" />
           草原之间
-          <span className="text-[10px] font-[450] text-muted ml-[14px] max-sm:hidden">旅行工作台 / 行程列表</span>
+          <span className="text-[10px] font-[450] text-muted ml-[14px] max-sm:hidden">
+            旅行工作台 / 行程列表
+          </span>
         </div>
         <div className="flex items-center gap-[8px]">
-          {onOpenSettings && <button id="open-ai-settings" type="button" title="AI 接入设置" aria-label="AI 接入设置" onClick={onOpenSettings} className="grid h-[38px] w-[38px] place-items-center rounded-[5px] border border-line text-muted hover:border-green hover:text-green transition-colors"><Settings aria-hidden="true" className="w-[15px]" /></button>}
+          {onOpenSettings && (
+            <button
+              id="open-ai-settings"
+              type="button"
+              title="AI 接入设置"
+              aria-label="AI 接入设置"
+              onClick={onOpenSettings}
+              className="grid h-[38px] w-[38px] place-items-center rounded-[5px] border border-line text-muted hover:border-green hover:text-green transition-colors"
+            >
+              <Settings aria-hidden="true" className="w-[15px]" />
+            </button>
+          )}
           <button
             id="open-guide"
             type="button"
@@ -185,21 +198,47 @@ export default function TripListPage({
       <main className="mx-auto max-w-[1440px] px-[4%] max-sm:px-[5%]">
         <section className="pt-[42px] pb-[30px] max-sm:pt-[28px] max-sm:pb-[22px]">
           <p className="eyebrow text-[11px] text-green font-[650] mb-[10px]">MY TRIPS · 行程管理</p>
-          <h1 className="text-[42px] font-[600] leading-[1.3] max-[720px]:text-[34px]">每一次慢慢走的出发。</h1>
+          <h1 className="text-[42px] font-[600] leading-[1.3] max-[720px]:text-[34px]">
+            每一次慢慢走的出发。
+          </h1>
           {migrationNote && (
-            <p id="migration-status" className="mt-[14px] text-[12px] text-muted border border-line rounded-[5px] bg-white px-[14px] py-[8px] inline-block">
+            <p
+              id="migration-status"
+              className="mt-[14px] text-[12px] text-muted border border-line rounded-[5px] bg-white px-[14px] py-[8px] inline-block"
+            >
               {migrationNote}
             </p>
           )}
         </section>
 
-        <section className="mb-[18px] overflow-hidden rounded-[8px] border border-green/35 bg-paper" aria-label="创建行程的方式">
-          <div className="flex border-b border-line bg-white p-[6px]" role="group" aria-label="选择创建方式">
-            {(['ai', 'guide'] as const).map((mode) => <button
-              key={mode} id={'trip-mode-' + mode} type="button" aria-pressed={creationMode === mode}
-              disabled={intakeSubmitting || guideBusy} onClick={() => { savedCreation.current.mode = mode; setCreationMode(mode) }}
-              className={'min-h-[44px] rounded-[5px] px-[18px] text-[14px] font-[550] ' + (creationMode === mode ? 'bg-green text-white' : 'text-muted hover:text-green')}
-            >{mode === 'ai' ? 'AI 创建计划' : '解析攻略'}</button>)}
+        <section
+          className="mb-[18px] overflow-hidden rounded-[8px] border border-green/35 bg-paper"
+          aria-label="创建行程的方式"
+        >
+          <div
+            className="flex border-b border-line bg-white p-[6px]"
+            role="group"
+            aria-label="选择创建方式"
+          >
+            {(['ai', 'guide'] as const).map((mode) => (
+              <button
+                key={mode}
+                id={'trip-mode-' + mode}
+                type="button"
+                aria-pressed={creationMode === mode}
+                disabled={intakeSubmitting || guideBusy}
+                onClick={() => {
+                  savedCreation.current.mode = mode
+                  setCreationMode(mode)
+                }}
+                className={
+                  'min-h-[44px] rounded-[5px] px-[18px] text-[14px] font-[550] ' +
+                  (creationMode === mode ? 'bg-green text-white' : 'text-muted hover:text-green')
+                }
+              >
+                {mode === 'ai' ? 'AI 创建计划' : '解析攻略'}
+              </button>
+            ))}
           </div>
           <div hidden={creationMode !== 'ai'}>
             <form
@@ -228,15 +267,27 @@ export default function TripListPage({
                 >
                   {intakeSubmitting ? '准备中…' : '开始规划'}
                 </button>
-                {intakeError && <span id="trip-intake-error" className="text-[12px] text-red">{intakeError}</span>}
+                {intakeError && (
+                  <span id="trip-intake-error" className="text-[12px] text-red">
+                    {intakeError}
+                  </span>
+                )}
               </div>
             </form>
           </div>
           <div hidden={creationMode !== 'guide'}>
-            <GuideImportPanel session={savedCreation.current.guide} onSessionChange={(session) => { savedCreation.current.guide = session }} onBusyChange={setGuideBusy} onOpenSettings={onOpenSettings} onCreated={(trip) => {
-              setTrips((prev) => [...(prev ?? []).filter((item) => item.id !== trip.id), trip])
-              onOpenTrip?.(trip.id)
-            }} />
+            <GuideImportPanel
+              session={savedCreation.current.guide}
+              onSessionChange={(session) => {
+                savedCreation.current.guide = session
+              }}
+              onBusyChange={setGuideBusy}
+              onOpenSettings={onOpenSettings}
+              onCreated={(trip) => {
+                setTrips((prev) => [...(prev ?? []).filter((item) => item.id !== trip.id), trip])
+                onOpenTrip?.(trip.id)
+              }}
+            />
           </div>
         </section>
 
@@ -265,7 +316,9 @@ export default function TripListPage({
                 id="trip-start-input"
                 type="date"
                 value={form.startDate}
-                onChange={(event) => setForm((prev) => ({ ...prev, startDate: event.target.value }))}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, startDate: event.target.value }))
+                }
                 className="mt-[6px] block h-[40px] border border-line rounded-[5px] px-[10px] text-[14px] text-ink bg-paper focus:outline-none focus:border-green"
               />
             </label>
@@ -292,28 +345,43 @@ export default function TripListPage({
           </div>
           <div className="mt-[10px] text-[12px] text-muted flex items-center gap-[10px]">
             <CalendarDays aria-hidden="true" className="w-[14px]" />
-            {preview.days > 0 ? `共 ${formatDuration(preview.days, preview.nights)}` : '选择起止日期后自动计算天数与晚数'}
+            {preview.days > 0
+              ? `共 ${formatDuration(preview.days, preview.nights)}`
+              : '选择起止日期后自动计算天数与晚数'}
             {formError && <span className="text-red">{formError}</span>}
           </div>
         </form>
 
         {/* 列表 */}
         {loadError && (
-          <div id="trip-load-error" className="border border-red text-red rounded-[8px] px-[18px] py-[14px] mb-[22px] text-[13px] flex items-center justify-between gap-[14px]">
+          <div
+            id="trip-load-error"
+            className="border border-red text-red rounded-[8px] px-[18px] py-[14px] mb-[22px] text-[13px] flex items-center justify-between gap-[14px]"
+          >
             <span>{loadError}</span>
-            <button type="button" onClick={() => void reload()} className="border border-red rounded-[5px] px-[12px] h-[32px] shrink-0">
+            <button
+              type="button"
+              onClick={() => void reload()}
+              className="border border-red rounded-[5px] px-[12px] h-[32px] shrink-0"
+            >
               重试
             </button>
           </div>
         )}
         {actionError && (
-          <div id="trip-action-error" className="border border-red text-red rounded-[8px] px-[18px] py-[14px] mb-[22px] text-[13px]">
+          <div
+            id="trip-action-error"
+            className="border border-red text-red rounded-[8px] px-[18px] py-[14px] mb-[22px] text-[13px]"
+          >
             {actionError}
           </div>
         )}
 
         {trips !== null && trips.length === 0 && !loadError && (
-          <p id="trip-list-empty" className="text-muted text-[14px] py-[40px] text-center border border-dashed border-line rounded-[8px]">
+          <p
+            id="trip-list-empty"
+            className="text-muted text-[14px] py-[40px] text-center border border-dashed border-line rounded-[8px]"
+          >
             还没有行程 —— 从上面创建第一个吧。
           </p>
         )}
@@ -346,10 +414,19 @@ export default function TripListPage({
                     onChange={(event) => setEditTitle(event.target.value)}
                     className="flex-1 min-w-0 h-[36px] border border-line rounded-[5px] px-[10px] text-[14px] text-ink bg-paper focus:outline-none focus:border-green"
                   />
-                  <button type="submit" disabled={busyId === trip.id} className="h-[36px] px-[14px] rounded-[5px] bg-green text-white text-[12px] font-[550] disabled:opacity-50">
+                  <button
+                    type="submit"
+                    disabled={busyId === trip.id}
+                    className="h-[36px] px-[14px] rounded-[5px] bg-green text-white text-[12px] font-[550] disabled:opacity-50"
+                  >
                     保存
                   </button>
-                  <button type="button" onClick={() => setEditingId(null)} aria-label="取消重命名" className="h-[36px] px-[12px] border border-line rounded-[5px] text-[12px] text-muted">
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(null)}
+                    aria-label="取消重命名"
+                    className="h-[36px] px-[12px] border border-line rounded-[5px] text-[12px] text-muted"
+                  >
                     取消
                   </button>
                 </form>
@@ -396,7 +473,10 @@ export default function TripListPage({
 
       {/* 删除确认 —— 不允许静默丢数据 */}
       {deleting && (
-        <div className="fixed inset-0 z-[70] grid place-items-center bg-ink/40 px-[16px]" onClick={() => setDeleting(null)}>
+        <div
+          className="fixed inset-0 z-[70] grid place-items-center bg-ink/40 px-[16px]"
+          onClick={() => setDeleting(null)}
+        >
           <div
             id="trip-delete-dialog"
             role="dialog"
@@ -409,15 +489,25 @@ export default function TripListPage({
               <h3 id="trip-delete-title" className="text-[16px] font-[600]">
                 删除行程
               </h3>
-              <button type="button" aria-label="关闭" onClick={() => setDeleting(null)} className="text-muted">
+              <button
+                type="button"
+                aria-label="关闭"
+                onClick={() => setDeleting(null)}
+                className="text-muted"
+              >
                 <X aria-hidden="true" className="w-[16px]" />
               </button>
             </div>
             <p className="mt-[12px] text-[13px] text-muted leading-[1.8]">
-              确定删除行程「{deleting.title}」吗？行程内的天数、清单与笔记会一并删除，删除后无法恢复。
+              确定删除行程「{deleting.title}
+              」吗？行程内的天数、清单与笔记会一并删除，删除后无法恢复。
             </p>
             <div className="mt-[20px] flex justify-end gap-[10px]">
-              <button type="button" onClick={() => setDeleting(null)} className="h-[36px] px-[16px] border border-line rounded-[5px] text-[13px] text-muted">
+              <button
+                type="button"
+                onClick={() => setDeleting(null)}
+                className="h-[36px] px-[16px] border border-line rounded-[5px] text-[13px] text-muted"
+              >
                 取消
               </button>
               <button

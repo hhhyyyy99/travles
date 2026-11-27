@@ -37,7 +37,13 @@ export class MemoryTripStoreDriver implements TripStoreDriver {
 
   async updateTripRow(
     id: string,
-    patch: { title: string; startDate: string; endDate: string; updatedAt: string; planningContext: string | null },
+    patch: {
+      title: string
+      startDate: string
+      endDate: string
+      updatedAt: string
+      planningContext: string | null
+    },
   ): Promise<boolean> {
     this.failNextWrite()
     const row = this.rows.get(id)
