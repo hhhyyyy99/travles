@@ -48,8 +48,7 @@ export type TripUpdate = {
 export type TripErrorCode = 'invalid' | 'not_found' | 'storage'
 
 export type TripWriteResult =
-  | { ok: true; trip: TripSummary }
-  | { ok: false; error: string; code: TripErrorCode }
+  { ok: true; trip: TripSummary } | { ok: false; error: string; code: TripErrorCode }
 export type TripMutationResult = { ok: true } | { ok: false; error: string; code: TripErrorCode }
 
 export interface TripStoreDriver {
@@ -59,8 +58,16 @@ export interface TripStoreDriver {
   /** Returns false when the trip does not exist. */
   updateTripRow(
     id: string,
-    patch: { title: string; startDate: string; endDate: string; updatedAt: string; planningContext: string | null },
+    patch: {
+      title: string
+      startDate: string
+      endDate: string
+      updatedAt: string
+      planningContext: string | null
+    },
   ): Promise<boolean>
+  /** Returns false when the trip does not exist. */
+  setTripPinned(id: string, isPinned: boolean): Promise<boolean>
   /** Returns false when the trip does not exist. */
   deleteTripRow(id: string): Promise<boolean>
 }

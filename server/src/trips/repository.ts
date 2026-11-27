@@ -123,10 +123,10 @@ export class TripRepository {
     const nextEnd = patch.endDate === undefined ? existing.endDate : patch.endDate
     const keepDatePending = Boolean(
       existing.planningContext &&
-        patch.startDate === undefined &&
-        patch.endDate === undefined &&
-        existing.startDate === '' &&
-        existing.endDate === '',
+      patch.startDate === undefined &&
+      patch.endDate === undefined &&
+      existing.startDate === '' &&
+      existing.endDate === '',
     )
     const dateError = keepDatePending ? null : validateDateRange(nextStart, nextEnd)
     if (dateError) return { ok: false, error: dateError, code: 'invalid' }
@@ -134,7 +134,11 @@ export class TripRepository {
     const updatedAt = new Date().toISOString()
     const nextPlanningContext = existing.planningContext
       ? isValidDateString(nextStart) && isValidDateString(nextEnd)
-        ? { ...existing.planningContext, dateStatus: 'confirmed' as const, datePhrase: `${nextStart} 至 ${nextEnd}` }
+        ? {
+            ...existing.planningContext,
+            dateStatus: 'confirmed' as const,
+            datePhrase: `${nextStart} 至 ${nextEnd}`,
+          }
         : existing.planningContext
       : undefined
     try {
@@ -163,6 +167,17 @@ export class TripRepository {
     return trip === null ? { ok: false, error: '保存失败', code: 'storage' } : { ok: true, trip }
   }
 
+  /** Pin/unpin without rewriting itinerary metadata or its normal sort key. */
+  async setPinned(id: string, isPinned: boolean): Promise<TripMutationResult> {
+    try {
+      const updated = await this.driver.setTripPinned(id, isPinned)
+      if (!updated) return { ok: false, error: '行程不存在', code: 'not_found' }
+      return { ok: true }
+    } catch {
+      return { ok: false, error: '保存置顶状态失败', code: 'storage' }
+    }
+  }
+
   /** Delete; child tables (days/items/…) cascade via FK. */
   async remove(id: string): Promise<TripMutationResult> {
     try {
@@ -187,14 +202,16 @@ export function mapRowToSummary(row: TripRow): TripSummary | null {
   // Intake/guide drafts store empty dates and 0 days, so only those pending
   // schedules use the validated planned duration (as formatTripSchedule does).
   // Non-text stored dates also normalize to '', but are corrupt, not undated.
-  const daysCount = schedule.days > 0
-    ? schedule.days
-    : !startDate && !endDate &&
-        (row.start_date == null || typeof row.start_date === 'string') &&
-        (row.end_date == null || typeof row.end_date === 'string') &&
-        (context?.dateStatus === 'unspecified' || context?.dateStatus === 'tentative')
-      ? context.durationDays
-      : undefined
+  const daysCount =
+    schedule.days > 0
+      ? schedule.days
+      : !startDate &&
+          !endDate &&
+          (row.start_date == null || typeof row.start_date === 'string') &&
+          (row.end_date == null || typeof row.end_date === 'string') &&
+          (context?.dateStatus === 'unspecified' || context?.dateStatus === 'tentative')
+        ? context.durationDays
+        : undefined
   return {
     id,
     title: asText(row?.title),
@@ -207,7 +224,14 @@ export function mapRowToSummary(row: TripRow): TripSummary | null {
     ...(typeof row.cover_image === 'string' ? { coverImage: row.cover_image } : {}),
     ...(row.is_pinned === 0 || row.is_pinned === 1 ? { isPinned: row.is_pinned === 1 } : {}),
     ...(typeof row.status === 'string' ? { status: row.status } : {}),
-    ...(context ? { destination: context.destination, durationDays: context.durationDays, dateStatus: context.dateStatus, planningContext: context } : {}),
+    ...(context
+      ? {
+          destination: context.destination,
+          durationDays: context.durationDays,
+          dateStatus: context.dateStatus,
+          planningContext: context,
+        }
+      : {}),
   }
 }
 
@@ -216,15 +240,35 @@ function mapPlanningContext(value: unknown): TripPlanningContext | null {
   try {
     const record = JSON.parse(value) as Record<string, unknown>
     const destination = typeof record.destination === 'string' ? record.destination.trim() : ''
-    const originalSentence = typeof record.originalSentence === 'string' ? record.originalSentence.trim() : ''
+    const originalSentence =
+      typeof record.originalSentence === 'string' ? record.originalSentence.trim() : ''
     const preferences = typeof record.preferences === 'string' ? record.preferences.trim() : ''
     const durationDays = Number(record.durationDays)
     const dateStatus = record.dateStatus
-    if (!destination || !originalSentence || !preferences || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 60) return null
-    if (dateStatus !== 'confirmed' && dateStatus !== 'unspecified' && dateStatus !== 'tentative') return null
-    const datePhrase = typeof record.datePhrase === 'string' && record.datePhrase.trim() ? record.datePhrase.trim() : undefined
-    return { destination, durationDays, preferences, originalSentence, dateStatus, ...(datePhrase ? { datePhrase } : {}),
-      ...(record.source === 'guide' || record.source === 'intake' ? { source: record.source } : {}) }
+    if (
+      !destination ||
+      !originalSentence ||
+      !preferences ||
+      !Number.isInteger(durationDays) ||
+      durationDays < 1 ||
+      durationDays > 60
+    )
+      return null
+    if (dateStatus !== 'confirmed' && dateStatus !== 'unspecified' && dateStatus !== 'tentative')
+      return null
+    const datePhrase =
+      typeof record.datePhrase === 'string' && record.datePhrase.trim()
+        ? record.datePhrase.trim()
+        : undefined
+    return {
+      destination,
+      durationDays,
+      preferences,
+      originalSentence,
+      dateStatus,
+      ...(datePhrase ? { datePhrase } : {}),
+      ...(record.source === 'guide' || record.source === 'intake' ? { source: record.source } : {}),
+    }
   } catch {
     return null
   }

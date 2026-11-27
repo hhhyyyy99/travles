@@ -29,7 +29,9 @@ export function defaultFetch(): FetchLike {
 export const TRIPS_NETWORK_ERROR = '无法连接服务器，请确认后端服务已启动。'
 
 /** GET /api/trips — never throws; unparseable entries are dropped. */
-export async function fetchTrips(fetchLike: FetchLike = defaultFetch()): Promise<ApiResult<TripSummary[]>> {
+export async function fetchTrips(
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<TripSummary[]>> {
   return requestJson(fetchLike, '/api/trips', { method: 'GET' }, (payload) => {
     const trips = (payload as { trips?: unknown } | null)?.trips
     if (!Array.isArray(trips)) return []
@@ -62,9 +64,38 @@ export async function renameTrip(
   return tripMutation(fetchLike, `/api/trips/${encodeURIComponent(id)}`, 'PATCH', { title })
 }
 
+export function setTripPinned(
+  id: string,
+  isPinned: boolean,
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<null>> {
+  return requestJson(
+    fetchLike,
+    `/api/trips/${encodeURIComponent(id)}/pin`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ isPinned }),
+      headers: { 'content-type': 'application/json' },
+    },
+    (payload) => {
+      if ((payload as { ok?: unknown } | null)?.ok !== true)
+        throw new Error('missing pin confirmation')
+      return null
+    },
+  )
+}
+
 /** DELETE /api/trips/:id — data of the deleted trip: {ok:true, data:null}. */
-export async function deleteTrip(id: string, fetchLike: FetchLike = defaultFetch()): Promise<ApiResult<null>> {
-  return requestJson(fetchLike, `/api/trips/${encodeURIComponent(id)}`, { method: 'DELETE' }, () => null)
+export async function deleteTrip(
+  id: string,
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<null>> {
+  return requestJson(
+    fetchLike,
+    `/api/trips/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+    () => null,
+  )
 }
 
 /**
@@ -72,7 +103,10 @@ export async function deleteTrip(id: string, fetchLike: FetchLike = defaultFetch
  * trip list view and the standalone guide with it). Never throws; `?view=`
  * overrides live in AppShell, not here.
  */
-export async function probeTripsApi(fetchLike: FetchLike = defaultFetch(), timeoutMs = 1500): Promise<boolean> {
+export async function probeTripsApi(
+  fetchLike: FetchLike = defaultFetch(),
+  timeoutMs = 1500,
+): Promise<boolean> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -112,7 +146,12 @@ export function formatDuration(days: number, nights: number): string {
 }
 
 /** Shared schedule badge for dated trips and date-pending intake drafts. */
-export function formatTripSchedule(trip: Pick<TripSummary, 'startDate' | 'endDate' | 'days' | 'nights' | 'durationDays' | 'dateStatus'>): string {
+export function formatTripSchedule(
+  trip: Pick<
+    TripSummary,
+    'startDate' | 'endDate' | 'days' | 'nights' | 'durationDays' | 'dateStatus'
+  >,
+): string {
   const date = formatDateBadge(trip.startDate, trip.endDate)
   const durationDays = trip.durationDays ?? trip.days
   const duration = formatDuration(durationDays, Math.max(0, durationDays - 1))
@@ -125,7 +164,10 @@ export function formatTripSchedule(trip: Pick<TripSummary, 'startDate' | 'endDat
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
 /** Client-side preview of the server's inclusive days/nights computation. */
-export function previewDaysNights(startDate: string, endDate: string): { days: number; nights: number } {
+export function previewDaysNights(
+  startDate: string,
+  endDate: string,
+): { days: number; nights: number } {
   if (!DATE_PATTERN.test(startDate) || !DATE_PATTERN.test(endDate)) return { days: 0, nights: 0 }
   const [year, month, day] = startDate.split('-').map(Number) as [number, number, number]
   const [endYear, endMonth, endDay] = endDate.split('-').map(Number) as [number, number, number]
@@ -154,11 +196,16 @@ function tripMutation(
   method: 'POST' | 'PATCH',
   body: Record<string, unknown>,
 ): Promise<ApiResult<TripSummary>> {
-  return requestJson(fetchLike, url, { method, body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }, (payload) => {
-    const trip = normalizeTrip((payload as { trip?: unknown } | null)?.trip)
-    if (trip === null) throw new Error('unparseable trip payload')
-    return trip
-  })
+  return requestJson(
+    fetchLike,
+    url,
+    { method, body: JSON.stringify(body), headers: { 'content-type': 'application/json' } },
+    (payload) => {
+      const trip = normalizeTrip((payload as { trip?: unknown } | null)?.trip)
+      if (trip === null) throw new Error('unparseable trip payload')
+      return trip
+    },
+  )
 }
 
 async function requestJson<T>(
@@ -203,7 +250,10 @@ export function normalizeTrip(value: unknown): TripSummary | null {
   const startDate = typeof record.startDate === 'string' ? record.startDate : ''
   const endDate = typeof record.endDate === 'string' ? record.endDate : ''
   const computed = previewDaysNights(startDate, endDate)
-  const days = typeof record.days === 'number' && Number.isFinite(record.days) && record.days >= 0 ? record.days : computed.days
+  const days =
+    typeof record.days === 'number' && Number.isFinite(record.days) && record.days >= 0
+      ? record.days
+      : computed.days
   const nights =
     typeof record.nights === 'number' && Number.isFinite(record.nights) && record.nights >= 0
       ? record.nights
@@ -223,7 +273,9 @@ export function normalizeTrip(value: unknown): TripSummary | null {
     ...(typeof record.status === 'string' ? { status: record.status } : {}),
     // Read only explicit projections from the server; older responses stay as-is.
     ...(typeof record.destination === 'string' ? { destination: record.destination } : {}),
-    ...(typeof record.daysCount === 'number' && Number.isSafeInteger(record.daysCount) && record.daysCount > 0
+    ...(typeof record.daysCount === 'number' &&
+    Number.isSafeInteger(record.daysCount) &&
+    record.daysCount > 0
       ? { daysCount: record.daysCount }
       : {}),
     ...(planningContext
@@ -241,12 +293,33 @@ function normalizePlanningContext(value: unknown): TripPlanningContext | null {
   const record = value as Record<string, unknown>
   const destination = typeof record.destination === 'string' ? record.destination.trim() : ''
   const preferences = typeof record.preferences === 'string' ? record.preferences.trim() : ''
-  const originalSentence = typeof record.originalSentence === 'string' ? record.originalSentence.trim() : ''
-  const durationDays = typeof record.durationDays === 'number' ? record.durationDays : Number(record.durationDays)
+  const originalSentence =
+    typeof record.originalSentence === 'string' ? record.originalSentence.trim() : ''
+  const durationDays =
+    typeof record.durationDays === 'number' ? record.durationDays : Number(record.durationDays)
   const dateStatus = record.dateStatus
-  if (!destination || !preferences || !originalSentence || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 60) return null
-  if (dateStatus !== 'confirmed' && dateStatus !== 'unspecified' && dateStatus !== 'tentative') return null
-  const datePhrase = typeof record.datePhrase === 'string' && record.datePhrase.trim() ? record.datePhrase.trim() : undefined
-  return { destination, durationDays, preferences, originalSentence, dateStatus, ...(datePhrase ? { datePhrase } : {}),
-      ...(record.source === 'guide' || record.source === 'intake' ? { source: record.source } : {}) }
+  if (
+    !destination ||
+    !preferences ||
+    !originalSentence ||
+    !Number.isInteger(durationDays) ||
+    durationDays < 1 ||
+    durationDays > 60
+  )
+    return null
+  if (dateStatus !== 'confirmed' && dateStatus !== 'unspecified' && dateStatus !== 'tentative')
+    return null
+  const datePhrase =
+    typeof record.datePhrase === 'string' && record.datePhrase.trim()
+      ? record.datePhrase.trim()
+      : undefined
+  return {
+    destination,
+    durationDays,
+    preferences,
+    originalSentence,
+    dateStatus,
+    ...(datePhrase ? { datePhrase } : {}),
+    ...(record.source === 'guide' || record.source === 'intake' ? { source: record.source } : {}),
+  }
 }

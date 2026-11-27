@@ -27,18 +27,40 @@ export class SqliteTripStoreDriver implements TripStoreDriver {
   async insertTripRow(row: TripInsertRow): Promise<void> {
     await this.db.run(
       'INSERT INTO trips (id, title, start_date, end_date, planning_context, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [row.id, row.title, row.start_date, row.end_date, row.planning_context ?? null, row.created_at, row.updated_at] as SqlValue[],
+      [
+        row.id,
+        row.title,
+        row.start_date,
+        row.end_date,
+        row.planning_context ?? null,
+        row.created_at,
+        row.updated_at,
+      ] as SqlValue[],
     )
   }
 
   async updateTripRow(
     id: string,
-    patch: { title: string; startDate: string; endDate: string; updatedAt: string; planningContext: string | null },
+    patch: {
+      title: string
+      startDate: string
+      endDate: string
+      updatedAt: string
+      planningContext: string | null
+    },
   ): Promise<boolean> {
     const { rowsAffected } = await this.db.run(
       'UPDATE trips SET title = ?, start_date = ?, end_date = ?, planning_context = ?, updated_at = ? WHERE id = ?',
       [patch.title, patch.startDate, patch.endDate, patch.planningContext, patch.updatedAt, id],
     )
+    return rowsAffected > 0
+  }
+
+  async setTripPinned(id: string, isPinned: boolean): Promise<boolean> {
+    const { rowsAffected } = await this.db.run('UPDATE trips SET is_pinned = ? WHERE id = ?', [
+      isPinned ? 1 : 0,
+      id,
+    ])
     return rowsAffected > 0
   }
 
