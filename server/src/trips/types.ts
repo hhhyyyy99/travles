@@ -67,5 +67,7 @@ export interface TripStoreDriver {
     },
   ): Promise<boolean>
   /** Returns false when the trip does not exist. */
+  setTripPinned(id: string, isPinned: boolean): Promise<boolean>
+  /** Returns false when the trip does not exist. */
   deleteTripRow(id: string): Promise<boolean>
 }

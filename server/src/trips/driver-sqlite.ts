@@ -56,6 +56,14 @@ export class SqliteTripStoreDriver implements TripStoreDriver {
     return rowsAffected > 0
   }
 
+  async setTripPinned(id: string, isPinned: boolean): Promise<boolean> {
+    const { rowsAffected } = await this.db.run('UPDATE trips SET is_pinned = ? WHERE id = ?', [
+      isPinned ? 1 : 0,
+      id,
+    ])
+    return rowsAffected > 0
+  }
+
   async deleteTripRow(id: string): Promise<boolean> {
     const { rowsAffected } = await this.db.run('DELETE FROM trips WHERE id = ?', [id])
     return rowsAffected > 0

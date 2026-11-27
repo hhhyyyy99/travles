@@ -7,8 +7,8 @@ import type { MastraMemory } from '@mastra/core/memory'
 import { readServerVersion } from './version.js'
 import { createSqliteTripRepository } from './trips/factory.js'
 import type { SqlDatabase } from './db/driver.js'
-import { TripRepository } from './trips/repository.js'
-import { TripContentRepository } from './content/repository.js'
+import type { TripRepository } from './trips/repository.js'
+import type { TripContentRepository } from './content/repository.js'
 import { seedBuiltinTrip } from './seed/seed.js'
 import { createSqliteWorkbenchStore } from './days/driver-sqlite.js'
 import { readTripCanvas } from './days/repository.js'
@@ -35,7 +35,11 @@ import { MemoryAiProposalStore } from './ai-proposals/types.js'
 import { createSqliteTripPatchStore } from './trip-patch/store-sqlite.js'
 import type { TripPatchStoreDriver } from './trip-patch/types.js'
 import { createSqliteRecommendationsStore } from './recommendations/driver-sqlite.js'
-import type { PoiSearch, RecommendationsStoreDriver } from './recommendations/types.js'
+import type {
+  PoiSearch,
+  RecommendationsStoreDriver,
+  RouteLegSearch,
+} from './recommendations/types.js'
 import { mountRecommendationsRoutes } from './recommendations/routes.js'
 import { searchAmapPoi } from './recommendations/search.js'
 // ---- AI provider settings (ticket 12, additive) ----------------------------
@@ -138,7 +142,7 @@ export type CreateAppOptions = {
   /** Injected URL transport for guide parsing tests (destination checks still apply). */
   guideSourceDependencies?: GuideSourceDependencies
   /** Injected route lookup; production uses the AMap driving API. */
-  routeLegs?: import('./recommendations/types.js').RouteLegSearch
+  routeLegs?: RouteLegSearch
   /** Process-local fan-out bus for workbench near-real-time updates. */
   tripEvents?: TripEventHub
 }
@@ -372,6 +376,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono<Ap
     if (!result.ok) return tripError(c, result.error, result.code)
     notifyTrip(c.req.param('id'), 'trip', 'trip_updated')
     return c.json({ trip: result.trip })
+  })
+
+  app.put('/api/trips/:id/pin', async (c) => {
+    const body = await readJsonBody(c)
+    if (typeof body?.isPinned !== 'boolean') return c.json({ error: '置顶状态必须为布尔值' }, 400)
+    const result = await tripRepository.setPinned(c.req.param('id'), body.isPinned)
+    if (!result.ok) return tripError(c, result.error, result.code)
+    return c.json({ ok: true })
   })
 
   app.delete('/api/trips/:id', async (c) => {

@@ -59,6 +59,14 @@ export class MemoryTripStoreDriver implements TripStoreDriver {
     return true
   }
 
+  async setTripPinned(id: string, isPinned: boolean): Promise<boolean> {
+    this.failNextWrite()
+    const row = this.rows.get(id)
+    if (!row) return false
+    this.rows.set(id, { ...row, is_pinned: isPinned ? 1 : 0 })
+    return true
+  }
+
   async deleteTripRow(id: string): Promise<boolean> {
     this.failNextWrite()
     return this.rows.delete(id)

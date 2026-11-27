@@ -167,6 +167,17 @@ export class TripRepository {
     return trip === null ? { ok: false, error: '保存失败', code: 'storage' } : { ok: true, trip }
   }
 
+  /** Pin/unpin without rewriting itinerary metadata or its normal sort key. */
+  async setPinned(id: string, isPinned: boolean): Promise<TripMutationResult> {
+    try {
+      const updated = await this.driver.setTripPinned(id, isPinned)
+      if (!updated) return { ok: false, error: '行程不存在', code: 'not_found' }
+      return { ok: true }
+    } catch {
+      return { ok: false, error: '保存置顶状态失败', code: 'storage' }
+    }
+  }
+
   /** Delete; child tables (days/items/…) cascade via FK. */
   async remove(id: string): Promise<TripMutationResult> {
     try {

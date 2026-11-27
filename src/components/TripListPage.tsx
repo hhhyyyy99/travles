@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BookOpen, CalendarDays, MapPin, Pencil, Plus, Settings, Trash2, X } from 'lucide-react'
+import {
+  BookOpen,
+  CalendarDays,
+  MapPin,
+  Pencil,
+  Pin,
+  PinOff,
+  Plus,
+  Settings,
+  Trash2,
+  X,
+} from 'lucide-react'
 import {
   createTrip,
   createTripFromSentence,
@@ -9,6 +20,7 @@ import {
   formatTripSchedule,
   previewDaysNights,
   renameTrip,
+  setTripPinned,
   type ApiResult,
   type TripFormInput,
   type TripIntakeInput,
@@ -143,6 +155,22 @@ export default function TripListPage({
     setTrips((prev) => (prev ?? []).map((item) => (item.id === trip.id ? result.data : item)))
   }
 
+  const handlePin = async (trip: TripSummary) => {
+    if (busyId) return
+    setActionError(null)
+    setBusyId(trip.id)
+    const isPinned = trip.isPinned !== true
+    const result = await setTripPinned(trip.id, isPinned)
+    setBusyId(null)
+    if (!result.ok) {
+      setActionError(result.error)
+      return
+    }
+    setTrips((prev) =>
+      (prev ?? []).map((item) => (item.id === trip.id ? { ...item, isPinned } : item)),
+    )
+  }
+
   const handleDeleteConfirm = async () => {
     const trip = deleting
     if (!trip || busyId) return
@@ -159,6 +187,10 @@ export default function TripListPage({
   }
 
   const preview = previewDaysNights(form.startDate, form.endDate)
+  // Keep the underlying order so unpinning restores the trip to its original position.
+  const orderedTrips = [...(trips ?? [])].sort(
+    (a, b) => Number(b.isPinned === true) - Number(a.isPinned === true),
+  )
 
   return (
     <div className="min-h-screen bg-paper text-ink">
@@ -371,6 +403,7 @@ export default function TripListPage({
         {actionError && (
           <div
             id="trip-action-error"
+            role="alert"
             className="border border-red text-red rounded-[8px] px-[18px] py-[14px] mb-[22px] text-[13px]"
           >
             {actionError}
@@ -387,7 +420,7 @@ export default function TripListPage({
         )}
 
         <ul id="trip-list" className="flex flex-col gap-[14px] pb-[60px]">
-          {(trips ?? []).map((trip) => (
+          {orderedTrips.map((trip) => (
             <li
               key={trip.id}
               data-trip-id={trip.id}
@@ -416,7 +449,7 @@ export default function TripListPage({
                   />
                   <button
                     type="submit"
-                    disabled={busyId === trip.id}
+                    disabled={busyId !== null}
                     className="h-[36px] px-[14px] rounded-[5px] bg-green text-white text-[12px] font-[550] disabled:opacity-50"
                   >
                     保存
@@ -434,11 +467,35 @@ export default function TripListPage({
                 <>
                   <div className="flex-1 min-w-0">
                     <h2 className="text-[17px] font-[600] truncate">{trip.title}</h2>
-                    <p className="trip-badge mt-[6px] inline-flex items-center gap-[6px] text-[12px] text-green border border-line rounded-[999px] px-[10px] py-[3px] bg-paper">
-                      <CalendarDays aria-hidden="true" className="w-[13px]" />
-                      {formatTripSchedule(trip)}
-                    </p>
+                    <div className="mt-[6px] flex flex-wrap items-center gap-2">
+                      <p className="trip-badge inline-flex items-center gap-[6px] text-[12px] text-green border border-line rounded-[999px] px-[10px] py-[3px] bg-paper">
+                        <CalendarDays aria-hidden="true" className="w-[13px]" />
+                        {formatTripSchedule(trip)}
+                      </p>
+                      {trip.isPinned && (
+                        <span className="rounded-full border border-green/35 bg-paper px-2 py-[3px] text-[12px] text-green">
+                          已置顶
+                        </span>
+                      )}
+                    </div>
                   </div>
+                  <button
+                    type="button"
+                    title={trip.isPinned ? '取消置顶' : '置顶'}
+                    aria-label={`${trip.isPinned ? '取消置顶' : '置顶'} ${trip.title}`}
+                    aria-disabled={busyId !== null}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void handlePin(trip)
+                    }}
+                    className="grid size-[34px] shrink-0 place-items-center rounded-[5px] border border-line text-muted transition-colors hover:border-green hover:text-green aria-disabled:opacity-50 pointer-coarse:size-11"
+                  >
+                    {trip.isPinned ? (
+                      <PinOff aria-hidden="true" className="w-[14px]" />
+                    ) : (
+                      <Pin aria-hidden="true" className="w-[14px]" />
+                    )}
+                  </button>
                   <button
                     type="button"
                     data-action="rename"
@@ -513,7 +570,7 @@ export default function TripListPage({
               <button
                 id="trip-delete-confirm"
                 type="button"
-                disabled={busyId === deleting.id}
+                disabled={busyId !== null}
                 onClick={() => void handleDeleteConfirm()}
                 className="h-[36px] px-[16px] rounded-[5px] bg-red text-white text-[13px] font-[550] disabled:opacity-50"
               >

@@ -64,6 +64,27 @@ export async function renameTrip(
   return tripMutation(fetchLike, `/api/trips/${encodeURIComponent(id)}`, 'PATCH', { title })
 }
 
+export function setTripPinned(
+  id: string,
+  isPinned: boolean,
+  fetchLike: FetchLike = defaultFetch(),
+): Promise<ApiResult<null>> {
+  return requestJson(
+    fetchLike,
+    `/api/trips/${encodeURIComponent(id)}/pin`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ isPinned }),
+      headers: { 'content-type': 'application/json' },
+    },
+    (payload) => {
+      if ((payload as { ok?: unknown } | null)?.ok !== true)
+        throw new Error('missing pin confirmation')
+      return null
+    },
+  )
+}
+
 /** DELETE /api/trips/:id — data of the deleted trip: {ok:true, data:null}. */
 export async function deleteTrip(
   id: string,
