@@ -1,0 +1,64 @@
+name: PR 31 candidate verification
+run-name: PR 31 new-base verification (sanitized)
+
+on:
+  push:
+    branches: [agent/verify-pr31-new-base]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify exact merge candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: application
+    env:
+      BASE_SHA: ed531d8625c0b1d215e63072fee432239437f508
+      HEAD_SHA: e6a3d436ea49cd3cfc9dd15fe5466b040ef43d92
+      MERGE_SHA: 430add703e14ca90ed6b8dafea48225cfdac48d9
+      TREE_SHA: 998681c2642225f8b97cc5d2b87f22f09e32077c
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.MERGE_SHA }}
+          fetch-depth: 2
+          path: application
+          persist-credentials: false
+      - name: Verify checkout, both parents, tree, and clean worktree
+        run: |
+          checkout=$(git rev-parse HEAD)
+          parents=$(git show --no-patch --format=%P HEAD)
+          tree=$(git rev-parse 'HEAD^{tree}')
+          test "$checkout" = "$MERGE_SHA"
+          test "$parents" = "$BASE_SHA $HEAD_SHA"
+          test "$tree" = "$TREE_SHA"
+          test -z "$(git status --porcelain)"
+          printf 'Checkout: %s\nParents: %s\nTree: %s\n' "$checkout" "$parents" "$tree"
+          printf 'This is by an automated agent, not a human.\n\n### Verified repository checkout\n\n- Checkout: `%s`\n- Base parent: `%s`\n- PR parent: `%s`\n- Tree: `%s`\n\n' "$checkout" "$BASE_SHA" "$HEAD_SHA" "$tree" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: application/package.json
+      - name: Install frozen dependencies and Chromium without publishing test data
+        run: |
+          if ! pnpm install --frozen-lockfile > "$RUNNER_TEMP/pr31-install.log" 2>&1; then
+            echo 'Frozen install failed; output withheld.'
+            exit 1
+          fi
+          if ! pnpm exec playwright install --with-deps chromium > "$RUNNER_TEMP/pr31-chromium.log" 2>&1; then
+            echo 'Chromium setup failed; output withheld.'
+            exit 1
+          fi
+      - name: Publish only sanitized execution counts
+        run: node ../harness/verification/pr31-summary.cjs
