@@ -2,8 +2,7 @@ name: PR 29 Chromium validation
 run-name: Production Chromium for PR 29 (baseline, reviewed and current merge candidates)
 
 on:
-  push:
-    branches: [agent/verify-pr29-chromium]
+  workflow_dispatch:
 
 permissions:
   contents: read

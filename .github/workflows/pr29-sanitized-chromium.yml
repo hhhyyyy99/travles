@@ -1,0 +1,60 @@
+name: PR 29 Chromium summary
+run-name: Production Chromium for PR 29 (sanitized counts)
+
+on:
+  push:
+    branches: [agent/verify-pr29-chromium]
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: Chromium suite (sanitized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: application
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: f7a415d8f978b973a863deb1c9ad2893bcd47ef4
+          path: application
+          persist-credentials: false
+      - name: Verify pinned application checkout
+        run: |
+          actual=$(git rev-parse HEAD)
+          test "$actual" = f7a415d8f978b973a863deb1c9ad2893bcd47ef4
+          parents=$(git cat-file -p HEAD | sed -n '/^$/q; s/^parent //p')
+          test "$parents" = "$(printf '%s\n%s' 10d5c37fd135acbbc7a39cc16e0cf22560354e74 555c99575463a983d2fd95e5440a13b9bc18630d)"
+          test -z "$(git status --porcelain)"
+          printf 'Application checkout: %s\n' "$actual"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: application/package.json
+      - name: Install dependencies, install Chromium and build without publishing command output
+        run: |
+          if ! pnpm install --frozen-lockfile > "$RUNNER_TEMP/pr29-install.log" 2>&1; then
+            echo 'Frozen dependency install failed; output withheld.'
+            exit 1
+          fi
+          if ! pnpm exec playwright install --with-deps chromium > "$RUNNER_TEMP/pr29-chromium.log" 2>&1; then
+            echo 'Chromium setup failed; output withheld.'
+            exit 1
+          fi
+          if ! pnpm build > "$RUNNER_TEMP/pr29-build.log" 2>&1; then
+            echo 'Production build failed; output withheld.'
+            exit 1
+          fi
+      - name: Run full production suite and emit sanitized summary only
+        run: node ../harness/verification/chromium-summary.cjs
