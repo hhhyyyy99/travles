@@ -311,18 +311,18 @@ test('invalid JSON and unsupported versions are rejected with exact messages and
     assert.equal(await page.locator('#accommodation-count').textContent(), '5')
     await openBackupDialog(page)
 
+    const status = page.locator('#accommodation-backup-status')
+    // Uploading finishes before the browser has read and validated the file.
     await importFile(page, 'broken.json', '{not valid json')
-    assert.equal(
-      await page.locator('#accommodation-backup-status').textContent(),
-      '无法导入：备份文件不是有效的 JSON。',
-    )
+    await status
+      .and(page.getByText('无法导入：备份文件不是有效的 JSON。', { exact: true }))
+      .waitFor({ state: 'visible' })
     assert.equal(await page.locator('#accommodation-backup-confirm').isDisabled(), true)
 
     await importFile(page, 'version99.json', backupPayload({ version: 99 }))
-    assert.equal(
-      await page.locator('#accommodation-backup-status').textContent(),
-      '无法导入：备份版本不受支持，仅支持 v1。',
-    )
+    await status
+      .and(page.getByText('无法导入：备份版本不受支持，仅支持 v1。', { exact: true }))
+      .waitFor({ state: 'visible' })
     assert.equal(await page.locator('#accommodation-backup-confirm').isDisabled(), true)
 
     // current data untouched
