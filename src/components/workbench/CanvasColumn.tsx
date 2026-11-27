@@ -19,7 +19,7 @@
  * back on failure; this component only reports intents.
  */
 import { Fragment, useEffect, useState } from 'react'
-import { Car, Plus, Trash2, WandSparkles } from 'lucide-react'
+import { Car, Minus, Plus, Trash2, WandSparkles } from 'lucide-react'
 import {
   CARD_TYPE_LABEL,
   cardVisual,
@@ -41,6 +41,13 @@ import type { StashItem } from '../../domain/recommendations'
 import EditableTheme from './EditableTheme'
 import { CardMenu, DayPickerDialog, type CardMenuAction } from './CardMenu'
 import CrossDayDriveWarning from './CrossDayDriveWarning'
+
+const DEFAULT_ZOOM = 100
+const MIN_ZOOM = 80
+const MAX_ZOOM = 140
+const ZOOM_STEP = 20
+
+type ZoomAction = 'out' | 'reset' | 'in'
 
 const VISUAL_CLASSES = {
   traffic: {
@@ -104,21 +111,34 @@ export default function CanvasColumn({
   onDropStash,
   syncing = false,
 }: CanvasColumnProps) {
+  const [zoom, setZoom] = useState(DEFAULT_ZOOM)
+  const updateZoom = (action: ZoomAction) => {
+    setZoom((current) => {
+      if (action === 'reset') return DEFAULT_ZOOM
+      if (action === 'in') return Math.min(MAX_ZOOM, current + ZOOM_STEP)
+      return Math.max(MIN_ZOOM, current - ZOOM_STEP)
+    })
+  }
   const legLookup = legsByPair(legs)
   const crossDayTransfersForCanvas = crossDayTransfers(days, legs)
   // Cross-column drag state: the id of the card currently being dragged.
   const [draggingId, setDraggingId] = useState<string | null>(null)
   // Open "⋯" menu (card id) and the cross-day picker (移动到 / 复制到).
   const [menuFor, setMenuFor] = useState<string | null>(null)
-  const [picker, setPicker] = useState<{ mode: 'move' | 'copy'; itemId: string; dayId: string; index: number } | null>(
-    null,
-  )
+  const [picker, setPicker] = useState<{
+    mode: 'move' | 'copy'
+    itemId: string
+    dayId: string
+    index: number
+  } | null>(null)
 
   // Marker click → scroll the highlighted card's day column into view.
   useEffect(() => {
     if (!highlightItemId) return
     const behavior: ScrollBehavior =
-      typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+      typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'auto'
+        : 'smooth'
     for (const day of days) {
       if (!day.items.some((item) => item.id === highlightItemId)) continue
       document
@@ -131,7 +151,12 @@ export default function CanvasColumn({
     }
   }, [highlightItemId, days])
 
-  const handleCardAction = (action: CardMenuAction, item: WorkbenchItem, day: WorkbenchDay, index: number) => {
+  const handleCardAction = (
+    action: CardMenuAction,
+    item: WorkbenchItem,
+    day: WorkbenchDay,
+    index: number,
+  ) => {
     setMenuFor(null)
     switch (action) {
       case 'move-up':
@@ -143,7 +168,12 @@ export default function CanvasColumn({
       case 'move-to':
       case 'copy-to':
         // Keep the card's relative position when the target day is longer.
-        setPicker({ mode: action === 'move-to' ? 'move' : 'copy', itemId: item.id, dayId: day.id, index })
+        setPicker({
+          mode: action === 'move-to' ? 'move' : 'copy',
+          itemId: item.id,
+          dayId: day.id,
+          index,
+        })
         return
       case 'delete':
         onDeleteItem?.(item.id)
@@ -167,76 +197,181 @@ export default function CanvasColumn({
   }
 
   return (
-    <div id="workbench-canvas" className="relative h-full overflow-x-auto overflow-y-hidden bg-paper" aria-busy={syncing}>
-      {syncing && (
-        <div
-          data-canvas-syncing
-          className="pointer-events-none absolute right-[14px] top-[10px] z-[20] inline-flex items-center gap-[5px] rounded-[5px] border border-line bg-white/95 px-[8px] py-[4px] text-[11px] text-muted shadow-sm"
-          aria-live="polite"
-        >
-          <span aria-hidden="true" className="workbench-spinner h-[11px] w-[11px] rounded-full border-2 border-line border-t-green" />
-          路线重算中…
-        </div>
-      )}
-      <div className="flex h-full items-stretch gap-[16px] px-[16px] py-[16px]">
-        {days.length === 0 && (
-          <p
-            id="workbench-canvas-empty"
-            className="self-center border border-dashed border-line rounded-[8px] px-[28px] py-[36px] text-[13px] text-muted"
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <CanvasZoomControls zoom={zoom} onZoom={updateZoom} />
+      <div
+        id="workbench-canvas"
+        className="relative min-h-0 flex-1 overflow-x-auto overflow-y-hidden bg-paper focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-green"
+        role="region"
+        aria-label="横向行程画布"
+        aria-describedby="workbench-canvas-zoom-help"
+        aria-busy={syncing}
+        tabIndex={0}
+        onKeyDown={(event) => {
+          // Don't intercept text fields, card controls, or browser zoom shortcuts.
+          if (
+            event.target !== event.currentTarget ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.altKey ||
+            event.nativeEvent.isComposing
+          )
+            return
+          const action =
+            event.key === '+' || event.key === '='
+              ? 'in'
+              : event.key === '-'
+                ? 'out'
+                : event.key === '0'
+                  ? 'reset'
+                  : null
+          if (action === null) return
+          event.preventDefault()
+          updateZoom(action)
+        }}
+      >
+        {syncing && (
+          <div
+            data-canvas-syncing
+            className="pointer-events-none absolute right-[14px] top-[10px] z-[20] inline-flex items-center gap-[5px] rounded-[5px] border border-line bg-white/95 px-[8px] py-[4px] text-[11px] text-muted shadow-sm"
+            aria-live="polite"
           >
-            这份行程还没有安排 —— 等圆周帮你规划，或稍后再来看看。
-          </p>
+            <span
+              aria-hidden="true"
+              className="workbench-spinner h-[11px] w-[11px] rounded-full border-2 border-line border-t-green"
+            />
+            路线重算中…
+          </div>
         )}
-        {days.map((day, index) => {
-          const incoming = crossDayTransfersForCanvas.find(
-            (candidate) => candidate.toDayId === day.id && candidate.fromDayId === days[index - 1]?.id,
-          )
-          return (
-            <Fragment key={day.id}>
-              <DayColumn
-                day={day}
-                legLookup={legLookup}
-                onThemeSave={onThemeSave}
-                onDeleteDay={onDeleteDay}
-                onOptimizeDay={onOptimizeDay}
-                onCardClick={onCardClick}
-                highlightItemId={highlightItemId}
-                onMoveItem={onMoveItem}
-                onDeleteItem={onDeleteItem}
-                onAddCard={onAddCard}
-                onNoteSave={onNoteSave}
-                onImageAdd={onImageAdd}
-                onDropStash={onDropStash}
-                draggingId={draggingId}
-                setDraggingId={setDraggingId}
-                menuFor={menuFor}
-                setMenuFor={setMenuFor}
-                onCardAction={handleCardAction}
-                incomingTransfer={incoming}
-              />
-            </Fragment>
-          )
-        })}
-        {onAddDay && (
-          <button
-            type="button"
-            data-action="add-day"
-            onClick={onAddDay}
-            className="flex h-[40px] shrink-0 items-center gap-[6px] self-start rounded-[6px] border border-dashed border-line bg-white px-[14px] text-[13px] text-muted hover:border-green hover:text-green transition-colors"
-          >
-            + 添加天
-          </button>
+        {/* Zoom participates in layout, so the scroller and native drag hit targets agree. */}
+        <div
+          className="flex h-full items-stretch gap-[16px] px-[16px] py-[16px]"
+          style={{ zoom: zoom / 100 }}
+        >
+          {days.length === 0 && (
+            <p
+              id="workbench-canvas-empty"
+              className="self-center border border-dashed border-line rounded-[8px] px-[28px] py-[36px] text-[13px] text-muted"
+            >
+              这份行程还没有安排 —— 等圆周帮你规划，或稍后再来看看。
+            </p>
+          )}
+          {days.map((day, index) => {
+            const incoming = crossDayTransfersForCanvas.find(
+              (candidate) =>
+                candidate.toDayId === day.id && candidate.fromDayId === days[index - 1]?.id,
+            )
+            return (
+              <Fragment key={day.id}>
+                <DayColumn
+                  day={day}
+                  legLookup={legLookup}
+                  onThemeSave={onThemeSave}
+                  onDeleteDay={onDeleteDay}
+                  onOptimizeDay={onOptimizeDay}
+                  onCardClick={onCardClick}
+                  highlightItemId={highlightItemId}
+                  onMoveItem={onMoveItem}
+                  onDeleteItem={onDeleteItem}
+                  onAddCard={onAddCard}
+                  onNoteSave={onNoteSave}
+                  onImageAdd={onImageAdd}
+                  onDropStash={onDropStash}
+                  draggingId={draggingId}
+                  setDraggingId={setDraggingId}
+                  menuFor={menuFor}
+                  setMenuFor={setMenuFor}
+                  onCardAction={handleCardAction}
+                  incomingTransfer={incoming}
+                />
+              </Fragment>
+            )
+          })}
+          {onAddDay && (
+            <button
+              type="button"
+              data-action="add-day"
+              onClick={onAddDay}
+              className="flex h-[40px] shrink-0 items-center gap-[6px] self-start rounded-[6px] border border-dashed border-line bg-white px-[14px] text-[13px] text-muted hover:border-green hover:text-green transition-colors"
+            >
+              + 添加天
+            </button>
+          )}
+        </div>
+        {picker && (
+          <DayPickerDialog
+            mode={picker.mode}
+            days={days}
+            sourceDayId={picker.dayId}
+            onConfirm={confirmPicker}
+            onCancel={() => setPicker(null)}
+          />
         )}
       </div>
-      {picker && (
-        <DayPickerDialog
-          mode={picker.mode}
-          days={days}
-          sourceDayId={picker.dayId}
-          onConfirm={confirmPicker}
-          onCancel={() => setPicker(null)}
-        />
-      )}
+    </div>
+  )
+}
+
+function CanvasZoomControls({
+  zoom,
+  onZoom,
+}: {
+  zoom: number
+  onZoom: (action: ZoomAction) => void
+}) {
+  const buttonClass =
+    'grid min-h-7 place-items-center rounded-[4px] px-1 text-ink hover:bg-paper focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-green aria-disabled:opacity-50 aria-disabled:hover:bg-transparent pointer-coarse:min-h-11'
+  const stepButtonClass = `${buttonClass} min-w-8 pointer-coarse:min-w-11`
+  return (
+    <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-2 border-b border-line bg-white px-2 py-1">
+      <span className="text-[12px] text-muted" id="workbench-canvas-zoom-label">
+        画布缩放
+      </span>
+      <div
+        role="group"
+        aria-labelledby="workbench-canvas-zoom-label"
+        className="flex items-center rounded-[6px] border border-line p-[2px] text-[12px]"
+      >
+        <button
+          type="button"
+          className={stepButtonClass}
+          aria-controls="workbench-canvas"
+          aria-label="缩小画布"
+          title={`缩小画布（最小 ${MIN_ZOOM}%）`}
+          aria-disabled={zoom === MIN_ZOOM}
+          onClick={() => onZoom('out')}
+        >
+          <Minus aria-hidden="true" className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          className={`${buttonClass} min-w-12 tabular-nums`}
+          aria-controls="workbench-canvas"
+          aria-label={`恢复默认画布缩放（当前 ${zoom}%）`}
+          title="恢复默认画布缩放（100%，快捷键 0）"
+          aria-disabled={zoom === DEFAULT_ZOOM}
+          onClick={() => onZoom('reset')}
+        >
+          {zoom}%
+        </button>
+        <button
+          type="button"
+          className={stepButtonClass}
+          aria-controls="workbench-canvas"
+          aria-label="放大画布"
+          title={`放大画布（最大 ${MAX_ZOOM}%）`}
+          aria-disabled={zoom === MAX_ZOOM}
+          onClick={() => onZoom('in')}
+        >
+          <Plus aria-hidden="true" className="size-3.5" />
+        </button>
+      </div>
+      <span className="sr-only" role="status">
+        画布缩放 {zoom}%
+      </span>
+      <span className="sr-only" id="workbench-canvas-zoom-help">
+        画布聚焦时，按加号放大、减号缩小、0 恢复默认。
+      </span>
     </div>
   )
 }
@@ -279,7 +414,12 @@ function DayColumn({
   setDraggingId: (itemId: string | null) => void
   menuFor: string | null
   setMenuFor: (itemId: string | null) => void
-  onCardAction: (action: CardMenuAction, item: WorkbenchItem, day: WorkbenchDay, index: number) => void
+  onCardAction: (
+    action: CardMenuAction,
+    item: WorkbenchItem,
+    day: WorkbenchDay,
+    index: number,
+  ) => void
   incomingTransfer?: ReturnType<typeof crossDayTransfers>[number]
 }) {
   const accent = dayAccentColor(day.color, day.index)
@@ -300,8 +440,15 @@ function DayColumn({
     if (stashPayload && onDropStash) {
       try {
         const stash = JSON.parse(stashPayload) as StashItem
-        if (typeof stash?.id === 'string' && stash.id && (stash.poi?.name || (stash.poi === null && stash.title?.trim()))) {
-          const index = targetItem === null ? day.items.length : day.items.findIndex((item) => item.id === targetItem.id)
+        if (
+          typeof stash?.id === 'string' &&
+          stash.id &&
+          (stash.poi?.name || (stash.poi === null && stash.title?.trim()))
+        ) {
+          const index =
+            targetItem === null
+              ? day.items.length
+              : day.items.findIndex((item) => item.id === targetItem.id)
           onDropStash(stash, day.id, index < 0 ? day.items.length : index)
           return
         }
@@ -721,10 +868,26 @@ function LegChip({ leg }: { leg: WorkbenchLeg | null }) {
       data-leg-chip={leg.id}
       data-leg-quality={pending ? 'pending' : quality}
       data-leg-warning={longDrive ? leg.id : undefined}
-      aria-label={pending ? '路线待查询' : estimated ? `预估路线：${displayLabel}` : `驾车路线：${displayLabel}`}
-      title={longDrive ? longDriveWarningText(leg) : pending ? '路线待查询' : estimated ? '直线估算，路线服务返回后会更新' : '高德驾车路线'}
+      aria-label={
+        pending
+          ? '路线待查询'
+          : estimated
+            ? `预估路线：${displayLabel}`
+            : `驾车路线：${displayLabel}`
+      }
+      title={
+        longDrive
+          ? longDriveWarningText(leg)
+          : pending
+            ? '路线待查询'
+            : estimated
+              ? '直线估算，路线服务返回后会更新'
+              : '高德驾车路线'
+      }
       className={`flex items-center gap-[6px] rounded-[999px] border px-[10px] py-[3px] text-[11px] ${
-        longDrive ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]' : 'border-line bg-paper text-muted'
+        longDrive
+          ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]'
+          : 'border-line bg-paper text-muted'
       }`}
     >
       <Car aria-hidden="true" className="w-[12px]" />
@@ -734,7 +897,11 @@ function LegChip({ leg }: { leg: WorkbenchLeg | null }) {
   )
 }
 
-export function CrossDayLeg({ transfer }: { transfer: ReturnType<typeof crossDayTransfers>[number] }) {
+export function CrossDayLeg({
+  transfer,
+}: {
+  transfer: ReturnType<typeof crossDayTransfers>[number]
+}) {
   const label = formatLegDisplayLabel(transfer.leg)
   const quality = legQuality(transfer.leg)
   const pending = quality === 'pending' || label === ''
@@ -744,9 +911,17 @@ export function CrossDayLeg({ transfer }: { transfer: ReturnType<typeof crossDay
       data-cross-day-leg={transfer.id}
       data-leg-quality={quality}
       aria-label={pending ? '跨天路线待查询' : `跨天路线：${displayLabel}`}
-      title={pending ? '跨天起终点缺少可用坐标，路线待查询' : quality === 'measured' ? '高德驾车路线' : '跨天距离与时长为估算，路线服务返回后会更新'}
+      title={
+        pending
+          ? '跨天起终点缺少可用坐标，路线待查询'
+          : quality === 'measured'
+            ? '高德驾车路线'
+            : '跨天距离与时长为估算，路线服务返回后会更新'
+      }
       className={`flex items-center gap-[6px] rounded-[999px] border px-[10px] py-[3px] text-[11px] ${
-        transfer.longDrive ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]' : 'border-line bg-paper text-muted'
+        transfer.longDrive
+          ? 'border-[#b75342]/50 bg-[#fff5f2] text-[#b75342]'
+          : 'border-line bg-paper text-muted'
       }`}
     >
       <Car aria-hidden="true" className="w-[12px]" />
