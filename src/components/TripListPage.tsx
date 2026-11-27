@@ -30,6 +30,29 @@ import { migrateLegacyDataToServer } from '../domain/migration'
 import GuideImportPanel from './GuideImportPanel'
 import type { TripCreationSession } from '../domain/guideParsing'
 
+const editTimeFormat = new Intl.DateTimeFormat('zh-CN', {
+  dateStyle: 'medium',
+  timeStyle: 'medium',
+})
+
+function TripLastEdited({ updatedAt }: { updatedAt: string }) {
+  // Require an actual UTC instant, not a date-only or leniently parsed legacy value.
+  const instant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/.test(updatedAt)
+    ? new Date(updatedAt)
+    : null
+  const iso = instant && Number.isFinite(instant.getTime()) ? instant.toISOString() : null
+  return (
+    <p className="text-[13px] text-muted">
+      最后编辑：
+      {instant && iso && (iso === updatedAt || iso.replace('.000Z', 'Z') === updatedAt) ? (
+        <time dateTime={iso}>{editTimeFormat.format(instant)}</time>
+      ) : (
+        '暂无记录'
+      )}
+    </p>
+  )
+}
+
 /**
  * 行程列表页 (ticket 02) — default view of the app shell. Create / rename /
  * delete through the server API; every row shows the title plus the
@@ -477,6 +500,7 @@ export default function TripListPage({
                           已置顶
                         </span>
                       )}
+                      <TripLastEdited updatedAt={trip.updatedAt} />
                     </div>
                   </div>
                   <button

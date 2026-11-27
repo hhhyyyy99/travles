@@ -5,11 +5,13 @@
  * touch the poi/images columns (position-only updates), and the leg
  * replacement is one DELETE + INSERT batch over the trip's rows.
  */
+import { isDeepStrictEqual } from 'node:util'
 import { readSqliteLegRows } from '../days/driver-sqlite.js'
 import { ActivityItemMetadataSchema, normalizeItemType } from '@hailar/domain'
 import type { SqlDatabase, SqlValue } from '../db/driver.js'
 import { LEG_ROUTE_KEY, type DayRow, type ItemRow, type LegRow } from '../days/types.js'
-import { normalizeLegQuality } from '../days/repository.js'
+import { mapItemRow, normalizeLegQuality } from '../days/repository.js'
+import { recordTripEdit } from '../db/trip-edit-time.js'
 import type { PlannedLeg } from './legs.js'
 import type { ItemFullUpsert, ItemOrderPatch, ItemsAdminStoreDriver } from './types.js'
 
@@ -45,6 +47,10 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
   }
 
   async getItemRow(itemId: string): Promise<ItemRow | null> {
+    return this.readItemRow(itemId)
+  }
+
+  private async readItemRow(itemId: string): Promise<ItemRow | null> {
     const { rows } = await this.db.run(`SELECT ${ITEM_COLUMNS} FROM items WHERE id = ?`, [itemId])
     return (rows[0] as unknown as ItemRow) ?? null
   }
@@ -75,7 +81,8 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
     if (!(await this.dayExists(tripId, item.dayId))) {
       throw new Error(`day ${item.dayId} does not belong to trip ${tripId}`)
     }
-    const result = await this.db.run(
+    const before = await this.readItemRow(item.id)
+    const { rows } = await this.db.run(
       `INSERT INTO items (id, trip_id, day_id, item_order, type, title, note, time_range, cost, poi, images, pending)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
        ON CONFLICT(id) DO UPDATE SET
@@ -88,7 +95,8 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
          images = excluded.images
          ${metadata.timeRange !== undefined ? ', time_range = excluded.time_range' : ''}
          ${metadata.cost !== undefined ? ', cost = excluded.cost' : ''}
-       WHERE items.trip_id = excluded.trip_id`,
+       WHERE items.trip_id = excluded.trip_id
+       RETURNING ${ITEM_COLUMNS}`,
       [
         item.id,
         tripId,
@@ -103,23 +111,32 @@ export class SqliteItemsAdminStoreDriver implements ItemsAdminStoreDriver {
         item.imagesJson,
       ] as SqlValue[],
     )
-    if (result.rowsAffected === 0) throw new Error(`item ${item.id} belongs to another trip`)
-  }
-
-  async updateItemOrders(tripId: string, orders: ItemOrderPatch[]): Promise<void> {
-    for (const patch of orders) {
-      await this.db.run(
-        'UPDATE items SET day_id = ?, item_order = ? WHERE id = ? AND trip_id = ?',
-        [patch.dayId, patch.itemOrder, patch.id, tripId] as SqlValue[],
-      )
+    const after = rows[0] as ItemRow | undefined
+    if (!after) throw new Error(`item ${item.id} belongs to another trip`)
+    if (!before || !isDeepStrictEqual(mapItemRow(before), mapItemRow(after))) {
+      await recordTripEdit(this.db, tripId)
     }
   }
 
+  async updateItemOrders(tripId: string, orders: ItemOrderPatch[]): Promise<void> {
+    let changed = false
+    for (const patch of orders) {
+      const { rowsAffected } = await this.db.run(
+        `UPDATE items SET day_id = ?1, item_order = ?2 WHERE id = ?3 AND trip_id = ?4
+         AND (day_id IS NOT ?1 OR item_order IS NOT ?2)`,
+        [patch.dayId, patch.itemOrder, patch.id, tripId] as SqlValue[],
+      )
+      changed ||= rowsAffected > 0
+    }
+    if (changed) await recordTripEdit(this.db, tripId)
+  }
+
   async deleteItemRow(tripId: string, itemId: string): Promise<void> {
-    await this.db.run('DELETE FROM items WHERE id = ? AND trip_id = ?', [
+    const { rowsAffected } = await this.db.run('DELETE FROM items WHERE id = ? AND trip_id = ?', [
       itemId,
       tripId,
     ] as SqlValue[])
+    if (rowsAffected > 0) await recordTripEdit(this.db, tripId)
   }
 
   async replaceLegs(tripId: string, legs: PlannedLeg[]): Promise<void> {
