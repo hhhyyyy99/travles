@@ -379,6 +379,8 @@ for (const move of moves) {
           const fresh = await fetchTripCanvas('trip', gatedFetch)
           assert.ok(fresh.ok)
           freshCanvas = fresh.data
+          assert.ok(Number.isFinite(Date.parse(freshCanvas.trip.updatedAt)))
+          expected.trip.updatedAt = freshCanvas.trip.updatedAt
           assertMetadata(
             findItem(freshCanvas.days, 'item'),
             expectedMetadata,
